@@ -40,6 +40,11 @@ export type ChannelMeta = {
   typing?: string[];
   replyInstructions?: "once" | "always" | "never";
   interrupt?: boolean;
+  /**
+   * The daemon's id for this delivery. Adopted as the message's `messageId`, so a `done`
+   * can tell the daemon exactly which deliveries its turn finished (`covers`).
+   */
+  deliveryId?: string;
   signature?: string;
   signatureTimestamp?: string;
   signerFingerprint?: string;

@@ -13,7 +13,12 @@ import {
 } from "./usage.js";
 
 /** A pending message's daemon-facing id (routing/channel key) paired with its channel `seq`. */
-export type MessageIdEntry = { id: string | undefined; seq: number };
+export type MessageIdEntry = {
+  id: string | undefined;
+  seq: number;
+  /** It interrupted the turn it arrived in, so it runs as a turn of its own, not folded in. */
+  interrupting?: boolean;
+};
 
 export type StreamSession = {
   name: string;
@@ -42,7 +47,12 @@ const preset = loadTransparencyPreset();
 
 function emit(
   session: StreamSession,
-  event: { type: EventType; content?: string; metadata?: Record<string, unknown> },
+  event: {
+    type: EventType;
+    content?: string;
+    metadata?: Record<string, unknown>;
+    covers?: string[];
+  },
 ) {
   const channel = session.currentMessageId
     ? session.messageChannels.get(session.currentMessageId)?.channel
@@ -172,8 +182,23 @@ export async function consumeStream(
       // the wrong channel (#700). Ids queued before the turn started stay: each
       // still gets a run (and result) of its own. Ack each folded entry too — same
       // reasoning as above, applied to every message the fold absorbed.
+      // Every delivery this turn finished, for the `done` below: its driver and each one
+      // folded into it (#1207).
+      const covers = session.currentMessageId !== undefined ? [session.currentMessageId] : [];
+      let interrupted = false;
       for (const entry of session.messageIds.splice(preTurnPending)) {
-        if (entry.id !== undefined) session.messageChannels.delete(entry.id);
+        // A message that interrupted this turn is not folded into it: the SDK runs it
+        // next, as a turn of its own, whose `done` will cover it — and so is everything
+        // that arrived after it, which queued behind it rather than joining this turn.
+        interrupted ||= entry.interrupting === true;
+        if (interrupted) {
+          session.messageIds.push(entry);
+          continue;
+        }
+        if (entry.id !== undefined) {
+          session.messageChannels.delete(entry.id);
+          covers.push(entry.id);
+        }
         callbacks.ack(entry.seq);
       }
       log("mind", `session "${session.name}": turn done`);
@@ -210,7 +235,7 @@ export async function consumeStream(
         emit(session, { type: "usage", metadata: usage });
       }
       callbacks.broadcast({ type: "done" });
-      emit(session, { type: "done" });
+      emit(session, { type: "done", covers });
       session.currentMessageId = undefined;
       session.currentSeq = undefined;
       callbacks.onTurnEnd?.();

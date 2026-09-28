@@ -17,8 +17,13 @@ if (!VOLUTE_DAEMON_PORT || !VOLUTE_MIND_TOKEN || !VOLUTE_MIND) {
 }
 
 let session = "";
+let messageId = "";
 try {
-  session = JSON.parse(input).session ?? "";
+  const parsed = JSON.parse(input);
+  session = parsed.session ?? "";
+  // The delivery this prompt answers: the daemon marks what this drains delivered only
+  // when that turn ends cleanly.
+  messageId = parsed.messageId ?? "";
 } catch {}
 
 if (!session) {
@@ -28,7 +33,7 @@ if (!session) {
 
 try {
   const res = await fetch(
-    `http://127.0.0.1:${VOLUTE_DAEMON_PORT}/api/v1/minds/${VOLUTE_MIND}/history/notices?session=${encodeURIComponent(session)}`,
+    `http://127.0.0.1:${VOLUTE_DAEMON_PORT}/api/v1/minds/${VOLUTE_MIND}/history/notices?session=${encodeURIComponent(session)}${messageId ? `&messageId=${encodeURIComponent(messageId)}` : ""}`,
     { headers: { Authorization: `Bearer ${VOLUTE_MIND_TOKEN}` } },
   );
   // A failed drain exits non-zero so the hook loader sees it and tells you in-band —

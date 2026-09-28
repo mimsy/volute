@@ -1237,6 +1237,11 @@ describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
     assert.equal(donesAtSecondRun, 0);
     // Then one `done`, as claude sends for a folded turn.
     assert.equal(donesFor("fold"), 1);
+    // It names the turn by the message that led it and covers all three, so the daemon
+    // knows every one is finished (#1207).
+    const [{ body: done }] = eventsFor("fold", "done");
+    assert.equal(new Set(done.covers).size, 3);
+    assert.equal(done.messageId, done.covers[0]);
     // And one usage report for the turn, summing both runs (10, then 15 more).
     const usage = eventsFor("fold", "usage").map((p) => p.body.metadata);
     assert.equal(usage.length, 1);

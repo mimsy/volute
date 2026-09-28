@@ -90,6 +90,59 @@ after(() => {
   delete process.env.VOLUTE_MIND;
 });
 
+describe("pi template event-handler: the done names what it covers (#1207)", () => {
+  it("covers the driver and every queued prompt the run drained", async () => {
+    captured = [];
+    const session = makeSession("covers");
+    session.messageIds.push("m2", "m3"); // followUps pi drains before the final agent_end
+    const handler = createEventHandler(session as never, {
+      cwd: resolvePath(composedDir, "home"),
+      broadcast: () => {},
+    });
+    handler({ type: "agent_start" } as never);
+    handler({ type: "agent_end", messages: [] } as never);
+    await waitFor(() => captured.some((e) => e.type === "done" && e.session === "covers"));
+    const done = captured.find((e) => e.type === "done") as Captured & { covers?: string[] };
+    assert.equal(done.messageId, "m1");
+    assert.deepEqual(done.covers, ["m1", "m2", "m3"]);
+  });
+
+  it("on a retry covers only the driver: the queued prompts run on in the continuation", async () => {
+    captured = [];
+    const session = makeSession("retry");
+    session.messageIds.push("m2");
+    const handler = createEventHandler(session as never, {
+      cwd: resolvePath(composedDir, "home"),
+      broadcast: () => {},
+    });
+    handler({ type: "agent_start" } as never);
+    handler({ type: "agent_end", messages: [], willRetry: true } as never);
+    await waitFor(() => captured.some((e) => e.type === "done" && e.session === "retry"));
+    const done = captured.find((e) => e.type === "done") as Captured & { covers?: string[] };
+    assert.deepEqual(done.covers, ["m1"]);
+    assert.deepEqual(session.messageIds, ["m2"]);
+  });
+
+  it("a retry continuation with nothing named still ends its turn", async () => {
+    captured = [];
+    const session = makeSession("continuation");
+    session.messageIds.length = 0;
+    const handler = createEventHandler(session as never, {
+      cwd: resolvePath(composedDir, "home"),
+      broadcast: () => {},
+    });
+    handler({ type: "agent_start" } as never);
+    handler({ type: "agent_end", messages: [] } as never);
+    await waitFor(() => captured.some((e) => e.type === "done" && e.session === "continuation"));
+    const done = captured.find((e) => e.type === "done") as Captured & {
+      covers?: string[];
+      endsTurn?: boolean;
+    };
+    assert.deepEqual(done.covers, []);
+    assert.notEqual(done.endsTurn, false, "only a rejected followUp's done ends no turn");
+  });
+});
+
 describe("pi template event-handler agent_end errors", () => {
   it("emits an error event to the daemon when agent_end reports an errorMessage", async () => {
     captured = [];

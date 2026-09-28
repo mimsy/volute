@@ -202,7 +202,8 @@ export function createRouter(options: {
     meta: ChannelMeta,
     listener?: Listener,
   ): { messageId: string; unsubscribe: () => void } {
-    const messageId = generateMessageId();
+    // The daemon's own id when it sent one, so the ids a `done` reports are ones it knows.
+    const messageId = meta.deliveryId ?? generateMessageId();
 
     // Apply formatting
     const formatted = applyPrefix(content, { ...meta, sessionName: session });
@@ -240,7 +241,7 @@ export function createRouter(options: {
   function dispatchBatch(
     batch: { channels: Record<string, BatchMessage[]> },
     session: string,
-    _meta: ChannelMeta,
+    meta: ChannelMeta,
   ): void {
     const allMessages: { channel: string; payload: BatchMessage }[] = [];
     for (const [channel, messages] of Object.entries(batch.channels)) {
@@ -296,7 +297,7 @@ export function createRouter(options: {
     const sessionConfig = resolveSessionConfig(config, session);
     const withInstructions = prependInstructionsOnce(content, sessionConfig.instructions, session);
 
-    const messageId = generateMessageId();
+    const messageId = meta.deliveryId ?? generateMessageId();
     const handler = options.mindHandler(session);
 
     try {

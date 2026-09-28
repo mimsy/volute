@@ -186,7 +186,12 @@ const SUBAGENT_TIMEOUT_MS = 15 * 60_000;
 
 function emit(
   session: CodexSession,
-  event: { type: EventType; content?: string; metadata?: Record<string, unknown> },
+  event: {
+    type: EventType;
+    content?: string;
+    metadata?: Record<string, unknown>;
+    covers?: string[];
+  },
 ): Promise<void> {
   const channel = session.currentMessageId
     ? session.messageChannels.get(session.currentMessageId)
@@ -797,12 +802,15 @@ export function createMind(options: {
     await emit(session, { type: "error", content: message });
   }
 
-  /** One `done` for the daemon, and one for each message the turn absorbed. */
-  /** One `done` for the daemon, as claude sends, and one for each message the turn absorbed. */
+  /**
+   * One `done` for the daemon, as claude sends, and one for each message the turn absorbed.
+   * The daemon's names the turn by the message that led it and covers every one absorbed,
+   * so the daemon knows they are all finished (#1207).
+   */
   function emitDone(session: CodexSession, messageIds: string[]) {
     for (const messageId of messageIds) broadcast(session, { type: "done", messageId });
     session.currentMessageId = messageIds[0]; // emit() reads the channel from it
-    emit(session, { type: "done" });
+    emit(session, { type: "done", covers: messageIds });
   }
 
   /**
@@ -952,6 +960,8 @@ export function createMind(options: {
       runHooks(hooksDir, "pre-prompt", {
         event: "pre-prompt",
         session: session.name,
+        // The delivery this run answers, so the notices it drains are its turn's.
+        messageId: session.currentMessageId,
         prompt,
       }).catch((err) => {
         warn("mind", "pre-prompt hook failed:", err);

@@ -311,6 +311,9 @@ export function createMind(options: {
         const result = await runHooks(hooksDir, event, {
           ...(input as Record<string, unknown>),
           session: session.name,
+          // The delivery this prompt answers — the running turn's, or, between turns, the
+          // next one queued — so the notices it drains are that turn's (#1207).
+          messageId: session.currentMessageId ?? session.messageIds[0]?.id,
         });
         if (result.additionalContext || Object.keys(result.metadata).length > 0) {
           const channel = session.currentMessageId
@@ -468,6 +471,19 @@ export function createMind(options: {
   /** Sentinel error used to signal that the stream was aborted for compaction */
   class CompactionAbort extends Error {}
 
+  /** A session's pending message ids, led by the turn in flight if there is one. */
+  function withCurrentMessage(session: Session): MessageIdEntry[] {
+    return session.currentSeq !== undefined
+      ? [{ id: session.currentMessageId, seq: session.currentSeq }, ...session.messageIds]
+      : session.messageIds;
+  }
+
+  /** What a fresh session needs of the one it takes redelivered messages over from. */
+  function carryOver(from: Session, to: Session) {
+    for (const [id, ch] of from.messageChannels) to.messageChannels.set(id, ch);
+    for (const listener of from.listeners) to.listeners.add(listener);
+  }
+
   function startSession(
     session: Session,
     savedSessionId?: string,
@@ -575,10 +591,26 @@ export function createMind(options: {
         },
       };
 
-      /** Emit done to both local listeners and the daemon (best-effort with retries). */
+      /**
+       * Emit done to both local listeners and the daemon (best-effort with retries). Only
+       * the paths where the stream ended for good call this, and its unanswered input goes
+       * with it — so the `done` covers every delivery still pending here (#1207). Except on
+       * a session being torn down (reaped, or the mind shutting down): the reaper re-sends
+       * what is pending into a fresh session, so it is not finished.
+       */
       function emitDone() {
         broadcastToSession(session, { type: "done" });
-        daemonEmit({ type: "done", session: session.name }).catch((err) => {
+        const pending = session.closed ? [] : session.messageIds.map((e) => e.id);
+        if (!session.closed) session.messageIds = [];
+        const covers = [session.currentMessageId, ...pending].filter(
+          (id): id is string => id !== undefined,
+        );
+        daemonEmit({
+          type: "done",
+          session: session.name,
+          messageId: session.currentMessageId,
+          covers,
+        }).catch((err) => {
           log("mind", `session "${session.name}": failed to emit done to daemon:`, err);
         });
       }
@@ -589,8 +621,13 @@ export function createMind(options: {
        * (and thus won't mark notices delivered) before the done arrives.
        */
       async function emitError(err: unknown) {
-        await daemonEmit({ type: "error", session: session.name, content: String(err) }).catch(
-          (e) => log("mind", `session "${session.name}": failed to emit error to daemon:`, e),
+        await daemonEmit({
+          type: "error",
+          session: session.name,
+          messageId: session.currentMessageId,
+          content: String(err),
+        }).catch((e) =>
+          log("mind", `session "${session.name}": failed to emit error to daemon:`, e),
         );
       }
 
@@ -610,8 +647,15 @@ export function createMind(options: {
           resumed: resume !== undefined,
           restoredTotals,
         });
-        if (session.currentMessageId !== undefined) {
-          session.messageChannels.delete(session.currentMessageId);
+        // The stream ended for good. A turn it cut off — or input it never reached — has
+        // no `result` coming, so it ends here.
+        if (
+          session.currentMessageId !== undefined ||
+          (!session.closed && session.messageIds.length > 0)
+        ) {
+          if (session.currentMessageId !== undefined) {
+            session.messageChannels.delete(session.currentMessageId);
+          }
           emitDone();
           session.currentMessageId = undefined;
         }
@@ -725,7 +769,22 @@ export function createMind(options: {
                 committed = false;
                 session.seeded = false;
                 streamAbort = new AbortController();
+                // This stream ends here. The input the aborted one had not finished — the
+                // turn it cut off, and anything queued behind it — goes to a fresh session
+                // under the same name, as the reaper's does, rather than being dropped: the
+                // context is lost, the messages aren't (#1207).
+                const pending = session.channel.recover();
                 session.channel = createMessageChannel();
+                if (pending.length > 0) {
+                  const old = withCurrentMessage(session);
+                  session.closed = true;
+                  if (sessions.get(session.name) === session) sessions.delete(session.name);
+                  const fresh = getOrCreateSession(session.name);
+                  carryOver(session, fresh);
+                  relockstepMessageIds(pending, old, fresh.channel.push, fresh.messageIds);
+                }
+                session.currentMessageId = undefined;
+                session.messageIds = [];
                 break;
               }
               // Point the live pointer at the rotated session and arm the boundary
@@ -774,7 +833,6 @@ export function createMind(options: {
           }
         }
       } catch (err) {
-        session.messageChannels.clear();
         if (currentSessionId) {
           log("mind", `session "${session.name}": resume failed, starting fresh:`, err);
           // Mind-level (no `thread`) so it reaches the next turn on any thread (#768).
@@ -794,7 +852,21 @@ export function createMind(options: {
           session.seeded = false;
           session.rotationPending = false;
           streamAbort = new AbortController();
+          // Torn down (reaped, or the mind shutting down) meanwhile: the reaper redelivers
+          // what the channel holds, so recovering it here too would deliver it twice.
+          if (session.closed) return;
+          // The failed stream's unfinished input goes into the fresh one rather than
+          // being dropped with its channel: the context is lost, the messages aren't.
+          const pending = session.channel.recover();
+          const old = withCurrentMessage(session);
           session.channel = createMessageChannel();
+          session.currentMessageId = undefined;
+          session.currentSeq = undefined;
+          session.messageIds = relockstepMessageIds(pending, old, session.channel.push, []);
+          const kept = new Set(session.messageIds.map((e) => e.id));
+          for (const id of [...session.messageChannels.keys()]) {
+            if (!kept.has(id)) session.messageChannels.delete(id);
+          }
           try {
             await runStream();
           } catch (retryErr) {
@@ -803,6 +875,7 @@ export function createMind(options: {
             emitDone();
           }
         } else {
+          session.messageChannels.clear();
           log("mind", `session "${session.name}": stream consumer error:`, err);
           await emitError(err);
           emitDone();
@@ -1021,12 +1094,12 @@ export function createMind(options: {
         }
 
         // Interrupt if requested and session is mid-turn
-        if (
-          meta.interrupt &&
+        const interrupting =
+          meta.interrupt === true &&
           interruptCurrentTurn(session, (err) =>
             log("mind", `session "${sessionName}": interrupt failed:`, err),
-          )
-        ) {
+          );
+        if (interrupting) {
           log("mind", `session "${sessionName}": interrupting current turn`);
         }
 
@@ -1038,7 +1111,11 @@ export function createMind(options: {
           message: { role: "user", content: toSDKContent(content) },
           parent_tool_use_id: null,
         });
-        session.messageIds.push({ id: meta.messageId, seq });
+        session.messageIds.push({
+          id: meta.messageId,
+          seq,
+          ...(interrupting ? { interrupting: true } : {}),
+        });
 
         return () => {
           if (filteredListener) session.listeners.delete(filteredListener);

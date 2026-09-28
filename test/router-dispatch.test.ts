@@ -42,6 +42,30 @@ function writeConfig(config: object): string {
   return path;
 }
 
+describe("delivery ids", () => {
+  // A `done` reports the deliveries it covers by the daemon's own ids (#1207), so the mind
+  // uses the one the daemon sent as the message's id.
+  it("a dispatched message and a batch take the daemon's delivery id as their messageId", () => {
+    const { mindHandler, calls } = createTestHandler();
+    const router = createRouter({ mindHandler });
+    router.dispatch([{ type: "text", text: "hi" }], "main", { channel: "@a", deliveryId: "d1" });
+    router.dispatchBatch({ channels: { "@a": [{ sender: "a", content: "hi" }] } }, "main", {
+      deliveryId: "d2",
+    });
+    assert.deepEqual(
+      calls.map((c) => c.meta.messageId),
+      ["d1", "d2"],
+    );
+  });
+
+  it("a message the daemon didn't id gets one of the mind's own", () => {
+    const { mindHandler, calls } = createTestHandler();
+    const router = createRouter({ mindHandler });
+    router.dispatch([{ type: "text", text: "hi" }], "main", { channel: "@a" });
+    assert.ok(calls[0].meta.messageId);
+  });
+});
+
 describe("dispatch formatting", () => {
   it("prepends the channel/sender/time prefix to the first text part", () => {
     const { mindHandler, calls } = createTestHandler();
