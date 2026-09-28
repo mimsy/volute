@@ -733,7 +733,11 @@ function ownedBy(path: string, uid: number): boolean {
  * Decide which paths `chownMindDir` should recurse. For a full mind project dir,
  * node_modules dominates the tree; when it's already owned by the mind user (a
  * re-run), recursing the whole project needlessly walks tens of thousands of
- * files. In that case we skip node_modules but still recurse every other
+ * files. "Owned" is judged by the node_modules inode alone — a heuristic, and one
+ * a root-run npm defeats: it adds root-owned packages under a mind-owned
+ * node_modules (#1231). npm itself runs as the mind, so `npmInstallAsMind`
+ * reclaims the tree it is about to change with `reclaimNodeModules` rather than
+ * trusting this. In that case we skip node_modules but still recurse every other
  * top-level entry (home/, .mind/, .git/, src/, package.json, …) — root-driven
  * flows like merge/upgrade write into .git as root, and those paths must be
  * re-chowned or the mind's own auto-commit later hits EACCES. Anything else (a
@@ -799,6 +803,132 @@ export async function chownMindDir(dir: string, name: string): Promise<void> {
     );
   }
   await lockPrivateSubtrees(root);
+}
+
+/** Marks a failed chown in `chownForeignOwned`'s find output. */
+const CHOWN_FAILED = "volute-chown-failed:";
+
+/**
+ * chown to `owner` everything under `root`, itself included, that is not owned
+ * by `uid`, in a single `find` pass, returning the paths it handed over.
+ *
+ * Nothing is looked up by path twice. The walk is physical (`find` defaults to
+ * -P, so a planted symlink is never descended), and each chown runs via
+ * -execdir on `./<name>` from inside the directory the walk is already in, with
+ * -h so a symlink entry is re-owned itself rather than its target. A separate
+ * `chown -R <path>` after a walk would resolve the whole path again — and a
+ * mind that owns a directory above it could swap that directory for a link to,
+ * say, Volute's own install in the meantime.
+ *
+ * Regular files with more than one link are skipped: a mind can hard-link a
+ * root-owned file (`/etc/sudoers`) into its own tree wherever the kernel allows
+ * it (macOS always; Linux with fs.protected_hardlinks=0), and re-owning the
+ * link re-owns the file. npm never hard-links into node_modules.
+ *
+ * One chown per entry (`;`, not `+`): a batched chown runs long after find
+ * tested the entry, and the mind — which owns node_modules — could rename a
+ * root-owned entry away and put a hard link to a root-owned file under its name
+ * in between. Per entry the window is the stat→chown gap alone; it stays, since
+ * closing it needs an fd-based walk Node and find do not offer (#1235). Healthy
+ * trees match nothing and so spawn nothing.
+ *
+ * A failing `find` or chown throws — it never falls back to something broader.
+ */
+export async function chownForeignOwned(
+  root: string,
+  uid: number,
+  owner: { spec: string; uid: number; gid: number },
+): Promise<string[]> {
+  // The root through a handle: BSD find's -execdir mis-resolves the starting
+  // point itself (it runs from the wrong directory), so the walk starts below it.
+  const reclaimed: string[] = [];
+  if ((await lstat(root)).uid !== uid) {
+    await chownNoFollow(root, owner.uid, owner.gid, "dir");
+    reclaimed.push(root);
+  }
+  const out = await exec("find", [
+    root,
+    "-mindepth",
+    "1",
+    "!",
+    "-uid",
+    String(uid),
+    "(",
+    "-type",
+    "d",
+    "-o",
+    "-links",
+    "1",
+    ")",
+    "(",
+    "-execdir",
+    "chown",
+    "-h",
+    owner.spec,
+    "{}",
+    ";",
+    "-print",
+    "-o",
+    "-exec",
+    "echo",
+    CHOWN_FAILED,
+    "{}",
+    ";",
+    ")",
+  ]);
+  const lines = out.split("\n").filter(Boolean);
+  // `-execdir … ;` reports a failed chown as a false test, not in find's exit
+  // status, so failures are printed as their own lines and raised here.
+  const failed = lines.filter((l) => l.startsWith(CHOWN_FAILED));
+  if (failed.length > 0) {
+    throw new Error(`chown failed for ${failed.map((l) => l.slice(CHOWN_FAILED.length + 1))}`);
+  }
+  return [...reclaimed, ...lines];
+}
+
+/**
+ * Hand a mind's `node_modules` back to the mind before npm runs as it (#1231).
+ *
+ * Skill installs ran npm as root until #1222, which left root-owned packages
+ * (libsql and its dependencies) under a node_modules the mind otherwise owns.
+ * npm-as-the-mind fails with EACCES on any install that must change them, and
+ * `chownMindDir` never reached them — see `chownTargets`. The spirit's sync
+ * still runs npm as root, so the residue can come back; hence a pass before
+ * every install rather than a one-time migration.
+ *
+ * On a healthy tree that pass is a metadata-only walk that re-owns nothing, so
+ * no inode is rewritten. The root is contained as in `chownMindDir`; below it,
+ * see `chownForeignOwned`. No-op when isolation is off or there is no
+ * node_modules.
+ */
+export async function reclaimNodeModules(dir: string, mindName: string): Promise<void> {
+  if (!isIsolationEnabled()) return;
+  const nodeModules = resolve(dir, "node_modules");
+  try {
+    await lstat(nodeModules);
+  } catch {
+    return;
+  }
+  const baseName = await getBaseName(mindName);
+  const { user, group } = mindOwnerNames(baseName);
+  try {
+    const ids = await mindFileOwner(baseName);
+    if (!ids) return;
+    const root = await containMindPath(nodeModules, (st) => st.uid === ids.uid);
+    const reclaimed = await chownForeignOwned(root, ids.uid, { spec: `${user}:${group}`, ...ids });
+    if (reclaimed.length > 0) {
+      ilog.info("reclaimed root-owned node_modules entries for the mind", {
+        dir: root,
+        mind: baseName,
+        count: reclaimed.length,
+      });
+    }
+  } catch (err) {
+    const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
+    throw new Error(
+      `Failed to reclaim ${nodeModules} for ${user}:${group}: ${stderr || (err instanceof Error ? err.message : err)}`,
+    );
+  }
 }
 
 /**

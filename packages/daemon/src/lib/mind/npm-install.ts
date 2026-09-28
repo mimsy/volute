@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { exec, gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { buildMindBaseEnv } from "../util/mind-env.js";
-import { isIsolationEnabled, wrapForIsolation } from "./isolation.js";
+import { isIsolationEnabled, reclaimNodeModules, wrapForIsolation } from "./isolation.js";
 
 // Skip npm's audit/funding network round-trips.
 const NPM_INSTALL_ARGS = ["install", "--no-audit", "--no-fund", "--loglevel=error"];
@@ -88,6 +88,8 @@ async function runNpmInstall(
  * keeps npm off the daemon's HOME, which a hardened service unit may hide entirely
  * (`ProtectHome=yes` makes `/root` unreachable, so npm can't create its cache there).
  * `packages`, when given, are added to the project (a skill's npm dependencies).
+ * Root-owned residue in node_modules from an earlier root-run npm is handed back
+ * to the mind first, or npm would fail on it with EACCES (#1231).
  *
  * Two attempts: the first prefers the mind's local npm cache; a failure that looks
  * like the cache resolving a version it has never seen is retried once against the
@@ -107,6 +109,7 @@ export async function npmInstallAsMind(
   packages: string[] = [],
   run: NpmRunner = exec,
 ): Promise<void> {
+  await reclaimNodeModules(cwd, mindName);
   try {
     await runNpmInstall(cwd, mindName, [...NPM_INSTALL_ARGS, PREFER_OFFLINE, ...packages], run);
     return;
