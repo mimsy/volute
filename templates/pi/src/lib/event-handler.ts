@@ -150,6 +150,12 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         // Exception: on a retryable error the loop emits agent_end WITHOUT
         // draining and the session retries — those queued prompts haven't run
         // yet, so they keep their entries for the continuation.
+        // Every daemon delivery this `done` finished: the one that drove the turn and each
+        // queued prompt it drained — or, on a retry, only the driver, since the queued ones
+        // run on in the continuation, whose own `done` covers them (#1207).
+        const covers = [messageId, ...(event.willRetry ? [] : session.messageIds)].filter(
+          (id): id is string => id !== undefined,
+        );
         if (!event.willRetry) {
           session.messageIds.length = 0;
           session.messageChannels.clear();
@@ -230,6 +236,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
             session: session.name,
             channel,
             messageId,
+            covers,
           });
           if (doneEv) await daemonEmit(doneEv);
         })().catch((err) =>

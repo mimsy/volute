@@ -1766,7 +1766,15 @@ describe("summarizer", () => {
       try {
         (dm as any).sessionStates.set(
           mind,
-          new Map([[session, { activeCount: 2, lastDeliveredAt: 0 }]]),
+          new Map([
+            [
+              session,
+              {
+                outstanding: new Map([["d1", { process: mind, at: 0 }]]),
+                lastDeliveredAt: 0,
+              },
+            ],
+          ]),
         );
         assert.equal(dm.isSessionBusy(mind, session), true);
         assert.equal(tryGetDeliveryManager(), dm);

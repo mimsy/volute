@@ -39,7 +39,7 @@ export const SYSTEM_MIND = "_system";
 
 /**
  * A turn that has received a `done` but stayed `active` this long (no further events) is
- * treated as wedged by a leaked delivery counter and force-completed by the tick sweep.
+ * treated as wedged and force-completed by the tick sweep.
  * The sweep also requires a prior `done`, so genuine in-progress work (no `done` yet) is
  * never cut short regardless of duration; this threshold just bounds how stale a finished
  * turn must look before we step in.
@@ -1826,10 +1826,9 @@ export class Summarizer {
 }
 
 /**
- * Complete + summarize turns wedged in `active` despite already finishing, and reset the
- * leaked delivery counter that gated them. Guards against a session's `activeCount`
- * drifting positive (deliveries outnumbering `done`s) and blocking turn completion
- * indefinitely. Run on the summarizer tick; exported for direct testing.
+ * Complete + summarize turns wedged in `active` despite already finishing, and forget the
+ * deliveries their sessions still hold outstanding, which no `done` will now cover. Run on
+ * the summarizer tick; exported for direct testing.
  */
 export async function reconcileWedgedTurns(idleMs: number): Promise<void> {
   const { sweepWedgedTurns, summarizeOrphanedTurns } = await import("./turn-tracker.js");
@@ -1838,8 +1837,8 @@ export async function reconcileWedgedTurns(idleMs: number): Promise<void> {
 
   summarizeOrphanedTurns(wedged);
 
-  // Reset the leaked counter so the next turn in each session can complete. If the delivery
-  // manager isn't up (startup ordering) there are no in-memory counters to leak, so skipping
+  // Forget the stale deliveries so each session stops reading busy. If the delivery
+  // manager isn't up (startup ordering) there is no in-memory state to forget, so skipping
   // is correct. clearSessionActive itself no-ops if a fresh delivery raced in.
   const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
   const dm = tryGetDeliveryManager();

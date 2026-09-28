@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { isMind } from "@volute/api/user-type";
@@ -10,6 +11,7 @@ import {
   acquireTurnSlot,
   hasTurnSlot,
   releaseTurnSlot,
+  SLOT_MAX_AGE_MS,
   turnSlotHolders,
 } from "../daemon/turn-slots.js";
 import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
@@ -138,8 +140,27 @@ const AVATAR_CACHE_TTL = 5 * 60 * 1000;
 
 // --- Session state tracking ---
 
+/** A delivery the mind has taken but no `done` has covered yet. */
+type Outstanding = {
+  /** The process it was POSTed to — the mind, or one of its variants (see `sessionDone`). */
+  process: string;
+  at: number;
+};
+
+/** What a mind's `done` says about the deliveries it finished (see `sessionDone`). */
+export type DoneReport = {
+  /** The process that sent the `done`. */
+  process: string;
+  /**
+   * The deliveries the `done` finished. Absent on a `done` from a mind whose template
+   * predates the field, which is read as covering everything that process had outstanding.
+   */
+  covers?: string[];
+};
+
 type SessionState = {
-  activeCount: number;
+  /** Delivery id → the delivery, for every delivery the mind has taken and not finished. */
+  outstanding: Map<string, Outstanding>;
   lastDeliveredAt: number;
   lastDeliverySenders: Set<string>;
   lastDeliveryChannels: Set<string>;
@@ -932,35 +953,42 @@ export class DeliveryManager {
   }
 
   /**
-   * Called when a mind's session emits a "done" event — decrements active count
-   * and may trigger batch flush if session goes idle.
+   * Called when a mind's session emits a "done" event: retires the deliveries it covers,
+   * frees the turn slot if the turn ended with nothing left to run, and may trigger a batch
+   * flush if the session went idle.
    *
-   * This method is intentionally synchronous to avoid race conditions: the caller
-   * has already resolved baseName, and any async yield here (e.g. getBaseName)
-   * would allow concurrent deliveries to incrementActive before the decrement runs,
-   * causing isSessionBusy to return true even when no deliveries are pending.
+   * Only the mind knows which deliveries a turn consumed — it may fold several into one
+   * turn, run a queued one as a turn of its own, or fail one while another turn streams —
+   * so its `done` says (`report.covers`). A count of deliveries against a count of `done`s
+   * could not tell those apart (#1207). Without a report (a caller with no `done` in hand),
+   * every outstanding delivery on the session is retired.
+   *
+   * This method is intentionally synchronous: the caller has already resolved baseName,
+   * and an async yield here (e.g. getBaseName) would let a delivery that raced in after
+   * the `done` be read as outstanding or not depending on scheduling.
    */
-  sessionDone(baseName: string, session?: string): void {
+  sessionDone(
+    baseName: string,
+    session?: string,
+    report?: DoneReport,
+    /** Whether the `done` ended a turn; one that only retires a failed delivery does not. */
+    endedTurn = true,
+  ): void {
     // A completed turn closes the mind's stale-send baselines so the next delivery re-snapshots.
-    resetTurn(baseName);
-    if (session) {
-      // The turn is over: free the slot regardless of who took it, and regardless of
-      // `activeCount`. A count counts deliveries while a slot counts turns, so two
-      // messages folded into one turn leave the count at 1 after the single `done`;
-      // waiting for zero would gate the mind until the slot's TTL.
-      releaseTurnSlot(baseName, session);
-      this.decrementActive(baseName, session);
-    } else {
-      // No session specified — decrement all sessions for this mind
-      const mindSessions = this.sessionStates.get(baseName);
-      if (mindSessions) {
-        for (const [sessionName] of mindSessions) {
-          this.decrementActive(baseName, sessionName);
-        }
+    if (endedTurn) resetTurn(baseName);
+    const mindSessions = this.sessionStates.get(baseName);
+    const names = session ? [session] : [...(mindSessions?.keys() ?? [])];
+    for (const name of names) this.retire(baseName, name, report);
+    if (endedTurn) {
+      if (session) {
+        // The turn is over: free the slot regardless of who took it — unless a delivery the
+        // mind took is still outstanding, which it will run next as a turn of its own.
+        if (!this.isSessionBusy(baseName, session)) releaseTurnSlot(baseName, session);
+      } else {
+        // Every session, including ones the mind ran without a delivery of ours (a system
+        // event, a wake flush), which have a slot but no `sessionStates` entry.
+        releaseTurnSlot(baseName);
       }
-      // Every session, including ones the mind ran without a delivery of ours (a system
-      // event, a wake flush), which have a slot but no `sessionStates` entry.
-      releaseTurnSlot(baseName);
     }
     // A concurrency hold lifts the moment a turn ends, and the rows it held are still
     // `pending`. Without this the next sweep is up to REDRIVE_INTERVAL_MS away, which
@@ -2008,7 +2036,7 @@ export class DeliveryManager {
    */
   isSessionBusy(mindName: string, session: string): boolean {
     const state = this.sessionStates.get(mindName)?.get(session);
-    return (state?.activeCount ?? 0) > 0;
+    return (state?.outstanding.size ?? 0) > 0;
   }
 
   /**
@@ -2018,7 +2046,7 @@ export class DeliveryManager {
     const mindSessions = this.sessionStates.get(mindName);
     if (!mindSessions) return false;
     for (const [, state] of mindSessions) {
-      if (state.activeCount > 0) return true;
+      if (state.outstanding.size > 0) return true;
     }
     return false;
   }
@@ -2058,24 +2086,22 @@ export class DeliveryManager {
   }
 
   /**
-   * Reset a single session's leaked active count back to zero.
+   * Forget a single session's outstanding deliveries.
    *
-   * Used by the wedged-turn sweep: when a session's `activeCount` drifts above zero
-   * (deliveries outnumbering `done`s) it gates turn completion indefinitely. Once the sweep
-   * confirms the session is genuinely idle, this clears the stale count so the next turn
-   * can complete normally. Batch buffers are left intact — their own maxWait timer flushes
-   * any pending messages.
+   * Used by the wedged-turn sweep: a turn stuck `active` after its `done` may have left
+   * deliveries outstanding that no `done` will now cover. Once the sweep confirms the session
+   * is genuinely idle, this clears them so the session stops reading busy. Batch buffers are
+   * left intact — their own maxWait timer flushes any pending messages.
    *
    * `minIdleMs` guards against a race: if a delivery landed within that window, a fresh turn
-   * may legitimately be in flight (real `activeCount`), so zeroing would complete it early.
-   * In that case we skip — the next sweep retries if it's still wedged. Returns whether the
-   * count was reset.
+   * may legitimately be in flight, so clearing would read it idle early. In that case we
+   * skip — the next sweep retries if it's still wedged. Returns whether anything was reset.
    */
   clearSessionActive(mindName: string, session: string, minIdleMs: number): boolean {
     const state = this.sessionStates.get(mindName)?.get(session);
     if (!state) return false;
     if (Date.now() - state.lastDeliveredAt < minIdleMs) return false;
-    state.activeCount = 0;
+    state.outstanding.clear();
     // A wedged session held a concurrency slot too; the sweep has just established the
     // session is idle, so releasing here is what stops the repair from leaving the mind
     // gated until the slot ages out.
@@ -2526,7 +2552,15 @@ export class DeliveryManager {
       if (payload.sender) senders.add(payload.sender);
       const channels = new Set<string>();
       if (payload.channel) channels.add(payload.channel);
-      const ownsSlot = this.incrementActive(baseName, session, senders, channels);
+      const deliveryId = randomUUID();
+      const ownsSlot = this.incrementActive(
+        baseName,
+        session,
+        deliveryId,
+        mindName,
+        senders,
+        channels,
+      );
       const wakeAt = ownsSlot ? this.noteWake(baseName, session, sessionConfig) : undefined;
       const typingMap = getTypingMap();
 
@@ -2580,6 +2614,7 @@ export class DeliveryManager {
         const body = JSON.stringify({
           ...enrichedPayload,
           session,
+          deliveryId,
           instructions: sessionConfig.instructions,
           interrupt: sessionConfig.interrupt,
         });
@@ -2588,7 +2623,7 @@ export class DeliveryManager {
         const ok = await this.postToMind(port, body);
         if (!ok) {
           // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
-          this.decrementActive(baseName, session);
+          this.decrementActive(baseName, session, deliveryId);
           // No turn ran, so give the slot back — but only if this delivery took it. A
           // message that folded into a turn already running does not own that turn's slot,
           // and freeing it would open the gate while the mind is still working.
@@ -2614,7 +2649,7 @@ export class DeliveryManager {
           `failed to ${posting ? "deliver" : "prepare delivery"} to ${mindName}`,
           log.errorData(err),
         );
-        this.decrementActive(baseName, session);
+        this.decrementActive(baseName, session, deliveryId);
         if (ownsSlot) releaseTurnSlot(baseName, session);
         this.unnoteWake(baseName, session, wakeAt);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
@@ -2730,6 +2765,7 @@ export class DeliveryManager {
     // From here these rows and (maybe) the turn slot are ours; anything that throws before
     // the POST must hand both back, or the rows are skipped by every sweep and the slot
     // gates the mind until its TTL.
+    const deliveryId = randomUUID();
     let incremented = false;
     let posting = false;
     let acked = false;
@@ -2783,7 +2819,7 @@ export class DeliveryManager {
       }
 
       // Increment active count with metadata (the slot was claimed above).
-      this.incrementActive(baseName, session, senders, channelSet);
+      this.incrementActive(baseName, session, deliveryId, mindName, senders, channelSet);
       incremented = true;
 
       // Snapshot the stale-send baseline per conversation in this batch (see deliverToMind).
@@ -2822,6 +2858,7 @@ export class DeliveryManager {
 
       const body = JSON.stringify({
         session,
+        deliveryId,
         batch: { channels },
         instructions: sessionConfig.instructions,
         interrupt: sessionConfig.interrupt,
@@ -2832,7 +2869,7 @@ export class DeliveryManager {
         const ok = await this.postToMind(port, body);
         if (!ok) {
           // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
-          this.decrementActive(baseName, session);
+          this.decrementActive(baseName, session, deliveryId);
           // Only if this batch took the slot — see the immediate path.
           if (ownsSlot) releaseTurnSlot(baseName, session);
           this.unnoteWake(baseName, session, wakeAt);
@@ -2861,7 +2898,7 @@ export class DeliveryManager {
       } catch (err) {
         // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
         dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
-        this.decrementActive(baseName, session);
+        this.decrementActive(baseName, session, deliveryId);
         if (ownsSlot) releaseTurnSlot(baseName, session);
         this.unnoteWake(baseName, session, wakeAt);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
@@ -2872,7 +2909,7 @@ export class DeliveryManager {
       // The POST path settles its own failures; this is a throw before it got there.
       if (posting) throw err;
       dlog.warn(`failed to prepare batch for ${mindName}/${session}`, log.errorData(err));
-      if (incremented) this.decrementActive(baseName, session);
+      if (incremented) this.decrementActive(baseName, session, deliveryId);
       if (ownsSlot) releaseTurnSlot(baseName, session);
       this.unnoteWake(baseName, session, wakeAt);
       return false;
@@ -3279,6 +3316,8 @@ export class DeliveryManager {
   private incrementActive(
     mind: string,
     session: string,
+    deliveryId: string,
+    process: string,
     senders?: Set<string>,
     channels?: Set<string>,
   ): boolean {
@@ -3288,50 +3327,70 @@ export class DeliveryManager {
       this.sessionStates.set(mind, mindSessions);
     }
     const state = mindSessions.get(session) ?? {
-      activeCount: 0,
+      outstanding: new Map<string, Outstanding>(),
       lastDeliveredAt: 0,
       lastDeliverySenders: new Set<string>(),
       lastDeliveryChannels: new Set<string>(),
       seenChannelProfiles: new Set<string>(),
       announcedChannelInfo: new Map<string, string>(),
     };
-    state.activeCount++;
+    const now = Date.now();
+    state.outstanding.set(deliveryId, { process, at: now });
     // Take the concurrency slot in the same tick as the gate check above it, so two
     // deliveries can't both pass a gate neither has yet claimed against.
     const owned = acquireTurnSlot(mind, session);
-    state.lastDeliveredAt = Date.now();
+    state.lastDeliveredAt = now;
     if (senders) state.lastDeliverySenders = senders;
     if (channels) state.lastDeliveryChannels = channels;
     mindSessions.set(session, state);
     return owned;
   }
 
-  private decrementActive(mind: string, session: string): void {
-    // Deliberately does NOT free the concurrency slot. This runs on the failed-POST paths
-    // as well as on `done`, and a failed delivery that folded into a running turn does not
-    // end that turn — releasing here would open the gate mid-turn. `sessionDone` frees the
-    // slot instead, which is the one signal that actually means the turn is over.
+  /** A POST the mind never took: its delivery is no longer outstanding. */
+  private decrementActive(mind: string, session: string, deliveryId: string): void {
+    // Deliberately does NOT free the concurrency slot. This runs on the failed-POST paths,
+    // and a failed delivery that would have folded into a running turn does not end that
+    // turn — releasing here would open the gate mid-turn. `sessionDone` frees the slot
+    // instead, which is the one signal that actually means the turn is over.
     const mindSessions = this.sessionStates.get(mind);
-    if (!mindSessions) return;
-    const state = mindSessions.get(session);
-    if (!state) return;
+    const state = mindSessions?.get(session);
+    if (!mindSessions || !state) return;
+    if (state.outstanding.delete(deliveryId) && state.outstanding.size === 0) {
+      this.onIdle(mind, session, mindSessions);
+    }
+  }
 
-    state.activeCount = Math.max(0, state.activeCount - 1);
+  /** Retire the deliveries a `done` covers (see `sessionDone`). */
+  private retire(mind: string, session: string, report: DoneReport | undefined): void {
+    const mindSessions = this.sessionStates.get(mind);
+    const state = mindSessions?.get(session);
+    if (!mindSessions || !state || state.outstanding.size === 0) return;
+    const now = Date.now();
+    for (const [id, d] of state.outstanding) {
+      // A mind never reports a variant's deliveries, nor a variant its parent's: the two
+      // share this state (keyed by base name) but not each other's turns.
+      const own = !report || d.process === report.process;
+      const covered = own && (!report?.covers || report.covers.includes(id));
+      // A delivery no `done` will ever cover — its mind lost it without saying — would hold
+      // the session busy and its slot taken forever; one older than a turn can plausibly
+      // run is let go, as the slot's own TTL lets go of the slot.
+      if (covered || now - d.at > SLOT_MAX_AGE_MS) state.outstanding.delete(id);
+    }
+    if (state.outstanding.size === 0) this.onIdle(mind, session, mindSessions);
+  }
 
-    // If session went idle, check for pending batch
-    if (state.activeCount === 0) {
-      const bufferKey = `${mind}:${session}`;
-      const buffer = this.batchBuffers.get(bufferKey);
-      if (buffer && buffer.messages.length > 0) {
-        // Session idle + messages buffered → flush after debounce
-        this.scheduleBatchTimers(mind, session, bufferKey);
-      } else if (session.startsWith("new-")) {
-        // Ephemeral $new sessions get a unique name per message and never recur,
-        // so their state would accumulate forever. Reclaim it once idle. Long-lived
-        // named sessions keep their entry (bounded by routing config).
-        mindSessions.delete(session);
-        if (mindSessions.size === 0) this.sessionStates.delete(mind);
-      }
+  private onIdle(mind: string, session: string, mindSessions: Map<string, SessionState>): void {
+    const bufferKey = `${mind}:${session}`;
+    const buffer = this.batchBuffers.get(bufferKey);
+    if (buffer && buffer.messages.length > 0) {
+      // Session idle + messages buffered → flush after debounce
+      this.scheduleBatchTimers(mind, session, bufferKey);
+    } else if (session.startsWith("new-")) {
+      // Ephemeral $new sessions get a unique name per message and never recur,
+      // so their state would accumulate forever. Reclaim it once idle. Long-lived
+      // named sessions keep their entry (bounded by routing config).
+      mindSessions.delete(session);
+      if (mindSessions.size === 0) this.sessionStates.delete(mind);
     }
   }
 }

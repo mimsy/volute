@@ -311,6 +311,9 @@ export function createMind(options: {
         const result = await runHooks(hooksDir, event, {
           ...(input as Record<string, unknown>),
           session: session.name,
+          // The delivery this prompt answers — the running turn's, or, between turns, the
+          // next one queued — so the notices it drains are that turn's (#1207).
+          messageId: session.currentMessageId ?? session.messageIds[0]?.id,
         });
         if (result.additionalContext || Object.keys(result.metadata).length > 0) {
           const channel = session.currentMessageId
@@ -575,10 +578,25 @@ export function createMind(options: {
         },
       };
 
-      /** Emit done to both local listeners and the daemon (best-effort with retries). */
+      /**
+       * Emit done to both local listeners and the daemon (best-effort with retries). Only
+       * the paths where the stream ended for good call this, and its unanswered input goes
+       * with it — so the `done` covers every delivery still pending here (#1207).
+       */
       function emitDone() {
         broadcastToSession(session, { type: "done" });
-        daemonEmit({ type: "done", session: session.name }).catch((err) => {
+        const covers = [session.currentMessageId, ...session.messageIds.map((e) => e.id)].filter(
+          (id): id is string => id !== undefined,
+        );
+        session.messageIds = [];
+        // Always a turn's end — the slot must come back — so it names one even when the
+        // stream died before its first message; with nothing to cover, it covers all.
+        daemonEmit({
+          type: "done",
+          session: session.name,
+          messageId: session.currentMessageId ?? covers[0],
+          ...(covers.length > 0 ? { covers } : {}),
+        }).catch((err) => {
           log("mind", `session "${session.name}": failed to emit done to daemon:`, err);
         });
       }
@@ -589,8 +607,13 @@ export function createMind(options: {
        * (and thus won't mark notices delivered) before the done arrives.
        */
       async function emitError(err: unknown) {
-        await daemonEmit({ type: "error", session: session.name, content: String(err) }).catch(
-          (e) => log("mind", `session "${session.name}": failed to emit error to daemon:`, e),
+        await daemonEmit({
+          type: "error",
+          session: session.name,
+          messageId: session.currentMessageId,
+          content: String(err),
+        }).catch((e) =>
+          log("mind", `session "${session.name}": failed to emit error to daemon:`, e),
         );
       }
 

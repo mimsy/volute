@@ -75,6 +75,13 @@ export type DaemonEvent = {
   messageId?: string;
   content?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * On a `done`: the daemon delivery ids the turn finished — the one that drove it and every
+   * one folded into it — so the daemon knows the turn is over, however many it took (#1207).
+   * A `done` with `covers` but no `messageId` ends no turn: it retires a delivery that
+   * failed while another turn ran on.
+   */
+  covers?: string[];
 };
 
 export async function daemonEmit(event: DaemonEvent): Promise<void> {

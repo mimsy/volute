@@ -198,7 +198,7 @@ describe("DeliveryManager", () => {
       removeMind(name);
     });
 
-    it("sessionDone decrements active count", () => {
+    it("sessionDone on an unknown session is a no-op", () => {
       manager = new DeliveryManager();
       // Calling sessionDone on nonexistent session should not throw
       manager.sessionDone("nonexistent", "main");
@@ -212,7 +212,10 @@ describe("DeliveryManager", () => {
     it("clearSessionActive resets a leaked active count when the session is idle", () => {
       manager = new DeliveryManager();
       // lastDeliveredAt long in the past → idle → safe to reset
-      seedSessionState(manager, "leakmind", "s1", { activeCount: 3, lastDeliveredAt: 0 });
+      seedSessionState(manager, "leakmind", "s1", {
+        outstanding: new Map([["d1", { process: "leakmind", at: 0 }]]),
+        lastDeliveredAt: 0,
+      });
       assert.equal(manager.isSessionBusy("leakmind", "s1"), true);
 
       const reset = manager.clearSessionActive("leakmind", "s1", 10 * 60_000);
@@ -223,7 +226,10 @@ describe("DeliveryManager", () => {
     it("clearSessionActive does NOT reset when a delivery raced in recently", () => {
       manager = new DeliveryManager();
       // lastDeliveredAt is now → a fresh turn may be in flight → must not zero it
-      seedSessionState(manager, "racemind", "s1", { activeCount: 1, lastDeliveredAt: Date.now() });
+      seedSessionState(manager, "racemind", "s1", {
+        outstanding: new Map([["d1", { process: "racemind", at: Date.now() }]]),
+        lastDeliveredAt: Date.now(),
+      });
 
       const reset = manager.clearSessionActive("racemind", "s1", 10 * 60_000);
       assert.equal(reset, false, "recent delivery should block the reset");
@@ -243,7 +249,7 @@ describe("DeliveryManager", () => {
         states.set(mind, mindSessions);
       }
       mindSessions.set(session, {
-        activeCount: 1,
+        outstanding: new Map([["d1", { process: "x", at: Date.now() }]]),
         lastDeliveredAt: Date.now(),
         lastDeliverySenders: new Set<string>(),
         lastDeliveryChannels: new Set<string>(),
@@ -257,7 +263,7 @@ describe("DeliveryManager", () => {
       const states = seedActiveSession(manager, "emind", "new-123-abc");
       assert.equal(manager.isSessionBusy("emind", "new-123-abc"), true);
 
-      // Turn completes → decrementActive drops the ephemeral entry (and empties the mind map).
+      // Turn completes → the idle session drops the ephemeral entry (and empties the mind map).
       manager.sessionDone("emind", "new-123-abc");
 
       assert.equal(manager.isSessionBusy("emind", "new-123-abc"), false);
@@ -299,7 +305,7 @@ describe("DeliveryManager", () => {
         states.set(mind, mindSessions);
       }
       mindSessions.set(session, {
-        activeCount: 1,
+        outstanding: new Map([["d1", { process: "x", at: Date.now() }]]),
         lastDeliveredAt: Date.now(),
         lastDeliverySenders: new Set(senders),
         lastDeliveryChannels: new Set(channels),
@@ -403,12 +409,12 @@ describe("DeliveryManager", () => {
       const name = setBatchSession();
       manager = new DeliveryManager();
 
-      // Simulate session state with activeCount === 0 (mind finished processing)
+      // Simulate session state with nothing outstanding (mind finished processing)
       const states = (manager as any).sessionStates as Map<string, Map<string, any>>;
       const mindSessions = new Map();
       states.set(name, mindSessions);
       mindSessions.set("group", {
-        activeCount: 0,
+        outstanding: new Map(),
         lastDeliveredAt: Date.now(),
         lastDeliverySenders: new Set(["alice"]),
         lastDeliveryChannels: new Set(["group:chat"]),

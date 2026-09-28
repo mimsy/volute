@@ -18,6 +18,12 @@ type ActiveTurn = {
    * only stamped with a turn its own process opened (see `turnStamp`).
    */
   owner: string;
+  /**
+   * The delivery that drove the turn — the `messageId` on the event that opened it. A `done`
+   * ends this turn only if it names the same one (see `handleMindEvent`), so a `done` that
+   * belongs to some other delivery cannot close a turn still running (#1207).
+   */
+  driver: string | undefined;
 };
 
 /**
@@ -41,21 +47,48 @@ function key(mind: string, session?: string | null): string {
 }
 
 /**
- * Sessions (`mind:session`) that have seen an `error` event since their last `done`.
+ * Turns (`mind:session:messageId`) that have seen an `error` event since their `done`.
  * Used to distinguish a failed turn from a clean one: failure notices are only marked
  * delivered after a turn that completed WITHOUT an error, so they accumulate across a
- * full outage and reach the mind on its next genuinely successful turn.
+ * full outage and reach the mind on its next genuinely successful turn. Keyed by the
+ * delivery the error names, so an error in one turn is never charged to another on the
+ * same session; an error naming none is keyed by the session alone.
  */
 const erroredSessions = new Set<string>();
 
-/** Flag that the current turn for a mind+session hit an error. */
-export function markErrored(mind: string, session?: string | null): void {
-  erroredSessions.add(key(mind, session));
+function errKey(mind: string, session: string | null | undefined, messageId?: string): string {
+  // NUL, not ":", between the parts: thread names are channel-shaped and carry colons.
+  return `${key(mind, session)}\0${messageId ?? ""}`;
 }
 
-/** Return whether the just-finished turn errored, clearing the flag. */
-export function takeErrored(mind: string, session?: string | null): boolean {
-  return erroredSessions.delete(key(mind, session));
+/** Flag that the turn driven by `messageId` (or, naming none, the session's) hit an error. */
+export function markErrored(mind: string, session?: string | null, messageId?: string): void {
+  erroredSessions.add(errKey(mind, session, messageId));
+}
+
+/**
+ * Return whether any of the turns driven by `messageIds` errored, clearing every flag read.
+ * The session's unkeyed flag (an error that named no turn) is read too unless `unkeyed` is
+ * false; without `messageIds`, every flag on the session is.
+ */
+export function takeErrored(
+  mind: string,
+  session?: string | null,
+  messageIds?: string[],
+  unkeyed = true,
+): boolean {
+  let errored = false;
+  if (!messageIds) {
+    const prefix = `${key(mind, session)}\0`;
+    for (const k of [...erroredSessions]) {
+      if (k.startsWith(prefix)) errored = erroredSessions.delete(k) || errored;
+    }
+    return errored;
+  }
+  if (unkeyed) errored = erroredSessions.delete(errKey(mind, session));
+  for (const id of messageIds)
+    errored = erroredSessions.delete(errKey(mind, session, id)) || errored;
+  return errored;
 }
 
 /**
@@ -70,6 +103,7 @@ export async function createTurn(
   mind: string,
   session?: string | null,
   owner: string = mind,
+  driver?: string,
 ): Promise<string | undefined> {
   const k = key(mind, session);
   const existing = activeTurns.get(k);
@@ -81,6 +115,7 @@ export async function createTurn(
     lastToolUseEventId: undefined,
     toolUseEventIds: new Map(),
     owner,
+    driver,
   };
   // Reserve the slot synchronously to prevent concurrent callers from creating duplicates
   activeTurns.set(k, entry);
@@ -103,6 +138,11 @@ export async function createTurn(
 /** The process that opened this mind+thread's active turn (see `ActiveTurn.owner`). */
 export function getActiveTurnOwner(mind: string, session?: string | null): string | undefined {
   return activeTurns.get(key(mind, session))?.owner;
+}
+
+/** The delivery that drove this mind+thread's active turn (see `ActiveTurn.driver`). */
+export function getActiveTurnDriver(mind: string, session?: string | null): string | undefined {
+  return activeTurns.get(key(mind, session))?.driver;
 }
 
 /** Get the active turn ID for exactly this mind+thread (`mind:*` when there is none). */
@@ -290,20 +330,18 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
  * Reconcile turns wedged in `active` despite already having received a `done`, and
  * sessionless turns that have gone quiet.
  *
- * A turn with a session completes only when a `done` arrives AND the delivery manager
- * reports the session as not busy (activeCount === 0). That counter increments per delivery
- * and decrements per `done` (or failed delivery); interrupts and maxWait flushes deliver
- * mid-turn yet get folded into fewer `done`s, so the counter can leak positive and gate
- * completion indefinitely (until the mind stops or this sweep runs) — the turn stays active,
- * never summarized, and keeps absorbing later events.
+ * A turn with a session completes when a `done` naming its driver arrives from the process
+ * that opened it (see `handleMindEvent`). One that saw a `done` yet stayed active — its
+ * completion failed to persist, or a `done` named some other delivery and the turn's own
+ * never came — would stay active indefinitely, never summarized, absorbing later events.
  *
- * This sweep catches that drift: an active turn that has seen ≥1 `done` and has had no
+ * This sweep catches that: an active turn that has seen ≥1 `done` and has had no
  * events for `idleMs` is genuinely finished. A sessionless `mind:*` turn is closed only
  * by a sessionless `done` (a thread's `done` never ends an unrelated turn), and a
  * template that tags only its `done` never sends one — so a sessionless turn with no
  * events for `idleMs` is finished too, `done` or not. We mark it complete and drop any in-memory
  * entry so the next event opens a fresh turn. Callers summarize the returned turns and
- * reset the leaked session counter. Idempotent and safe to run on a timer.
+ * forget the sessions' outstanding deliveries. Idempotent and safe to run on a timer.
  */
 export async function sweepWedgedTurns(idleMs: number): Promise<OrphanedTurn[]> {
   const db = await getDb();

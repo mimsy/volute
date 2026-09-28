@@ -567,19 +567,30 @@ describe("pi failed dispatch", () => {
     };
     try {
       let bDone = false;
+      let b = "";
       faux.setResponses([
         async () => {
           // Turn A is current while B arrives and fails.
-          send(mind, "main", "fail-me", (e) => {
+          b = send(mind, "main", "fail-me", (e) => {
             if (e.type === "done") bDone = true;
           });
           await waitFor(() => bDone, "B's done at B's listener");
           return fauxAssistantMessage("A done");
         },
       ]);
-      send(mind, "main", "A");
+      const a = send(mind, "main", "A");
       await waitFor(() => events("done", "main").length >= 2, "both turns done");
       assert.ok(bDone);
+      // B's done retires B and ends no turn — A is still running beside it; A's own done
+      // names A (#1207).
+      const [bEnd, aEnd] = events("done", "main") as (Captured & { covers?: string[] })[];
+      assert.deepEqual(bEnd.covers, [b]);
+      assert.equal(bEnd.messageId, undefined);
+      assert.equal(aEnd.messageId, a);
+      assert.ok(aEnd.covers?.includes(a));
+      assert.ok(!aEnd.covers?.includes(b), "B never reached pi's queue");
+      const bError = events("error", "main").find((e) => e.messageId === b);
+      assert.ok(bError, "B's error names B, not the turn running beside it");
     } finally {
       pca.AgentSession.prototype.prompt = prompt;
     }

@@ -429,6 +429,8 @@ export async function createMind(options: {
           const result = await runHooks(hooksDir, "pre-prompt", {
             event: "pre-prompt",
             session: session.name,
+            // The delivery this prompt answers, so the notices it drains are its turn's.
+            messageId: session.currentMessageId ?? session.messageIds[0],
             prompt: event.prompt,
           });
           if (result.additionalContext) {
@@ -1059,12 +1061,28 @@ export async function createMind(options: {
         })()
           .catch(async (err) => {
             log("mind", `session "${sessionName}": prompt failed:`, err);
-            // Tell the daemon the turn failed (so it records a notice for the mind's next
-            // successful turn) before done, then complete the turn locally and on the daemon.
-            await daemonEmit({ type: "error", session: sessionName, content: String(err) }).catch(
-              () => {},
-            );
-            await daemonEmit({ type: "done", session: sessionName }).catch(() => {});
+            // The rejected prompt never entered pi's queue, so no turn will shift its id.
+            const pending = session.messageIds.indexOf(meta.messageId);
+            if (pending >= 0) session.messageIds.splice(pending, 1);
+            // Tell the daemon the prompt failed (so it records a notice for the mind's next
+            // successful turn) before done, then finish it locally and on the daemon. If
+            // another run is streaming — this was a followUp — the failure ends no turn: the
+            // `done` only retires this delivery, and the run beside it goes on (#1207).
+            const runningBeside =
+              session.agentSession?.isStreaming === true &&
+              session.currentMessageId !== meta.messageId;
+            await daemonEmit({
+              type: "error",
+              session: sessionName,
+              messageId: meta.messageId,
+              content: String(err),
+            }).catch(() => {});
+            await daemonEmit({
+              type: "done",
+              session: sessionName,
+              ...(runningBeside ? {} : { messageId: meta.messageId }),
+              covers: [meta.messageId],
+            }).catch(() => {});
             broadcast(session, { type: "done", messageId: meta.messageId });
           })
           .finally(() => {

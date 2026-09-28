@@ -1878,6 +1878,7 @@ const app = new Hono<AuthEnv>()
         messageId: z.string().optional(),
         content: z.string().optional(),
         metadata: z.record(z.string(), z.unknown()).optional(),
+        covers: z.array(z.string()).optional(),
       }),
     ),
     async (c) => {
@@ -2264,9 +2265,10 @@ const app = new Hono<AuthEnv>()
     const notices = await drainEvents(baseName, session);
     if (notices.length === 0) return c.json({ context: null, notices: [] });
 
-    // Remember the high-water id so a clean turn clears exactly these.
+    // Remember the high-water id so a clean turn clears exactly these — the turn of the
+    // delivery the hook names, when it names one.
     const maxId = notices.reduce((m, n) => Math.max(m, n.id), 0);
-    setNoticeDrainWatermark(baseName, session, maxId);
+    setNoticeDrainWatermark(baseName, session, maxId, c.req.query("messageId") || undefined);
 
     return c.json({ context: formatEvents(notices), notices });
   })
