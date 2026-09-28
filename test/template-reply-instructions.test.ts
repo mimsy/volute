@@ -186,13 +186,21 @@ describe("pi template: reply instructions vs system events", () => {
 });
 
 describe("codex template: reply instructions vs system events", () => {
-  let turnContextFor: typeof import("../templates/codex/src/lib/turn-context.js")["turnContextFor"];
+  let turnContextForBatch: typeof import("../templates/codex/src/lib/turn-context.js")["turnContextFor"];
+  /** Most cases run one message per turn. */
+  const turnContextFor = (
+    meta: Parameters<typeof turnContextForBatch>[0][number],
+    session: Parameters<typeof turnContextForBatch>[1],
+    prompts: Parameters<typeof turnContextForBatch>[2],
+  ) => turnContextForBatch([meta], session, prompts);
   let prompts: { event_instructions: string; reply_instructions: string };
 
   before(async () => {
     const dir = composeTemplate(templatesRoot, "codex").composedDir;
     composed.push(dir);
-    ({ turnContextFor } = await import(resolvePath(dir, "src/lib/turn-context.js")));
+    ({ turnContextFor: turnContextForBatch } = await import(
+      resolvePath(dir, "src/lib/turn-context.js")
+    ));
     const { loadPrompts } = await import(resolvePath(dir, "src/lib/startup.js"));
     prompts = loadPrompts();
   });
@@ -276,6 +284,28 @@ describe("codex template: reply instructions vs system events", () => {
       );
       assert.match(system?.content ?? "", /no reply is needed/);
       assert.ok(turnContextFor(bob, session, prompts as never)?.content.includes("@bob"));
+    });
+  });
+
+  describe("a turn folding several messages (#1200)", () => {
+    it("is a message turn when any message is real, and names the real channel", () => {
+      const ctx = turnContextForBatch(
+        [{ channel: "event:schedule:1" }, { channel: "@alice", sender: "alice" }] as never,
+        newSession(),
+        prompts as never,
+      );
+      assert.equal(ctx?.source, "reply-instructions");
+      assert.ok(ctx?.content.includes("@alice"));
+      assert.ok(!ctx?.content.includes("event:"));
+    });
+
+    it("is an event turn when every message is an event", () => {
+      const ctx = turnContextForBatch(
+        [{ channel: "event:schedule:1" }, { channel: "event:schedule:2", isEvent: true }] as never,
+        newSession(),
+        prompts as never,
+      );
+      assert.equal(ctx?.source, "event-instructions");
     });
   });
 });

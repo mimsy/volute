@@ -31,16 +31,62 @@ export function parseArgs(): { port: number } {
 export type SubagentConfig = {
   description: string;
   systemPrompt: string; // path relative to home/, e.g. "SOUL.md"
+  /** claude and pi. A codex subagent has codex's own tools (shell, file edits). */
   tools?: string[];
+  /** claude and pi. A codex subagent runs a single codex turn. */
   maxTurns?: number;
   /**
    * The model this subagent runs on (claude template): an alias like "sonnet" or "opus", a
    * full model id, or "inherit" for the mind's own model. Defaults to "sonnet" for a mind on
-   * an Opus- or Fable-class model, and to "inherit" for every other. pi
+   * an Opus- or Fable-class model, and to "inherit" for every other. pi and codex
    * subagents always run on the mind's model.
    */
   model?: string;
 };
+
+/** A configured subagent whose prompt file could be read: its config, and that prompt. */
+export type LoadedSubagent = SubagentConfig & {
+  /** `systemPrompt` resolved under the mind's home. */
+  promptPath: string;
+  /** The prompt file's contents when loaded. */
+  prompt: string;
+};
+
+/**
+ * The mind's `subagents` config, keeping only entries a template can actually run: each
+ * needs a description and a `systemPrompt` file (relative to `homeDir`) that exists and
+ * isn't empty. Anything else is logged and skipped, so the mind is never offered a subagent
+ * that can't start.
+ */
+export function loadSubagents(
+  configs: Record<string, SubagentConfig> | undefined,
+  homeDir: string,
+): Record<string, LoadedSubagent> {
+  const result: Record<string, LoadedSubagent> = {};
+  for (const [name, config] of Object.entries(configs ?? {})) {
+    if (typeof config?.description !== "string" || typeof config.systemPrompt !== "string") {
+      log("mind", `subagent "${name}": missing description or systemPrompt, skipping`);
+      continue;
+    }
+    const promptPath = resolve(homeDir, config.systemPrompt);
+    try {
+      const prompt = readFileSync(promptPath, "utf-8");
+      if (!prompt.trim()) {
+        log("mind", `subagent "${name}": ${config.systemPrompt} is empty, skipping`);
+        continue;
+      }
+      result[name] = { ...config, promptPath, prompt };
+    } catch (err: any) {
+      log(
+        "mind",
+        err?.code === "ENOENT"
+          ? `subagent "${name}": ${config.systemPrompt} not found, skipping`
+          : `subagent "${name}": failed to read ${config.systemPrompt}: ${err?.message ?? err}`,
+      );
+    }
+  }
+  return result;
+}
 
 /** Extended-thinking config, passed through to the Claude Agent SDK's `thinking` option.
  * `adaptive` on current models (Opus 4.6+, Sonnet 5, Fable); `enabled` for older models

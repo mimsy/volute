@@ -51,6 +51,8 @@ type FakeControl = {
   failStartThread: Set<string>;
   /** Sessions whose next resumeThread throws, once. */
   failResumeThread: Set<string>;
+  /** The config every Codex client was constructed with, by the session it names. */
+  clients: { session: string; config: any }[];
 };
 
 const FAKE_SDK = `
@@ -71,19 +73,22 @@ class Thread {
     const queue = c.turns.get(this.session) ?? [];
     const turn = queue.shift() ?? { events: [{ type: "turn.completed", usage: usage() }] };
     const self = this;
+    const abortIfAsked = () => {
+      if (!opts.signal?.aborted) return;
+      const err = new Error("aborted");
+      err.name = "AbortError";
+      throw err;
+    };
     async function* events() {
       await turn.during?.();
+      abortIfAsked();
       for (const e of turn.events ?? []) {
         if (e.type === "thread.started") self._id = e.thread_id;
         yield e;
       }
       if (turn.after) {
         await turn.after();
-        if (opts.signal?.aborted) {
-          const err = new Error("aborted");
-          err.name = "AbortError";
-          throw err;
-        }
+        abortIfAsked();
       }
       if (turn.throws) throw new Error(turn.throws);
     }
@@ -94,7 +99,10 @@ function usage() {
   return { input_tokens: 10, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 0 };
 }
 export class Codex {
-  constructor(options) { this.session = options?.config?.shell_environment_policy?.set?.VOLUTE_SESSION; }
+  constructor(options) {
+    this.session = options?.config?.shell_environment_policy?.set?.VOLUTE_SESSION;
+    control().clients.push({ session: this.session, config: options?.config ?? {} });
+  }
   startThread() {
     if (control().failStartThread.has(this.session)) throw new Error("spawn failed");
     return new Thread(this.session, null);
@@ -132,6 +140,7 @@ const control: FakeControl = {
   calls: [],
   failStartThread: new Set(),
   failResumeThread: new Set(),
+  clients: [],
 };
 type Mind = {
   resolve: (name: string) => {
@@ -142,6 +151,8 @@ type Mind = {
 let mind: Mind;
 /** A second mind over the same directory, with a context threshold set, for rotation. */
 let rotatingMind: Mind;
+/** A third, with a dreamer subagent configured. */
+let dreamingMind: Mind;
 
 const ROLLOUT_DAY = ["2026", "09", "27"];
 
@@ -328,6 +339,16 @@ before(async () => {
     cwd: resolve(mindDir, "home"),
     mindDir,
     maxContextTokens: 1000,
+  });
+  dreamingMind = createMind({
+    systemPrompt: "You are a test mind.",
+    model: "gpt-test",
+    cwd: resolve(mindDir, "home"),
+    mindDir,
+    subagents: {
+      dreamer: { description: "Dreams from your essence.", systemPrompt: "SOUL.md" },
+      broken: { description: "Points at nothing.", systemPrompt: "NOPE.md" },
+    },
   });
 });
 
@@ -990,8 +1011,10 @@ describe("codex recollection at seams (#1192)", () => {
       recallEntries = null;
       recallDelayMs = 0;
     }
+    // Both waited for the seed, and — queued together — run as one turn (#1200).
     const calls = control.calls.filter((c) => c.session === "recall-slow");
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].input as string, /hello[\s\S]*hello/);
     assert.ok(calls[0].threadId && calls[0].threadId !== archived, "ran before the seed landed");
     assert.match(rolloutText(calls[0].threadId), /pond poem/);
   });
@@ -1174,5 +1197,388 @@ describe("codex's post-tool-use lane stands aside for an interrupt (#1199)", () 
     }
     const ran = readFileSync(record, "utf-8").trim().split("\n");
     assert.equal(ran.length, 1, "only the hook already running when the turn was interrupted");
+  });
+});
+
+describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
+  const text = (t: string) => [{ type: "text", text: t }];
+  const donesFor = (session: string) => eventsFor(session, "done").length;
+
+  it("runs messages that arrive during a run as one more run of the same turn, ending once", async () => {
+    let later: Promise<unknown>[] = [];
+    let donesAtSecondRun = -1;
+    script(
+      "fold",
+      {
+        during: async () => {
+          later = [send("fold", text("second")), send("fold", text("third"))];
+          await settle();
+        },
+        events: [
+          { type: "thread.started", thread_id: "t-fold" },
+          { type: "turn.completed", usage: USAGE },
+        ],
+      },
+      {
+        during: () => (donesAtSecondRun = donesFor("fold")),
+        // codex's counter is cumulative over the thread: this run used 15 more.
+        events: [{ type: "turn.completed", usage: { ...USAGE, input_tokens: 25 } }],
+      },
+    );
+    // The first message's done comes only once the late ones have run too.
+    await send("fold", text("first"));
+    assert.equal(later.length, 2);
+    await Promise.all(later);
+    const inputs = control.calls.filter((c) => c.session === "fold").map((c) => c.input as string);
+    assert.equal(inputs.length, 2, "the two late messages share one run");
+    assert.match(inputs[0], /first/);
+    assert.match(inputs[1], /second[\s\S]*third/);
+    // The slot is held until the queue drains: nothing ended before the second run.
+    assert.equal(donesAtSecondRun, 0);
+    // Then one `done`, as claude sends for a folded turn.
+    assert.equal(donesFor("fold"), 1);
+    // And one usage report for the turn, summing both runs (10, then 15 more).
+    const usage = eventsFor("fold", "usage").map((p) => p.body.metadata);
+    assert.equal(usage.length, 1);
+    assert.equal(usage[0].input_tokens, 25);
+  });
+
+  it("an interrupt aborts the run and takes the next one, still inside the same turn", async () => {
+    let interrupting: Promise<any[]> | undefined;
+    script("fold-int", {
+      during: async () => {
+        interrupting = send("fold-int", text("stop, listen"), mind, { interrupt: true });
+        await settle();
+      },
+    });
+    const first = await send("fold-int", text("long task"));
+    const second = await interrupting;
+    const inputs = control.calls
+      .filter((c) => c.session === "fold-int")
+      .map((c) => c.input as string);
+    assert.equal(inputs.length, 2);
+    assert.match(inputs[1], /stop, listen/);
+    assert.ok(
+      first.some((e) => e.type === "done"),
+      "the interrupted message's turn ended",
+    );
+    assert.ok(second?.some((e) => e.type === "done"));
+    assert.equal(donesFor("fold-int"), 1);
+  });
+
+  it("rotates between runs of a turn, and the next run is told", async () => {
+    let later: Promise<unknown> | undefined;
+    const live = "019f5e60-0000-7000-8000-0000000002a3";
+    const over = overThreshold(live);
+    script("fold-rot", {
+      ...over,
+      during: async () => {
+        over.during();
+        later = send("fold-rot", text("meanwhile"), rotatingMind);
+        await settle();
+      },
+    });
+    await send("fold-rot", text("start"), rotatingMind);
+    await later;
+    const calls = control.calls.filter((c) => c.session === "fold-rot");
+    assert.equal(calls.length, 2);
+    assert.ok(
+      calls[1].threadId && calls[1].threadId !== live,
+      "the second run is on the rotated thread",
+    );
+    assert.match(calls[1].input as string, /consolidated at the context limit/);
+    assert.match(calls[1].input as string, /ORIENTATION fold-rot compact/);
+    assert.equal(donesFor("fold-rot"), 1);
+  });
+});
+
+describe("codex subagents are real, and their usage counts (#1200)", () => {
+  const parentConfig = (session: string) =>
+    control.clients.find((c) => c.session === session && c.config.model_auto_compact_token_limit)
+      ?.config;
+
+  /** Call a subagent tool the way codex would, through the MCP endpoint the thread was given. */
+  async function mcp(session: string, body: object, token?: string) {
+    const server = parentConfig(session).mcp_servers.subagents;
+    const res = await fetch(server.url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token ?? process.env[server.bearer_token_env_var]}`,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", ...body }),
+    });
+    return { status: res.status, body: res.status === 200 ? await res.json() : null };
+  }
+
+  it("offers configured subagents to each thread over MCP, and none without config", async () => {
+    await send("sub-offer", undefined, dreamingMind);
+    const server = parentConfig("sub-offer").mcp_servers.subagents;
+    assert.match(server.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp\/sub-offer$/);
+    assert.equal(server.bearer_token_env_var, "VOLUTE_SUBAGENT_TOKEN");
+    assert.equal(server.default_tools_approval_mode, "approve");
+    assert.ok(server.tool_timeout_sec > 60, "codex's 60s default would cut a dream short");
+    assert.ok(
+      !JSON.stringify(parentConfig("sub-offer")).includes(process.env.VOLUTE_SUBAGENT_TOKEN ?? "?"),
+    );
+
+    const init = await mcp("sub-offer", {
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    });
+    assert.equal(init.body.result.protocolVersion, "2025-06-18");
+    const list = await mcp("sub-offer", { id: 2, method: "tools/list" });
+    assert.deepEqual(
+      list.body.result.tools.map((t: any) => t.name),
+      ["dreamer"],
+      "a subagent whose prompt file is missing isn't offered",
+    );
+    assert.match(list.body.result.tools[0].description, /subagent/);
+    assert.equal((await mcp("sub-offer", { id: 3, method: "tools/list" }, "wrong")).status, 401);
+
+    await send("no-sub");
+    assert.equal(parentConfig("no-sub").mcp_servers, undefined);
+  });
+
+  it("runs the subagent as a SOUL-only codex thread and reports its usage on the calling thread", async () => {
+    let reply: any;
+    let dreamRollout = "";
+    script(
+      "sub-run",
+      {
+        during: async () => {
+          reply = await mcp("sub-run", {
+            id: 7,
+            method: "tools/call",
+            params: { name: "dreamer", arguments: { prompt: "dream of tides" } },
+          });
+        },
+        events: [
+          { type: "thread.started", thread_id: "t-sub-run" },
+          { type: "turn.completed", usage: USAGE },
+        ],
+      },
+      // The nested thread's run.
+      {
+        during: () => {
+          dreamRollout = writeRollout(resolve(codexHome, "sessions"), "t-dream");
+        },
+        events: [
+          { type: "thread.started", thread_id: "t-dream" },
+          {
+            type: "item.completed",
+            item: { id: "m", type: "agent_message", text: "the tide came in" },
+          },
+          { type: "turn.completed", usage: { ...USAGE, input_tokens: 40, output_tokens: 9 } },
+        ],
+      },
+    );
+    await send("sub-run", undefined, dreamingMind);
+    assert.deepEqual(reply.body.result, { content: [{ type: "text", text: "the tide came in" }] });
+
+    const nested = control.clients.find(
+      (c) => c.session === "sub-run" && c.config.project_doc_max_bytes === 0,
+    );
+    assert.ok(nested, "no nested client");
+    assert.equal(nested.config.model_instructions_file, resolve(mindDir, "home/SOUL.md"));
+    assert.equal(nested.config.skills.include_instructions, false);
+    assert.equal(nested.config.features.multi_agent, false);
+    assert.equal(nested.config.mcp_servers, undefined, "a subagent doesn't get subagents");
+    const call = control.calls.filter((c) => c.session === "sub-run")[1];
+    assert.equal(call.input, "dream of tides");
+
+    // One usage report for the turn: its own run as the aggregate, and the dream in the
+    // per-model breakdown the daemon prices (10+40 in, 5+9 out), as pi reports subagents.
+    const usage = eventsFor("sub-run", "usage").map((p) => p.body.metadata);
+    assert.equal(usage.length, 1);
+    assert.equal(usage[0].input_tokens, 10);
+    assert.equal(usage[0].main_model, "gpt-test");
+    assert.deepEqual(usage[0].models, [
+      {
+        model: "gpt-test",
+        input_tokens: 50,
+        output_tokens: 14,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+    ]);
+    assert.ok(
+      posted.indexOf(eventsFor("sub-run", "usage")[0]) <
+        posted.indexOf(eventsFor("sub-run", "done")[0]),
+    );
+    assert.equal(existsSync(dreamRollout), false, "the subagent's rollout was left behind");
+  });
+
+  it("says so when the subagent fails, and reports no usage it didn't have", async () => {
+    let reply: any;
+    script(
+      "sub-fail",
+      {
+        during: async () => {
+          reply = await mcp("sub-fail", {
+            id: 8,
+            method: "tools/call",
+            params: { name: "dreamer", arguments: { prompt: "dream" } },
+          });
+        },
+      },
+      { events: [{ type: "turn.failed", error: { message: "usage limit reached" } }] },
+    );
+    await send("sub-fail", undefined, dreamingMind);
+    assert.equal(reply.body.result.isError, true);
+    assert.match(reply.body.result.content[0].text, /usage limit reached/);
+    // Only the calling run's own usage — the failed dream reported none.
+    const usage = eventsFor("sub-fail", "usage").map((p) => p.body.metadata);
+    assert.ok(usage.every((m) => m.input_tokens === 10));
+  });
+
+  it("stops a subagent still running when the run that called it ends", async () => {
+    let reply: Promise<any> | undefined;
+    script(
+      "sub-orphan",
+      {
+        during: async () => {
+          reply = mcp("sub-orphan", {
+            id: 9,
+            method: "tools/call",
+            params: { name: "dreamer", arguments: { prompt: "a long dream" } },
+          });
+          await settle();
+        },
+      },
+      // Still dreaming when the caller's run is over.
+      { after: () => new Promise((r) => setTimeout(r, 300)) },
+    );
+    await send("sub-orphan", undefined, dreamingMind);
+    const answer = await reply;
+    assert.equal(answer.body.result.isError, true);
+    assert.match(answer.body.result.content[0].text, /aborted/);
+  });
+
+  it("answers a malformed thread name with 400 rather than falling over", async () => {
+    await send("sub-bad", undefined, dreamingMind);
+    const server = parentConfig("sub-bad").mcp_servers.subagents;
+    const res = await fetch(server.url.replace(/sub-bad$/, "%E0%A4%A"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env[server.bearer_token_env_var]}` },
+      body: "{}",
+    });
+    assert.equal(res.status, 400);
+    assert.equal((await mcp("sub-bad", { id: 1, method: "ping" })).status, 200);
+  });
+});
+
+describe("codex folds only one channel into a run (#1200)", () => {
+  const text = (t: string) => [{ type: "text", text: t }];
+
+  it("runs a system event, and each channel, as runs of their own inside one turn", async () => {
+    let later: Promise<unknown>[] = [];
+    const reply = (t: string) => ({
+      events: [
+        { type: "item.completed", item: { id: t, type: "agent_message", text: t } },
+        { type: "turn.completed", usage: USAGE },
+      ],
+    });
+    script(
+      "mix",
+      {
+        during: async () => {
+          later = [
+            send("mix", text("tick"), mind, { channel: "event:schedule:77", isEvent: true }),
+            send("mix", text("hi from alice"), mind, { channel: "@alice" }),
+            send("mix", text("hi from general"), mind, { channel: "#general" }),
+            send("mix", text("alice again"), mind, { channel: "@alice" }),
+          ];
+          await settle();
+        },
+      },
+      reply("to the event"),
+      reply("to alice"),
+      reply("to general"),
+    );
+    await send("mix", text("start"), mind, { channel: "#general" });
+    await Promise.all(later);
+    const inputs = control.calls.filter((c) => c.session === "mix").map((c) => c.input as string);
+    assert.equal(inputs.length, 4);
+    assert.match(inputs[1], /tick/);
+    assert.doesNotMatch(inputs[1], /alice|general/, "an event is never folded with a message");
+    assert.match(inputs[1], /system event from your environment/, "and keeps its note");
+    assert.match(inputs[2], /hi from alice[\s\S]*alice again/, "one channel's messages fold");
+    assert.doesNotMatch(inputs[2], /general|tick/);
+    assert.match(inputs[3], /hi from general/);
+    const channelOf = (t: string) =>
+      eventsFor("mix", "text").find((p) => p.body.content === t)?.body.channel;
+    assert.equal(channelOf("to alice"), "@alice");
+    assert.equal(channelOf("to general"), "#general");
+    assert.equal(eventsFor("mix", "done").length, 1, "still one turn");
+  });
+});
+
+describe("codex always ends a turn (#1200)", () => {
+  it("sends its error and done when the turn breaks, and the thread keeps working", async () => {
+    // A directory where the prompt file goes: the turn's prompt write throws.
+    const promptPath = resolve(mindDir, ".mind/system-prompt.md");
+    rmSync(promptPath, { force: true });
+    mkdirSync(promptPath);
+    try {
+      await send("broken");
+    } finally {
+      rmSync(promptPath, { recursive: true, force: true });
+    }
+    assert.equal(eventsFor("broken", "error").length, 1);
+    assert.match(eventsFor("broken", "error")[0].body.content, /internal error/);
+    assert.equal(eventsFor("broken", "done").length, 1);
+    await send("broken");
+    assert.equal(eventsFor("broken", "done").length, 2, "the thread was left wedged");
+  });
+});
+
+describe("codex runs one subagent at a time (#1200)", () => {
+  it("makes a second call wait for the first to finish", async () => {
+    const order: string[] = [];
+    let replies: Promise<any>[] = [];
+    script(
+      "sub-one",
+      {
+        during: async () => {
+          const call = (id: number) =>
+            fetch(
+              control.clients.find(
+                (c) => c.session === "sub-one" && c.config.model_auto_compact_token_limit,
+              ).config.mcp_servers.subagents.url,
+              {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  authorization: `Bearer ${process.env.VOLUTE_SUBAGENT_TOKEN}`,
+                },
+                body: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id,
+                  method: "tools/call",
+                  params: { name: "dreamer", arguments: { prompt: `dream ${id}` } },
+                }),
+              },
+            ).then((r) => r.json());
+          replies = [call(1), call(2)];
+          await Promise.all(replies);
+        },
+      },
+      {
+        during: () => order.push("start 1"),
+        after: async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          order.push("end 1");
+        },
+        events: [{ type: "turn.completed", usage: USAGE }],
+      },
+      {
+        during: () => order.push("start 2"),
+        events: [{ type: "turn.completed", usage: USAGE }],
+      },
+    );
+    await send("sub-one", undefined, dreamingMind);
+    assert.deepEqual(order, ["start 1", "end 1", "start 2"]);
   });
 });
