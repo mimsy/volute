@@ -20,6 +20,7 @@ import {
   removeCustomModel,
   removeProviderConfig,
   resolveApiKey,
+  resolveTemplate,
   saveProviderConfig,
   setEnabledModels,
 } from "../../lib/ai-service.js";
@@ -29,7 +30,7 @@ import {
   readSystemsConfig,
   writeSystemsConfig,
 } from "../../lib/config/systems-config.js";
-import { getMindManager } from "../../lib/daemon/mind-manager.js";
+import { getMindManager, tryGetMindManager } from "../../lib/daemon/mind-manager.js";
 import { getSpendBudget } from "../../lib/daemon/spend-budget.js";
 import { activeTurnCount, activeTurnSlots, getTurnLimits } from "../../lib/daemon/turn-slots.js";
 import { countCappedMinds, findMind } from "../../lib/mind/registry.js";
@@ -488,11 +489,34 @@ const app = new Hono<AuthEnv>()
     "/ai/defaults",
     requireAdmin,
     zValidator("json", z.object({ spiritModel: z.string().nullable() })),
-    (c) => {
+    async (c) => {
       const { spiritModel } = c.req.valid("json");
       const config = readGlobalConfig();
       config.spiritModel = spiritModel ?? undefined;
       writeGlobalConfig(config);
+
+      // Apply it to the spirit now: write its config.json (the only place its model
+      // lives) and restart it if running, since the server reads that file at start.
+      // A model that needs a different template can only be applied by
+      // syncSpiritTemplate() on the next daemon start.
+      const spirit = spiritModel ? await findMind(getSpiritName()) : null;
+      if (spirit?.mindType === "spirit" && spirit.dir && spiritModel) {
+        const template = spirit.template ?? "claude";
+        if ((await resolveTemplate(spiritModel)) === template) {
+          const { writeSpiritModel } = await import("../../lib/mind/spirit.js");
+          const manager = tryGetMindManager();
+          if (
+            writeSpiritModel(spirit.dir, template, spiritModel) &&
+            manager?.isRunning(spirit.name)
+          ) {
+            manager
+              .restartMind(spirit.name)
+              .catch((err: unknown) =>
+                log.warn(`spirit model saved but restart failed`, log.errorData(err)),
+              );
+          }
+        }
+      }
       return c.json({ ok: true });
     },
   )

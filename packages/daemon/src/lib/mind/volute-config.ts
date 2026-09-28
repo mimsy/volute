@@ -62,9 +62,12 @@ export type MindProfile = {
   avatar?: string; // relative path from home/, e.g. "avatar.png"
 };
 
+/**
+ * Daemon-side cognition settings. A mind's model and thinking level are not here:
+ * they live only in `home/.config/config.json`, the file the template actually runs
+ * from — a second copy in volute.json drifted and made the settings page lie.
+ */
 export type CognitionConfig = {
-  model?: string;
-  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   /** Spend cap in USD per `spendCapPeriodMinutes`. Replaces the old `tokenBudget`. */
   spendCap?: number;
   /** Length of the spend period in minutes. Default 1440 (a day). */

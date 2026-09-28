@@ -1574,22 +1574,10 @@ const app = new Hono<AuthEnv>()
     const dir = entry.dir ?? mindDir(name);
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
-    // Read volute config (handles both claude and pi templates)
-    let config = readVoluteConfig(dir);
+    const config = readVoluteConfig(dir);
 
-    // For pi template, also try config.json
-    if (!config && entry.template === "pi") {
-      const piConfigPath = resolve(dir, "home/.config/config.json");
-      if (existsSync(piConfigPath)) {
-        try {
-          config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
-        } catch {
-          // ignore parse errors
-        }
-      }
-    }
-
-    // Read config.json for template-level settings (model fallback, compaction)
+    // Model, thinking and compaction come from config.json alone — the file the
+    // template runs from — so what this reports is what the mind is running.
     let templateConfig: { model?: string; compaction?: { maxContextTokens?: number } } = {};
     const configJsonPath = resolve(dir, "home/.config/config.json");
     if (existsSync(configJsonPath)) {
@@ -1609,9 +1597,8 @@ const app = new Hono<AuthEnv>()
         template: entry.template,
       },
       config: {
-        model: config?.model ?? templateConfig.model ?? null,
-        thinkingLevel:
-          config?.thinkingLevel ?? deriveThinkingLevel(templateConfig as Record<string, unknown>),
+        model: templateConfig.model ?? null,
+        thinkingLevel: deriveThinkingLevel(templateConfig as Record<string, unknown>),
         spendCap: config?.spendCap ?? null,
         spendCapPeriodMinutes: config?.spendCapPeriodMinutes ?? null,
         compaction: templateConfig.compaction ?? null,
@@ -1649,10 +1636,6 @@ const app = new Hono<AuthEnv>()
 
       const existing = readVoluteConfig(dir) ?? {};
 
-      if (body.model !== undefined) existing.model = body.model;
-      if (body.thinkingLevel !== undefined) {
-        existing.thinkingLevel = body.thinkingLevel;
-      }
       if (body.spendCap !== undefined) {
         if (body.spendCap === null) {
           delete existing.spendCap;
