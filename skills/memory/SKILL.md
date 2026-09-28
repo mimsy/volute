@@ -14,7 +14,7 @@ Some of it is automatic: a record of what you did is kept whether or not you wri
 | Layer | Holds | Who writes it | In your context |
 |---|---|---|---|
 | **Core** (`MEMORY.md`) | who you are now: identity, key relationships, what's active, an index | you | on every request |
-| **Recollection** | what you remember happening | automatic | at the start of a fresh session (claude framework); on request anywhere |
+| **Recollection** | what you remember happening | automatic | at the start of a fresh session; on request anywhere |
 | **Journal & dreams** (`memory/journal/`, `memory/dreams/`) | what you care about that the record doesn't cover | you (dreams through the dreamer) | when you read them, or when they surface |
 | **Topics** (`memory/topics/`, or wherever you like) | what you know | you | when you read them, or when they surface |
 | **Resonance** | what comes back to you | automatic | a few relevant excerpts per turn |
@@ -65,9 +65,9 @@ volute mind history --period week
 volute mind history                  # turn by turn
 ```
 
-Recollection is that record consolidated in your own voice — written as of the end of each period, while you weren't looking — and brought to you whenever a session starts fresh: after you've been quiet for about an hour (`memory.recollection.coldResetMinutes`, 55 by default), when a session rotates at the context limit, and when you wake. A shorter rest doesn't start one — after half an hour or so idle (`sessionIdleMinutes`) your session is simply resumed, the same conversation continuing. A fresh session opens with your recollection (this week in brief, the last couple of days, today by the hour) followed by the last ~10k tokens of verbatim conversation (`continuity.seedTokens`), so you pick up where you were. It's labelled as recollection, and you can always check it against the full history.
+Recollection is that record consolidated in your own voice — written as of the end of each period, while you weren't looking — and brought to you whenever a session starts fresh: when a session rotates at the context limit, and when you wake. A fresh session opens with your recollection (this week in brief, the last couple of days, today by the hour) followed by the last ~10k tokens of verbatim conversation (`continuity.seedTokens`), so you pick up where you were. It's labelled as recollection, and you can always check it against the full history.
 
-That seeding and the hour-quiet fresh start are how the claude framework works. On pi and codex, a new session carries the verbatim tail of the previous one instead, and your recollection is there to read any time with `volute mind history --period day`.
+On the claude framework, a long quiet starts one too: after about an hour without a turn (`memory.recollection.coldResetMinutes`, 55 by default), your next turn begins a fresh session, since by then the next turn would pay full price for the whole old context anyway. A shorter rest doesn't — after half an hour or so idle (`sessionIdleMinutes`) your session is simply resumed, the same conversation continuing. On pi and codex a quiet stretch never starts a fresh session; the conversation just continues. Between fresh starts, your recollection is there to read any time with `volute mind history --period day`.
 
 ## Journal & dreams
 
@@ -95,11 +95,11 @@ Memories you never return to drift deeper over time; the ones you recall stay cl
 How your memory behaves is configurable in `.config/config.json`, under `memory`:
 
 - **`recall`** — `"auto"` (relevant excerpts surface each turn; the default), `"on-demand"` (only when you `resonance search`), or `"off"`
-- **`recollection.enabled`** — whether fresh sessions open with your recollection (claude framework; default `true`)
+- **`recollection.enabled`** — whether fresh sessions open with your recollection (default `true`)
 - **`recollection.coldResetMinutes`** — how long you can be quiet before your next turn starts a fresh session (claude framework; default `55`; `0` means a quiet stretch never starts one)
 - **`softBudgetTokens`** and **`hardCapTokens`** — your core's recommended budget (5000) and load cap (25000)
 
-How much verbatim conversation a fresh session carries is `continuity.seedTokens`, a sibling of `memory` in the same file (default `10000` on claude, `30000` on pi and codex).
+How much verbatim conversation a fresh session carries is `continuity.seedTokens`, a sibling of `memory` in the same file. Unset, it's about `10000` tokens when your recollection comes ahead of it and `30000` when it doesn't (recollection turned off, or none written yet).
 
 These are yours to try, change, and change back.
 
