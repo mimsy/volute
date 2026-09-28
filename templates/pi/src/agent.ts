@@ -48,8 +48,13 @@ import {
   threadRef,
 } from "./lib/session-marker.js";
 import { recallTokenBudget } from "./lib/session-seed.js";
-import { getStartupContext, type StartupSource, type SubagentConfig } from "./lib/startup.js";
-import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
+import {
+  getStartupContext,
+  loadSubagents,
+  type StartupSource,
+  type SubagentConfig,
+} from "./lib/startup.js";
+import { createSubagentExtension } from "./lib/subagents.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -254,40 +259,7 @@ export async function createMind(options: {
 
   // --- Subagents (config-driven) ---
 
-  function loadSubagents(
-    configs: Record<string, SubagentConfig> | undefined,
-  ): Record<string, SubagentDefinition> {
-    const result: Record<string, SubagentDefinition> = {};
-    if (!configs) return result;
-    for (const [name, config] of Object.entries(configs)) {
-      if (typeof config.description !== "string" || typeof config.systemPrompt !== "string") {
-        log("mind", `subagent "${name}": missing description or systemPrompt, skipping`);
-        continue;
-      }
-      try {
-        const prompt = readFileSync(resolvePath(options.cwd, config.systemPrompt), "utf-8");
-        if (!prompt) {
-          log("mind", `subagent "${name}": ${config.systemPrompt} is empty, skipping`);
-          continue;
-        }
-        result[name] = {
-          description: config.description,
-          prompt,
-          tools: config.tools,
-          maxTurns: config.maxTurns,
-        };
-      } catch (err: any) {
-        if (err?.code === "ENOENT") {
-          log("mind", `subagent "${name}": ${config.systemPrompt} not found, skipping`);
-        } else {
-          log("mind", `subagent "${name}": failed to read ${config.systemPrompt}: ${err.message}`);
-        }
-      }
-    }
-    return result;
-  }
-
-  const subagents = loadSubagents(options.subagents);
+  const subagents = loadSubagents(options.subagents, options.cwd);
 
   /**
    * A session boundary: rebuild the system prompt from disk and start the identity-edit
