@@ -7,7 +7,13 @@ import {
   setNoticeDrainWatermark,
 } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import { hasTurnSlot } from "../packages/daemon/src/lib/daemon/turn-slots.js";
-import { clearMind, getActiveTurnId } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
+import {
+  clearMind,
+  getActiveTurnId,
+  markErrored,
+  takeDrainWatermark,
+  takeErrored,
+} from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   type DeliveryManager,
@@ -48,7 +54,7 @@ function mindNamed(name: string): string {
 
 /** Stand in for DeliveryManager's bookkeeping on a POST to the mind. */
 function delivered(mind: string, session: string, id: string, process = mind): void {
-  (dm as any).incrementActive(mind, session, id, process);
+  (dm as any).addOutstanding(mind, session, id, process);
 }
 
 async function turnStatus(turnId: string): Promise<string | undefined> {
@@ -170,7 +176,13 @@ describe("a done names the deliveries it covers", () => {
     });
     delivered(mind, "s1", "d2");
     await handleMindEvent(mind, { type: "error", session: "s1", messageId: "d2", content: "x" });
-    await handleMindEvent(mind, { type: "done", session: "s1", covers: ["d2"] });
+    await handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d2",
+      covers: ["d2"],
+      endsTurn: false,
+    });
 
     assert.equal(getActiveTurnId(mind, "s1"), turnId, "the running turn is untouched");
     assert.equal(dm.isSessionBusy(mind, "s1"), true, "d1 is still running");
@@ -197,14 +209,21 @@ describe("a done names the deliveries it covers", () => {
       content: "answering an event",
     });
     delivered(mind, "s1", "d2");
-    await handleMindEvent(mind, { type: "done", session: "s1", covers: ["d2"] });
+    await handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d2",
+      covers: ["d2"],
+      endsTurn: false,
+    });
     assert.equal(getActiveTurnId(mind, "s1"), turnId);
     assert.equal(dm.isSessionBusy(mind, "s1"), false);
     assert.equal(hasTurnSlot(mind, "s1"), true, "the slot stays with the running turn");
   });
 
-  it("a done naming another delivery does not close the running turn", async () => {
-    const mind = mindNamed("td-other-driver");
+  it("a done that doesn't close the running turn isn't recorded as that turn's end", async () => {
+    // The wedged-turn sweep reads a turn's `done` rows as its having ended.
+    const mind = mindNamed("td-not-closing");
     delivered(mind, "s1", "d1");
     const { turnId } = await handleMindEvent(mind, {
       type: "text",
@@ -212,12 +231,24 @@ describe("a done names the deliveries it covers", () => {
       messageId: "d1",
       content: "a",
     });
-    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d9", covers: [] });
+    delivered(mind, "s1", "d2");
+    const { insertedId } = await handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d2",
+      covers: ["d2"],
+      endsTurn: false,
+    });
+    const db = await getDb();
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, insertedId!)).get();
+    assert.equal(row!.turn_id, null);
     assert.equal(getActiveTurnId(mind, "s1"), turnId);
   });
 
-  it("a crash done ends the turn but leaves undelivered input outstanding", async () => {
-    const mind = mindNamed("td-crash");
+  it("an interrupted delivery the done forgot is finished by the turn that took over", async () => {
+    // pi steer: d2 interrupts d1's run and takes it over; a template that failed to name d1
+    // must not leave it holding the session busy and the slot taken.
+    const mind = mindNamed("td-steer");
     delivered(mind, "s1", "d1");
     const { turnId } = await handleMindEvent(mind, {
       type: "text",
@@ -225,10 +256,20 @@ describe("a done names the deliveries it covers", () => {
       messageId: "d1",
       content: "a",
     });
-    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: [] });
+    delivered(mind, "s1", "d2");
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d2", covers: ["d2"] });
     assert.equal(await turnStatus(turnId!), "complete");
-    assert.equal(dm.isSessionBusy(mind, "s1"), true, "d1 will run again");
-    assert.equal(hasTurnSlot(mind, "s1"), true);
+    assert.equal(dm.isSessionBusy(mind, "s1"), false);
+    assert.equal(hasTurnSlot(mind, "s1"), false);
+  });
+
+  it("a done that names nothing still ends the turn", async () => {
+    // A turn whose message went unnamed (claude input re-queued after a rotation, pi's retry
+    // continuation) still ends when its `done` comes.
+    const mind = mindNamed("td-unnamed");
+    const { turnId } = await handleMindEvent(mind, { type: "text", session: "s1", content: "a" });
+    await handleMindEvent(mind, { type: "done", session: "s1", covers: [] });
+    assert.equal(await turnStatus(turnId!), "complete");
   });
 
   it("a variant's done neither closes its parent's turn nor retires its deliveries", async () => {
@@ -276,5 +317,14 @@ describe("a done names the deliveries it covers", () => {
     assert.equal(hasTurnSlot(mind, "s1"), false);
     await settled(mind, "A");
     assert.deepEqual(await bodies(mind), []);
+  });
+
+  it("a mind's stop forgets the drain watermarks and error flags of turns that never ended", async () => {
+    const mind = mindNamed("td-stop");
+    setNoticeDrainWatermark(mind, "s1", 7, "d1");
+    markErrored(mind, "s1", "d1");
+    await clearMind(mind);
+    assert.equal(takeDrainWatermark(mind, "s1"), undefined);
+    assert.equal(takeErrored(mind, "s1"), false);
   });
 });

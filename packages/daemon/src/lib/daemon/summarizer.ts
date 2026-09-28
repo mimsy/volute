@@ -1839,12 +1839,12 @@ export async function reconcileWedgedTurns(idleMs: number): Promise<void> {
 
   // Forget the stale deliveries so each session stops reading busy. If the delivery
   // manager isn't up (startup ordering) there is no in-memory state to forget, so skipping
-  // is correct. clearSessionActive itself no-ops if a fresh delivery raced in.
+  // is correct. forgetOutstanding itself no-ops if a fresh delivery raced in.
   const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
   const dm = tryGetDeliveryManager();
   if (!dm) return;
   for (const t of wedged) {
-    if (t.session) dm.clearSessionActive(t.mind, t.session, idleMs);
+    if (t.session) dm.forgetOutstanding(t.mind, t.session, idleMs);
   }
 }
 

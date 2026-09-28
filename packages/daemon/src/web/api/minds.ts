@@ -1879,6 +1879,7 @@ const app = new Hono<AuthEnv>()
         content: z.string().optional(),
         metadata: z.record(z.string(), z.unknown()).optional(),
         covers: z.array(z.string()).optional(),
+        endsTurn: z.boolean().optional(),
       }),
     ),
     async (c) => {

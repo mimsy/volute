@@ -24,12 +24,13 @@ import { summarizeTurn } from "./summarizer.js";
 import {
   completeTurn,
   createTurn,
-  getActiveTurnDriver,
   getActiveTurnId,
   getActiveTurnOwner,
   getToolUseEventId,
   markErrored,
   normalizeThread,
+  setDrainWatermark,
+  takeDrainWatermark,
   takeErrored,
   trackToolUse,
 } from "./turn-tracker.js";
@@ -56,44 +57,35 @@ export type MindEvent = {
   content?: string;
   metadata?: Record<string, unknown>;
   /**
-   * On a `done`: the deliveries the turn finished — the one that drove it plus any the mind
+   * On a `done`: the deliveries it finished — the one that drove the turn plus any the mind
    * folded into it (#1207). Absent from a template that predates it.
    */
   covers?: string[];
+  /**
+   * On a `done`: false when it ends no turn — it only retires a delivery that failed while
+   * another turn ran on (pi's rejected followUp). Every other `done` ends a turn.
+   */
+  endsTurn?: boolean;
 };
 
-/**
- * Highest notice id drained by the pre-prompt hook, per `mind:session` and, within it, per
- * the delivery whose turn drained it ("" when the hook named none). A clean turn only marks
- * notices delivered up to what it drained, so a notice created mid-turn isn't lost before
- * the mind reads it — and keyed by delivery, the next turn's drain can never be claimed by
- * this turn's `done`, however the two requests interleave (#1207).
- */
-const noticeDrainWatermarks = new Map<string, Map<string, number>>();
-
-/** Record the high-water notice id drained for a `mind:session` (set by the pre-prompt hook). */
+/** Record the high-water notice id drained for a turn (set by the pre-prompt hook). */
 export function setNoticeDrainWatermark(
   mind: string,
   session: string,
   id: number,
   messageId?: string,
 ): void {
-  const wmKey = `${mind}:${session}`;
-  let byDelivery = noticeDrainWatermarks.get(wmKey);
-  if (!byDelivery) {
-    byDelivery = new Map();
-    noticeDrainWatermarks.set(wmKey, byDelivery);
-  }
-  const k = messageId ?? "";
-  byDelivery.set(k, Math.max(byDelivery.get(k) ?? 0, id));
+  setDrainWatermark(mind, session, id, messageId);
 }
 
 /** What a `done` does to its session, decided the moment it arrives (see `readDone`). */
 type DoneState = {
-  /** The `done` ends a turn: the mind is done with the turn named by its `messageId`. */
+  /** The `done` ends a turn. */
   ends: boolean;
   /** It closes the session's active turn — or there is none to close. */
   closes: boolean;
+  /** The outstanding deliveries it finishes (see `DeliveryManager.coveredBy`). */
+  retired: string[] | undefined;
   /** Highest notice id the closed turn drained. */
   watermark: number | undefined;
   errored: boolean;
@@ -102,51 +94,54 @@ type DoneState = {
 /**
  * Take what a `done` closes over, synchronously on its arrival.
  *
- * A `done` names the turn it ends (`messageId`, the delivery that drove it) and the
- * deliveries it finished (`covers`). One with a `messageId` but no `covers` comes from a
- * template that predates the field: it ends the turn and covers everything outstanding.
- * One with `covers` but no `messageId` ends no turn — it retires a delivery that failed
- * while another turn ran on (pi's rejected followUp).
+ * A `done` names the turn it ends (`messageId`) and the deliveries it finished (`covers`).
+ * One without `covers` comes from a template that predates the field: it ends the turn and
+ * covers everything its process had outstanding. One with `endsTurn: false` ends no turn —
+ * it retires a delivery that failed while another turn ran on (pi's rejected followUp).
  *
- * It closes the active turn only if it names that turn's driver and comes from the process
- * that opened it: a variant shares its parent's turn key, and a `done` for some other
- * delivery must not cut a running turn short. The drain watermarks and error flags of the
- * turns it names are taken here, before anything awaits, and are discarded unused if it
- * closes nothing.
+ * A `done` closes the session's active turn only if it comes from the process that opened
+ * it: a variant shares its parent's turn key, and its `done` must not cut the parent's
+ * turn short. Only a `done` that closes a turn takes its drain watermarks and error flags —
+ * the turns it names, and any that named none — before anything awaits, so a drain for the
+ * next turn is never claimed by this one's. A `done` that ends no turn drops its failed
+ * deliveries' error flags, whose turns never ran.
  */
 function readDone(mind: string, event: MindEvent, process: string): DoneState {
   const session = event.session;
   const legacy = event.covers === undefined;
-  const ends = legacy || event.messageId !== undefined;
-  const hasTurn = getActiveTurnId(mind, session) !== undefined;
-  const driver = getActiveTurnDriver(mind, session);
+  const ends = event.endsTurn !== false;
   const closes =
     ends &&
-    (!hasTurn ||
-      (getActiveTurnOwner(mind, session) === process &&
-        (legacy || driver === undefined || driver === event.messageId)));
-  if (!session) return { ends, closes, watermark: undefined, errored: false };
-
-  // Legacy reads the whole session, as it always did; otherwise only the turns it names,
-  // plus drains and errors that named no turn if it closes one.
-  const ids = legacy ? undefined : [...(event.covers ?? [])];
-  if (ids && event.messageId !== undefined) ids.push(event.messageId);
-  const wmKey = `${mind}:${session}`;
-  const byDelivery = noticeDrainWatermarks.get(wmKey);
-  let watermark: number | undefined;
-  let errored = false;
-  if (closes || !legacy) {
-    const keys = ids ? [...ids, ...(closes ? [""] : [])] : [...(byDelivery?.keys() ?? [])];
-    for (const k of keys) {
-      const wm = byDelivery?.get(k);
-      if (wm == null) continue;
-      byDelivery!.delete(k);
-      watermark = Math.max(watermark ?? 0, wm);
+    (getActiveTurnId(mind, session) === undefined || getActiveTurnOwner(mind, session) === process);
+  let retired: string[] | undefined;
+  try {
+    retired = getDeliveryManager().coveredBy(mind, session, {
+      process,
+      messageId: event.messageId,
+      covers: event.covers,
+      endsTurn: ends,
+    });
+  } catch (err) {
+    if (!(err instanceof ManagerNotReadyError)) {
+      llog.error(`delivery manager coveredBy failed for ${mind}`, log.errorData(err));
     }
-    if (byDelivery?.size === 0) noticeDrainWatermarks.delete(wmKey);
-    errored = takeErrored(mind, session, ids, closes);
   }
-  return { ends, closes, watermark, errored };
+  if (!session) return { ends, closes, retired, watermark: undefined, errored: false };
+
+  const named = [...new Set([...(event.covers ?? []), ...(retired ?? [])])];
+  if (event.messageId !== undefined) named.push(event.messageId);
+  if (!closes) {
+    if (!ends) takeErrored(mind, session, named, false);
+    return { ends, closes, retired, watermark: undefined, errored: false };
+  }
+  const ids = legacy ? undefined : named;
+  return {
+    ends,
+    closes,
+    retired,
+    watermark: takeDrainWatermark(mind, session, ids),
+    errored: takeErrored(mind, session, ids),
+  };
 }
 
 /**
@@ -248,8 +243,11 @@ export async function handleMindEvent(
   let turnId = getActiveTurnId(mind, event.session);
   // Synchronous with the `done`'s arrival — see readDone.
   const done = event.type === "done" ? readDone(mind, event, process) : undefined;
+  // A `done` that doesn't close the running turn isn't that turn's end, and must not be
+  // recorded as one — the wedged-turn sweep reads a turn's `done` rows as its having ended.
+  if (done && !done.closes) turnId = undefined;
   if (!turnId && SUBSTANTIVE_TYPES.has(event.type)) {
-    turnId = await createTurn(mind, event.session, process, event.messageId);
+    turnId = await createTurn(mind, event.session, process);
     if (!turnId) {
       llog.warn(`skipping turn tracking for ${mind}: createTurn failed`);
     } else {
@@ -405,12 +403,7 @@ export async function handleMindEvent(
     // Retire the deliveries it covers and, if the turn ended with nothing left to run,
     // free its slot.
     try {
-      getDeliveryManager().sessionDone(
-        mind,
-        event.session,
-        { process, covers: event.covers },
-        done.ends,
-      );
+      getDeliveryManager().sessionDone(mind, event.session, done.retired ?? [], done.ends);
     } catch (err) {
       if (!(err instanceof ManagerNotReadyError)) {
         llog.error(`delivery manager sessionDone failed for ${mind}`, log.errorData(err));

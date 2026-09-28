@@ -71,6 +71,8 @@ type PiSession = {
   unsubscribe?: () => void;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
+  /** Deliveries the current run finished before its end — ones an interrupt cut off. */
+  finished?: string[];
   messageChannels: Map<string, { channel: string; sender?: string }>;
   contextTokens: number;
   /**
@@ -980,6 +982,9 @@ export async function createMind(options: {
     if (session?.currentMessageId !== undefined) {
       log("mind", `session "${name}": interrupting current turn`);
       broadcast(session, { type: "done" });
+      // The interrupting message takes over the run; the one it cut off is finished, and
+      // the run's `done` says so (#1207).
+      session.finished = [...(session.finished ?? []), session.currentMessageId];
       session.currentMessageId = undefined;
     }
   }
@@ -1080,8 +1085,9 @@ export async function createMind(options: {
             await daemonEmit({
               type: "done",
               session: sessionName,
-              ...(runningBeside ? {} : { messageId: meta.messageId }),
+              messageId: meta.messageId,
               covers: [meta.messageId],
+              ...(runningBeside ? { endsTurn: false } : {}),
             }).catch(() => {});
             broadcast(session, { type: "done", messageId: meta.messageId });
           })

@@ -122,6 +122,25 @@ describe("pi template event-handler: the done names what it covers (#1207)", () 
     assert.deepEqual(done.covers, ["m1"]);
     assert.deepEqual(session.messageIds, ["m2"]);
   });
+
+  it("a retry continuation with nothing named still ends its turn", async () => {
+    captured = [];
+    const session = makeSession("continuation");
+    session.messageIds.length = 0;
+    const handler = createEventHandler(session as never, {
+      cwd: resolvePath(composedDir, "home"),
+      broadcast: () => {},
+    });
+    handler({ type: "agent_start" } as never);
+    handler({ type: "agent_end", messages: [] } as never);
+    await waitFor(() => captured.some((e) => e.type === "done" && e.session === "continuation"));
+    const done = captured.find((e) => e.type === "done") as Captured & {
+      covers?: string[];
+      endsTurn?: boolean;
+    };
+    assert.deepEqual(done.covers, []);
+    assert.notEqual(done.endsTurn, false, "only a rejected followUp's done ends no turn");
+  });
 });
 
 describe("pi template event-handler agent_end errors", () => {

@@ -13,6 +13,8 @@ export type EventSession = {
   name: string;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
+  /** Deliveries the current run finished before its end — ones an interrupt cut off. */
+  finished?: string[];
   messageChannels: Map<string, { channel: string; sender?: string }>;
   /**
    * Usage from subagents that ran during the current turn, per model. They run as
@@ -150,12 +152,14 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         // Exception: on a retryable error the loop emits agent_end WITHOUT
         // draining and the session retries — those queued prompts haven't run
         // yet, so they keep their entries for the continuation.
-        // Every daemon delivery this `done` finished: the one that drove the turn and each
-        // queued prompt it drained — or, on a retry, only the driver, since the queued ones
-        // run on in the continuation, whose own `done` covers them (#1207).
-        const covers = [messageId, ...(event.willRetry ? [] : session.messageIds)].filter(
-          (id): id is string => id !== undefined,
-        );
+        // Every daemon delivery this `done` finished: any an interrupt cut off, the one that
+        // drove the turn, and each queued prompt it drained — or, on a retry, not those,
+        // since they run on in the continuation, whose own `done` covers them (#1207).
+        const covers = [
+          ...(session.finished?.splice(0) ?? []),
+          messageId,
+          ...(event.willRetry ? [] : session.messageIds),
+        ].filter((id): id is string => id !== undefined);
         if (!event.willRetry) {
           session.messageIds.length = 0;
           session.messageChannels.clear();

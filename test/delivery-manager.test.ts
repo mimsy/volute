@@ -209,7 +209,7 @@ describe("DeliveryManager", () => {
       states.set(mind, new Map([[session, state]]));
     }
 
-    it("clearSessionActive resets a leaked active count when the session is idle", () => {
+    it("forgetOutstanding resets a leaked active count when the session is idle", () => {
       manager = new DeliveryManager();
       // lastDeliveredAt long in the past → idle → safe to reset
       seedSessionState(manager, "leakmind", "s1", {
@@ -218,12 +218,12 @@ describe("DeliveryManager", () => {
       });
       assert.equal(manager.isSessionBusy("leakmind", "s1"), true);
 
-      const reset = manager.clearSessionActive("leakmind", "s1", 10 * 60_000);
+      const reset = manager.forgetOutstanding("leakmind", "s1", 10 * 60_000);
       assert.equal(reset, true);
       assert.equal(manager.isSessionBusy("leakmind", "s1"), false, "count should be reset to 0");
     });
 
-    it("clearSessionActive does NOT reset when a delivery raced in recently", () => {
+    it("forgetOutstanding does NOT reset when a delivery raced in recently", () => {
       manager = new DeliveryManager();
       // lastDeliveredAt is now → a fresh turn may be in flight → must not zero it
       seedSessionState(manager, "racemind", "s1", {
@@ -231,14 +231,14 @@ describe("DeliveryManager", () => {
         lastDeliveredAt: Date.now(),
       });
 
-      const reset = manager.clearSessionActive("racemind", "s1", 10 * 60_000);
+      const reset = manager.forgetOutstanding("racemind", "s1", 10 * 60_000);
       assert.equal(reset, false, "recent delivery should block the reset");
       assert.equal(manager.isSessionBusy("racemind", "s1"), true, "count left intact");
     });
 
-    it("clearSessionActive is a no-op for an unknown session", () => {
+    it("forgetOutstanding is a no-op for an unknown session", () => {
       manager = new DeliveryManager();
-      assert.equal(manager.clearSessionActive("nope", "main", 10 * 60_000), false);
+      assert.equal(manager.forgetOutstanding("nope", "main", 10 * 60_000), false);
     });
 
     function seedActiveSession(mgr: DeliveryManager, mind: string, session: string) {

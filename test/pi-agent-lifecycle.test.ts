@@ -114,9 +114,10 @@ function send(
   session: string,
   text: string,
   listener?: (e: any) => void,
+  meta: Record<string, unknown> = {},
 ) {
   const messageId = `m${++msgSeq}`;
-  mind.resolve(session).handle([{ type: "text", text }], { messageId } as any, listener);
+  mind.resolve(session).handle([{ type: "text", text }], { ...meta, messageId } as any, listener);
   return messageId;
 }
 
@@ -585,7 +586,7 @@ describe("pi failed dispatch", () => {
       // names A (#1207).
       const [bEnd, aEnd] = events("done", "main") as (Captured & { covers?: string[] })[];
       assert.deepEqual(bEnd.covers, [b]);
-      assert.equal(bEnd.messageId, undefined);
+      assert.equal((bEnd as { endsTurn?: boolean }).endsTurn, false);
       assert.equal(aEnd.messageId, a);
       assert.ok(aEnd.covers?.includes(a));
       assert.ok(!aEnd.covers?.includes(b), "B never reached pi's queue");
@@ -594,6 +595,28 @@ describe("pi failed dispatch", () => {
     } finally {
       pca.AgentSession.prototype.prompt = prompt;
     }
+  });
+});
+
+describe("pi interrupt", () => {
+  it("the run's done covers the message the interrupt cut off, not just the one that took over", async () => {
+    const layout = makeMindDir();
+    const mind = await newMind(layout);
+    let b = "";
+    faux.setResponses([
+      async () => {
+        // A is running when B arrives with interrupt set and steers the run.
+        b = send(mind, "steer", "B, now", undefined, { interrupt: true });
+        await new Promise((r) => setTimeout(r, 50));
+        return fauxAssistantMessage("answering B");
+      },
+      fauxAssistantMessage("answered"),
+    ]);
+    const a = send(mind, "steer", "A");
+    await waitFor(() => doneFor(b) || events("done", "steer").length > 0, "the run's done");
+    const [done] = events("done", "steer") as (Captured & { covers?: string[] })[];
+    assert.ok(done.covers?.includes(a), `A is covered: ${JSON.stringify(done)}`);
+    assert.ok(done.covers?.includes(b), "and so is B");
   });
 });
 

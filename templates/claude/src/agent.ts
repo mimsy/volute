@@ -581,21 +581,22 @@ export function createMind(options: {
       /**
        * Emit done to both local listeners and the daemon (best-effort with retries). Only
        * the paths where the stream ended for good call this, and its unanswered input goes
-       * with it — so the `done` covers every delivery still pending here (#1207).
+       * with it — so the `done` covers every delivery still pending here (#1207). Except on
+       * a session being torn down (reaped, or the mind shutting down): the reaper re-sends
+       * what is pending into a fresh session, so it is not finished.
        */
       function emitDone() {
         broadcastToSession(session, { type: "done" });
-        const covers = [session.currentMessageId, ...session.messageIds.map((e) => e.id)].filter(
+        const pending = session.closed ? [] : session.messageIds.map((e) => e.id);
+        if (!session.closed) session.messageIds = [];
+        const covers = [session.currentMessageId, ...pending].filter(
           (id): id is string => id !== undefined,
         );
-        session.messageIds = [];
-        // Always a turn's end — the slot must come back — so it names one even when the
-        // stream died before its first message; with nothing to cover, it covers all.
         daemonEmit({
           type: "done",
           session: session.name,
-          messageId: session.currentMessageId ?? covers[0],
-          ...(covers.length > 0 ? { covers } : {}),
+          messageId: session.currentMessageId,
+          covers,
         }).catch((err) => {
           log("mind", `session "${session.name}": failed to emit done to daemon:`, err);
         });
@@ -633,8 +634,15 @@ export function createMind(options: {
           resumed: resume !== undefined,
           restoredTotals,
         });
-        if (session.currentMessageId !== undefined) {
-          session.messageChannels.delete(session.currentMessageId);
+        // The stream ended for good. A turn it cut off — or input it never reached — has
+        // no `result` coming, so it ends here.
+        if (
+          session.currentMessageId !== undefined ||
+          (!session.closed && session.messageIds.length > 0)
+        ) {
+          if (session.currentMessageId !== undefined) {
+            session.messageChannels.delete(session.currentMessageId);
+          }
           emitDone();
           session.currentMessageId = undefined;
         }
@@ -749,6 +757,11 @@ export function createMind(options: {
                 session.seeded = false;
                 streamAbort = new AbortController();
                 session.channel = createMessageChannel();
+                // The stream ends here, and the input the aborted one held goes with it.
+                if (session.currentMessageId !== undefined || session.messageIds.length > 0) {
+                  emitDone();
+                  session.currentMessageId = undefined;
+                }
                 break;
               }
               // Point the live pointer at the rotated session and arm the boundary
@@ -818,6 +831,12 @@ export function createMind(options: {
           session.rotationPending = false;
           streamAbort = new AbortController();
           session.channel = createMessageChannel();
+          // The failed stream's input went with its channel: end its turn before the fresh
+          // one starts, or it would be taken for the fresh stream's first.
+          if (session.currentMessageId !== undefined || session.messageIds.length > 0) {
+            emitDone();
+            session.currentMessageId = undefined;
+          }
           try {
             await runStream();
           } catch (retryErr) {

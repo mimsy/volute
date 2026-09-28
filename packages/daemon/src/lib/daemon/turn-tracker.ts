@@ -18,12 +18,6 @@ type ActiveTurn = {
    * only stamped with a turn its own process opened (see `turnStamp`).
    */
   owner: string;
-  /**
-   * The delivery that drove the turn — the `messageId` on the event that opened it. A `done`
-   * ends this turn only if it names the same one (see `handleMindEvent`), so a `done` that
-   * belongs to some other delivery cannot close a turn still running (#1207).
-   */
-  driver: string | undefined;
 };
 
 /**
@@ -92,6 +86,48 @@ export function takeErrored(
 }
 
 /**
+ * Highest notice id the pre-prompt hook drained, per `mind:thread` NUL delivery id ("" when
+ * the hook named none — a template that predates the field). A clean turn only marks
+ * notices delivered up to what it drained, so a notice created mid-turn isn't lost before
+ * the mind reads it; keyed by delivery, the next turn's drain can never be claimed by this
+ * turn's `done`, however the two requests interleave (#1207).
+ */
+const drainWatermarks = new Map<string, number>();
+
+/** Record the high-water notice id drained for the turn of `messageId` (see drainWatermarks). */
+export function setDrainWatermark(
+  mind: string,
+  session: string,
+  id: number,
+  messageId?: string,
+): void {
+  const k = errKey(mind, session, messageId);
+  drainWatermarks.set(k, Math.max(drainWatermarks.get(k) ?? 0, id));
+}
+
+/**
+ * Take the highest watermark drained for any of the turns of `messageIds`, and for no turn
+ * in particular — or, without `messageIds`, for any turn on the session — clearing each.
+ */
+export function takeDrainWatermark(
+  mind: string,
+  session: string,
+  messageIds?: string[],
+): number | undefined {
+  const keys = messageIds
+    ? [errKey(mind, session), ...messageIds.map((id) => errKey(mind, session, id))]
+    : [...drainWatermarks.keys()].filter((k) => k.startsWith(`${key(mind, session)}\0`));
+  let watermark: number | undefined;
+  for (const k of keys) {
+    const wm = drainWatermarks.get(k);
+    if (wm == null) continue;
+    drainWatermarks.delete(k);
+    watermark = Math.max(watermark ?? 0, wm);
+  }
+  return watermark;
+}
+
+/**
  * Create a turn for a mind's thread (or reuse the thread's active one). Keyed by the
  * thread from the start and recorded with it; with no thread, keyed as `mind:*`.
  *
@@ -103,7 +139,6 @@ export async function createTurn(
   mind: string,
   session?: string | null,
   owner: string = mind,
-  driver?: string,
 ): Promise<string | undefined> {
   const k = key(mind, session);
   const existing = activeTurns.get(k);
@@ -115,7 +150,6 @@ export async function createTurn(
     lastToolUseEventId: undefined,
     toolUseEventIds: new Map(),
     owner,
-    driver,
   };
   // Reserve the slot synchronously to prevent concurrent callers from creating duplicates
   activeTurns.set(k, entry);
@@ -138,11 +172,6 @@ export async function createTurn(
 /** The process that opened this mind+thread's active turn (see `ActiveTurn.owner`). */
 export function getActiveTurnOwner(mind: string, session?: string | null): string | undefined {
   return activeTurns.get(key(mind, session))?.owner;
-}
-
-/** The delivery that drove this mind+thread's active turn (see `ActiveTurn.driver`). */
-export function getActiveTurnDriver(mind: string, session?: string | null): string | undefined {
-  return activeTurns.get(key(mind, session))?.driver;
 }
 
 /** Get the active turn ID for exactly this mind+thread (`mind:*` when there is none). */
@@ -308,9 +337,13 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
     }
   }
   for (const k of toDelete) activeTurns.delete(k);
-  // Drop any errored-session flags for this mind so a hard crash can't leave one stale.
+  // Drop any errored-session flags and drain watermarks for this mind so a hard crash
+  // can't leave one stale — keyed per delivery, they would otherwise outlive the process.
   for (const k of [...erroredSessions]) {
     if (k.startsWith(`${mind}:`)) erroredSessions.delete(k);
+  }
+  for (const k of [...drainWatermarks.keys()]) {
+    if (k.startsWith(`${mind}:`)) drainWatermarks.delete(k);
   }
   // Mark orphaned turns as complete in DB
   if (orphaned.length > 0) {
