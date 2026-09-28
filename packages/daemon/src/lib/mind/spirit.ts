@@ -275,6 +275,22 @@ export function getSpiritModel(): string | undefined {
   return config.spiritModel;
 }
 
+/**
+ * Write the spirit model into the spirit's config.json — the only place a mind's
+ * model lives. Pi needs `provider:model`; claude and codex take the bare id.
+ * Returns whether the file changed.
+ */
+export function writeSpiritModel(dir: string, template: string, spiritModel: string): boolean {
+  const modelForConfig =
+    template === "pi" ? qualifyModelId(spiritModel) : unqualifyModelId(spiritModel);
+  const configPath = resolve(dir, "home/.config/config.json");
+  const mindConfig = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf-8")) : {};
+  if (mindConfig.model === modelForConfig) return false;
+  mindConfig.model = modelForConfig;
+  writeFileSync(configPath, `${JSON.stringify(mindConfig, null, 2)}\n`);
+  return true;
+}
+
 let creationInProgress = false;
 
 /**
@@ -332,17 +348,7 @@ export async function ensureSpiritProject(): Promise<void> {
     const routesContent = { rules: [{ channel: "*", thread: "${channel}" }], default: "main" };
     writeFileSync(routesPath, `${JSON.stringify(routesContent, null, 2)}\n`);
 
-    // Set spirit model in mind config if available
-    if (spiritModel) {
-      const modelForConfig =
-        template === "pi" ? qualifyModelId(spiritModel) : unqualifyModelId(spiritModel);
-      const configPath = resolve(dir, "home/.config/config.json");
-      const mindConfig = existsSync(configPath)
-        ? JSON.parse(readFileSync(configPath, "utf-8"))
-        : {};
-      mindConfig.model = modelForConfig;
-      writeFileSync(configPath, `${JSON.stringify(mindConfig, null, 2)}\n`);
-    }
+    if (spiritModel) writeSpiritModel(dir, template, spiritModel);
 
     // npm install — must succeed before DB registration
     await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
@@ -567,21 +573,8 @@ export async function syncSpiritTemplate(): Promise<void> {
   }
 
   // Sync spirit model from global config
-  const config = readGlobalConfig();
-  const spiritModel = config.spiritModel;
-  if (spiritModel) {
-    // Pi template needs provider:model format, claude template needs just the model ID
-    const modelForConfig =
-      template === "pi" ? qualifyModelId(spiritModel) : unqualifyModelId(spiritModel);
-    const mindConfigPath = resolve(dir, "home/.config/config.json");
-    const mindConfig = existsSync(mindConfigPath)
-      ? JSON.parse(readFileSync(mindConfigPath, "utf-8"))
-      : {};
-    if (mindConfig.model !== modelForConfig) {
-      mindConfig.model = modelForConfig;
-      writeFileSync(mindConfigPath, `${JSON.stringify(mindConfig, null, 2)}\n`);
-    }
-  }
+  const spiritModel = getSpiritModel();
+  if (spiritModel) writeSpiritModel(dir, template, spiritModel);
 
   // Re-install if package.json changed or node_modules is missing (self-healing)
   const composedPkg = renderComposedPackageJson(composedDir, spiritName);

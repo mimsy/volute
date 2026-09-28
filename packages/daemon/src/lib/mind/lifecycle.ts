@@ -80,6 +80,7 @@ import {
   validateMindName,
 } from "./registry.js";
 import { spawnServer } from "./spawn-server.js";
+import { applyThinkingLevel } from "./thinking-config.js";
 import { configureGitIdentity } from "./upgrade.js";
 import { cleanupVariant } from "./variant-cleanup.js";
 import {
@@ -486,25 +487,24 @@ export async function createMind(
       // Apply cognition defaults
       const cog = mindDefaults?.cognition;
       if (cog) {
-        if (cog.thinkingLevel != null && !config.thinkingLevel)
-          config.thinkingLevel = cog.thinkingLevel;
         if (cog.spendCap != null && config.spendCap == null) config.spendCap = cog.spendCap;
         if (cog.spendCapPeriodMinutes != null && config.spendCapPeriodMinutes == null)
           config.spendCapPeriodMinutes = cog.spendCapPeriodMinutes;
       }
       writeVoluteConfig(dest, config);
 
-      // Apply model (and compaction) to SDK config.json
+      // Apply model, thinking level and compaction to SDK config.json
       const modelId = requestedModel ?? cog?.model;
       effectiveModel = modelId ? qualifyModelId(modelId) : undefined;
       const sdkConfigPath = resolve(dest, "home/.config/config.json");
-      if (modelId || cog?.compaction) {
+      if (modelId || cog?.thinkingLevel || cog?.compaction) {
         const existing = existsSync(sdkConfigPath)
           ? JSON.parse(readFileSync(sdkConfigPath, "utf-8"))
           : {};
         if (modelId) {
           existing.model = template === "pi" ? qualifyModelId(modelId) : unqualifyModelId(modelId);
         }
+        if (cog?.thinkingLevel) applyThinkingLevel(existing, template, cog.thinkingLevel);
         if (cog?.compaction && !existing.compaction) {
           existing.compaction = cog.compaction;
         }

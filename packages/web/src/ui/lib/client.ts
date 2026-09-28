@@ -803,7 +803,7 @@ export function saveAiDefaults(defaults: AiDefaults): Promise<void> {
 }
 
 // --- Mind Defaults ---
-// Mirrors CognitionConfig from volute-config.ts + compaction from SDK config
+// Mirrors MindDefaultsCognition from config/setup.ts
 export type MindDefaultsCognition = {
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";

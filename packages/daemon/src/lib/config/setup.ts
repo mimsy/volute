@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteSystemDir } from "../mind/registry.js";
+import type { ThinkingLevel } from "../mind/thinking-config.js";
 import type { CognitionConfig, Schedule, SleepConfig } from "../mind/volute-config.js";
 
 export type SetupType = "local" | "system";
@@ -155,6 +156,8 @@ export type SystemLimits = {
 };
 
 export type MindDefaultsCognition = CognitionConfig & {
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
   compaction?: { maxContextTokens?: number };
 };
 

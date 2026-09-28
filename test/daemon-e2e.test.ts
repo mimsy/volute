@@ -3139,6 +3139,39 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     });
   });
 
+  // The default thinking level used to land only in volute.json, which the template
+  // never reads — the mind ran on the SDK default while its settings page showed the
+  // configured level.
+  it("mind defaults: a new mind runs the default thinking level", async () => {
+    const name = "e2e-defaults-mind";
+    await daemonRequest("/api/v1/system/mind-defaults", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cognition: { thinkingLevel: "medium" } }),
+    });
+    try {
+      const createRes = await daemonRequest("/api/v1/minds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, template: "claude" }),
+      });
+      assert.ok(createRes.ok, `Create mind: ${createRes.status} ${await createRes.text()}`);
+
+      const dir = mindDir(name);
+      const sdk = JSON.parse(readFileSync(resolve(dir, "home/.config/config.json"), "utf-8"));
+      assert.equal(sdk.effort, "medium");
+      const volute = JSON.parse(readFileSync(resolve(dir, "home/.config/volute.json"), "utf-8"));
+      assert.equal(volute.thinkingLevel, undefined);
+    } finally {
+      await daemonRequest(`/api/v1/minds/${name}?force=true`, { method: "DELETE" });
+      await daemonRequest("/api/v1/system/mind-defaults", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+    }
+  });
+
   describe("backup API e2e", () => {
     it("configures, initializes, runs, and lists a backup end-to-end", async (t) => {
       // Requires the restic binary; skip (like the unit round-trip) when absent.

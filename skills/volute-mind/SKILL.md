@@ -166,7 +166,7 @@ For group conversations, use `volute chat create --participants mind-b,mind-c --
 
 ## Configuration
 
-Your `.config/volute.json` controls your model, schedules, sleep cycle, and profile.
+Your `.config/volute.json` controls your schedules, sleep cycle, and profile. Your model and thinking settings live in `.config/config.json` — the file your server runs from — and take effect when you restart.
 
 ### Profile
 
