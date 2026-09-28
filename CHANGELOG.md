@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.66.0](https://github.com/mimsy/volute/compare/volute-v0.65.0...volute-v0.66.0) (2026-09-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* every summary is written by its owner's model ([#1198](https://github.com/mimsy/volute/issues/1198))
+
+### Bug Fixes
+
+* a mind's model and thinking level live only in config.json ([#1219](https://github.com/mimsy/volute/issues/1219)) ([680d518](https://github.com/mimsy/volute/commit/680d518482cfae6f0e95c28a3a053392f6caa2d1))
+* a notice drained into a running turn isn't re-told to a prompt folded into it ([#1243](https://github.com/mimsy/volute/issues/1243)) ([1cd62a1](https://github.com/mimsy/volute/commit/1cd62a16d97fe6de7e5d88b8898cfc808be83b67))
+* a turn's done names the deliveries it covers, so folded turns complete ([#1221](https://github.com/mimsy/volute/issues/1221)) ([5804c11](https://github.com/mimsy/volute/commit/5804c115e6d60e0ee2cd25d0b99c1f17bc59644f))
+* codex minds' summaries are written by their own model again ([#1242](https://github.com/mimsy/volute/issues/1242)) ([a3e64b6](https://github.com/mimsy/volute/commit/a3e64b6e5c369b8852ec430432a559ec48780eab))
+* **codex:** fold mid-turn messages into the running turn, and run config.subagents as real subagents ([#1211](https://github.com/mimsy/volute/issues/1211)) ([fe3ec6a](https://github.com/mimsy/volute/commit/fe3ec6a206b0fbd6d996358fc5695b3da4d64975))
+* **codex:** orient each session, give reply instructions once per session, run post-tool-use, recollect at seams ([#1208](https://github.com/mimsy/volute/issues/1208)) ([801e7d4](https://github.com/mimsy/volute/commit/801e7d46986b90e25a818ebdff58a67545c1e973))
+* **codex:** run mind commands in a non-login shell so skill commands stay on PATH ([#1238](https://github.com/mimsy/volute/issues/1238)) ([51a881d](https://github.com/mimsy/volute/commit/51a881d3d686efeac1a59e56427fea8ff1537fa5))
+* **codex:** tell the mind when a turn fails or a thread is lost, and commit its work ([#1197](https://github.com/mimsy/volute/issues/1197)) ([bd7190f](https://github.com/mimsy/volute/commit/bd7190fc9f8fdd9efe4dd8f2f88da1f829abaa07))
+* **deps:** update dependency @anthropic-ai/claude-agent-sdk to v0.3.283 ([#1216](https://github.com/mimsy/volute/issues/1216)) ([de9fd6c](https://github.com/mimsy/volute/commit/de9fd6c5651e6021d0937132b2746b1a87c3a502))
+* every summary is written by its owner's model ([#1198](https://github.com/mimsy/volute/issues/1198)) ([78bff30](https://github.com/mimsy/volute/commit/78bff30ced3d2ce58581470fa0f031dc7be3ed98))
+* **export:** keep host credentials out of exports, gate pi/codex sessions, re-point imported pi sessions ([#1193](https://github.com/mimsy/volute/issues/1193)) ([13929fe](https://github.com/mimsy/volute/commit/13929fefd7e073c4832610f352243fcbe25f6404))
+* install a skill's npm dependencies as the mind ([#1222](https://github.com/mimsy/volute/issues/1222)) ([f41f940](https://github.com/mimsy/volute/commit/f41f940fba26119dd65e0c71b0bf475be98e84ba))
+* keep codex secrets and path index out of exports, and let an imported codex mind resume its threads ([#1241](https://github.com/mimsy/volute/issues/1241)) ([93d85e2](https://github.com/mimsy/volute/commit/93d85e23396d8cdf0f24083c3363f7a7b10cebf3))
+* **pi:** identity edits load at the next session boundary instead of restarting ([#1210](https://github.com/mimsy/volute/issues/1210)) ([84fa845](https://github.com/mimsy/volute/commit/84fa8450d32058a57086d81e17dd743d58c2bb7b))
+* **pi:** load config.subagents through the shared loader ([#1225](https://github.com/mimsy/volute/issues/1225)) ([397610f](https://github.com/mimsy/volute/commit/397610fcf7dc29c8ef3d3c9045391614842c7e1d))
+* **pi:** recollection at every seam, per-session startup context, and claude's post-tool-use lane ([#1209](https://github.com/mimsy/volute/issues/1209)) ([0c530c8](https://github.com/mimsy/volute/commit/0c530c811246113fdae7eaef6256ff82fb23e635))
+* **pi:** tell the mind the truth about failed starts and lost context ([#1195](https://github.com/mimsy/volute/issues/1195)) ([a8b0eb2](https://github.com/mimsy/volute/commit/a8b0eb2cca470ac9578831aecadb4dfbbd84fd2a))
+* **pi:** tell the mind when an older archive stands in for a lost live transcript ([#1236](https://github.com/mimsy/volute/issues/1236)) ([fa158f3](https://github.com/mimsy/volute/commit/fa158f3c538887cfb53dc62501f7b4d12738d1c9))
+* reclaim root-owned node_modules before npm runs as the mind ([#1240](https://github.com/mimsy/volute/issues/1240)) ([73dfa8f](https://github.com/mimsy/volute/commit/73dfa8fb278782c775498570cf179d937044cdcb))
+* routes.json replyInstructions reaches the mind on every template ([#1227](https://github.com/mimsy/volute/issues/1227)) ([4222ea7](https://github.com/mimsy/volute/commit/4222ea751bf2114e992cea48f13703baf4232579))
+* **seed:** trim pi and codex rotation seeds to budget and let them carry recollection ([#1196](https://github.com/mimsy/volute/issues/1196)) ([cf9fc6e](https://github.com/mimsy/volute/commit/cf9fc6e84974dda0fd97defdf11ad83048411868))
+
 ## [0.65.0](https://github.com/mimsy/volute/compare/volute-v0.64.0...volute-v0.65.0) (2026-09-27)
 
 
