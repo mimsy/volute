@@ -5,8 +5,7 @@ import log from "../util/logger.js";
 import { buildMindBaseEnv } from "../util/mind-env.js";
 import { isIsolationEnabled, wrapForIsolation } from "./isolation.js";
 
-// Skip npm's audit/funding network round-trips — installs here always run
-// against a committed lockfile.
+// Skip npm's audit/funding network round-trips.
 const NPM_INSTALL_ARGS = ["install", "--no-audit", "--no-fund", "--loglevel=error"];
 
 /**
@@ -85,7 +84,10 @@ async function runNpmInstall(
 
 /**
  * Run npm install in a directory, using the mind user's identity when isolation is enabled.
- * This avoids creating root-owned node_modules that the mind can't modify later.
+ * This avoids creating root-owned node_modules that the mind can't modify later, and
+ * keeps npm off the daemon's HOME, which a hardened service unit may hide entirely
+ * (`ProtectHome=yes` makes `/root` unreachable, so npm can't create its cache there).
+ * `packages`, when given, are added to the project (a skill's npm dependencies).
  *
  * Two attempts: the first prefers the mind's local npm cache; a failure that looks
  * like the cache resolving a version it has never seen is retried once against the
@@ -102,10 +104,11 @@ async function runNpmInstall(
 export async function npmInstallAsMind(
   cwd: string,
   mindName: string,
+  packages: string[] = [],
   run: NpmRunner = exec,
 ): Promise<void> {
   try {
-    await runNpmInstall(cwd, mindName, [...NPM_INSTALL_ARGS, PREFER_OFFLINE], run);
+    await runNpmInstall(cwd, mindName, [...NPM_INSTALL_ARGS, PREFER_OFFLINE, ...packages], run);
     return;
   } catch (err) {
     if (!isStaleCacheFailure(err)) throw err;
@@ -116,7 +119,7 @@ export async function npmInstallAsMind(
       log.errorData(err),
     );
   }
-  await runNpmInstall(cwd, mindName, NPM_INSTALL_ARGS, run);
+  await runNpmInstall(cwd, mindName, [...NPM_INSTALL_ARGS, ...packages], run);
 }
 
 /**

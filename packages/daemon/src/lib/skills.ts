@@ -17,6 +17,7 @@ import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { getDb } from "./db.js";
 import { readInitLedgerFile, writeLedgerFile } from "./mind/init-ledger.js";
 import { chownMindDir } from "./mind/isolation.js";
+import { npmInstallAsMind } from "./mind/npm-install.js";
 import { mindDir, readRegistry, stateDir, voluteHome } from "./mind/registry.js";
 import { sharedSkills } from "./schema.js";
 import { exec, gitExec } from "./util/exec.js";
@@ -358,7 +359,7 @@ export async function installSkill(
     const { npmDependencies, hooks, bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
     if (npmDependencies.length > 0) {
       try {
-        await exec("npm", ["install", ...npmDependencies], { cwd: dir });
+        await npmInstallAsMind(dir, mindName, npmDependencies);
         npmInstalled.push(...npmDependencies);
       } catch (e) {
         // Clean up partial install so the skill can be retried
@@ -596,7 +597,7 @@ export async function updateSkill(
   const npmDependencies = merged?.npmDependencies ?? [];
   if (npmDependencies.length > 0) {
     try {
-      await exec("npm", ["install", ...npmDependencies], { cwd: dir });
+      await npmInstallAsMind(dir, mindName, npmDependencies);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       throw new Error(`Failed to install npm dependencies (${npmDependencies.join(", ")}): ${msg}`);
