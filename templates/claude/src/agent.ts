@@ -852,6 +852,9 @@ export function createMind(options: {
           session.seeded = false;
           session.rotationPending = false;
           streamAbort = new AbortController();
+          // Torn down (reaped, or the mind shutting down) meanwhile: the reaper redelivers
+          // what the channel holds, so recovering it here too would deliver it twice.
+          if (session.closed) return;
           // The failed stream's unfinished input goes into the fresh one rather than
           // being dropped with its channel: the context is lost, the messages aren't.
           const pending = session.channel.recover();

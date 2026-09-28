@@ -185,10 +185,13 @@ export async function consumeStream(
       // Every delivery this turn finished, for the `done` below: its driver and each one
       // folded into it (#1207).
       const covers = session.currentMessageId !== undefined ? [session.currentMessageId] : [];
+      let interrupted = false;
       for (const entry of session.messageIds.splice(preTurnPending)) {
         // A message that interrupted this turn is not folded into it: the SDK runs it
-        // next, as a turn of its own, whose `done` will cover it.
-        if (entry.interrupting) {
+        // next, as a turn of its own, whose `done` will cover it — and so is everything
+        // that arrived after it, which queued behind it rather than joining this turn.
+        interrupted ||= entry.interrupting === true;
+        if (interrupted) {
           session.messageIds.push(entry);
           continue;
         }

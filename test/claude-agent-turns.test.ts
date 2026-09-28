@@ -26,6 +26,8 @@ type Turn = {
   inputTokens?: number;
   /** Throw once the prompt is taken, before answering it — a stream that dies mid-turn. */
   throws?: boolean;
+  /** Run just before that throw. */
+  beforeThrow?: () => void;
 };
 
 const FAKE_SDK = `
@@ -59,7 +61,10 @@ export function query({ prompt, options }) {
         }
       }
       if (signal?.aborted) throw aborted();
-      if (turn.throws) throw new Error("stream died");
+      if (turn.throws) {
+        turn.beforeThrow?.();
+        throw new Error("stream died");
+      }
       control().prompts.push({ session: options.env?.VOLUTE_SESSION, text });
       yield {
         type: "assistant",
@@ -94,6 +99,7 @@ type Mind = {
   resolve: (name: string) => {
     handle: (content: unknown[], meta: any, listener?: (e: any) => void) => () => void;
   };
+  reapAllSessions: () => Promise<void>;
 };
 let createMind: (options: any) => Mind;
 
@@ -248,5 +254,19 @@ describe("claude: every turn ends with a done naming what it took (#1207)", () =
     const answered = control.prompts.filter((p) => p.session === "resumed").map((p) => p.text);
     assert.equal(answered.length, 1);
     assert.match(answered[0], /hello d1/);
+  });
+
+  it("a stream that dies while its session is torn down leaves redelivery to the reaper", async () => {
+    // Shutdown reaps the session in the window before the dead stream's catch runs. The
+    // reaper owns what the channel holds: recovering it there too would deliver it twice.
+    const mind = newMind();
+    control.turns.set("torn", [{ throws: true, beforeThrow: () => void mind.reapAllSessions() }]);
+    send(mind, "torn", "d1");
+    await waitFor(
+      () => posted.some((p) => p.body.content === 'session "torn": stream consumer ended'),
+      "the stream consumer to end",
+    );
+    const answered = control.prompts.filter((p) => p.session === "torn");
+    assert.equal(answered.length, 0, "the dying session did not run d1 again itself");
   });
 });

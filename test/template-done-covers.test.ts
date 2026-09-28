@@ -147,6 +147,32 @@ describe("claude template: an interrupting message is not folded into the turn i
     assert.deepEqual([first.messageId, first.covers], ["a", ["a"]]);
     assert.deepEqual([second.messageId, second.covers], ["b", ["b"]]);
   });
+
+  it("a message that arrived after the interrupter queued behind it, and is not folded either", async () => {
+    captured = [];
+    const session = {
+      name: "interrupted-2",
+      messageIds: [{ id: "a", seq: 1 }] as {
+        id: string | undefined;
+        seq: number;
+        interrupting?: boolean;
+      }[],
+      currentMessageId: undefined as string | undefined,
+      currentSeq: undefined as number | undefined,
+      messageChannels: new Map<string, { channel: string }>(),
+    };
+    let left: (string | undefined)[] = [];
+    async function* stream() {
+      yield assistant("working on a");
+      session.messageIds.push({ id: "m", seq: 2, interrupting: true }, { id: "n", seq: 3 });
+      yield result(); // a's turn, cut short
+      left = session.messageIds.map((e) => e.id);
+    }
+    await consumeStream(stream() as never, session, { broadcast: () => {}, ack: () => {} });
+    const [done] = await dones(1);
+    assert.deepEqual(done.covers, ["a"]);
+    assert.deepEqual(left, ["m", "n"]);
+  });
 });
 
 describe("the notices hook names the delivery whose prompt it drains for", () => {

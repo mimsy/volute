@@ -416,11 +416,12 @@ export async function handleMindEvent(
   }
 
   if (done) {
-    if (done.ends) {
+    if (done.closes) {
       // Turn end: clear the persistent typing entries set at delivery (delivery-manager)
       // and push the update to web clients. This is the canonical mid-flight clear — do
       // not clear earlier (e.g. on text/outbound); typing means "on a turn", not "about
-      // to send here". A `done` that ends no turn leaves the one running beside it be.
+      // to send here". A `done` that closes no turn — a failed delivery's, or a variant's
+      // beside its parent's — leaves the turn running beside it be.
       const map = getTypingMap();
       publishTypingForChannels(map.deleteSender(mind), map);
       broadcast({ type: "mind_done", mind, summary: "Finished processing" });
@@ -434,7 +435,7 @@ export async function handleMindEvent(
         llog.error(`delivery manager sessionDone failed for ${mind}`, log.errorData(err));
       }
     }
-    if (done.closes) await completeTurnAndSummarize(mind, event, insertedId, done, process);
+    if (done.closes) await completeTurnAndSummarize(mind, event, insertedId, done);
     // A variant's turn beside its parent's: nothing of the parent's to complete, but the
     // notices its own turn drained are delivered all the same.
     else if (done.ends && event.session) markDeliveredOnCleanTurn(mind, event.session, done);
@@ -571,12 +572,8 @@ async function completeTurnAndSummarize(
   event: MindEvent,
   insertedId: number | undefined,
   done: DoneState,
-  process: string,
 ): Promise<void> {
-  const completedTurnId = await completeTurn(mind, event.session, {
-    turnId: done.turnId,
-    owner: process,
-  });
+  const completedTurnId = await completeTurn(mind, event.session, { turnId: done.turnId });
   if (event.session) markDeliveredOnCleanTurn(mind, event.session, done);
   // If this turn was triggered by an immediate system event (exact match via the
   // turn's trigger_event_id), record its final text as the event's reflection

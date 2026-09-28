@@ -288,18 +288,16 @@ export async function completeTurn(
   mind: string,
   session?: string | null,
   /**
-   * Complete it only if it is this turn — or, when this is null, a turn this process
-   * opened. A `done` decides what it closes on arrival; by the time it completes, another
-   * process may have opened a turn on the thread that is not its to end.
+   * Complete it only if it is this turn — none, if it is undefined. A `done` decides what
+   * it closes on arrival; by the time it completes, a turn opened since (another process's,
+   * or the next queued one's) is not its to end.
    */
-  only?: { turnId: string | undefined; owner: string },
+  only?: { turnId: string | undefined },
 ): Promise<string | undefined> {
   const k = key(mind, session);
   const entry = activeTurns.get(k);
   if (!entry) return undefined;
-  if (only && (only.turnId ? entry.turnId !== only.turnId : entry.owner !== only.owner)) {
-    return undefined;
-  }
+  if (only && entry.turnId !== only.turnId) return undefined;
 
   try {
     const db = await getDb();

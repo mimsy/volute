@@ -423,4 +423,43 @@ describe("a done names the deliveries it covers", () => {
     assert.equal(takeErrored(mind, "s1"), false, "and so did the error");
     assert.ok((await bodies(mind)).includes("A"), "which errored, so A survives");
   });
+
+  it("a done that saw no turn completes none — not even its own process's next one", async () => {
+    // A claude stream that errors before any event sends error + done; the next queued
+    // turn's first event can open a turn while that done is still being recorded.
+    const mind = mindNamed("td-late-own-turn");
+    delivered(mind, "s1", "d1");
+    delivered(mind, "s1", "d2");
+    const d1Done = handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d1",
+      covers: ["d1"],
+    });
+    const next = handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      messageId: "d2",
+      content: "b",
+    });
+    await d1Done;
+    const { turnId } = await next;
+    assert.equal(await turnStatus(turnId!), "active", "d2's turn is not split off at d1's done");
+  });
+
+  it("a variant's turn beside its parent's leaves the parent's typing indicator be", async () => {
+    const mind = mindNamed("td-variant-typing");
+    const variant = `${mind}@v`;
+    delivered(mind, "s1", "d1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "p" });
+    const typing = getTypingMap();
+    typing.set("@bob", mind, { persistent: true });
+    delivered(mind, "s1", "v1", variant);
+    await handleMindEvent(
+      mind,
+      { type: "done", session: "s1", messageId: "v1", covers: ["v1"] },
+      variant,
+    );
+    assert.ok(typing.get("@bob").includes(mind), "the parent is still on its turn");
+  });
 });
