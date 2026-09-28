@@ -6,9 +6,11 @@ import { readMindFile, removeMindFile, writeMindFile } from "./mind-file-write.j
 /**
  * Keep `home/.zshenv` in step with the mind's template.
  *
- * Codex minds need it: the codex sandbox runs commands in `/bin/zsh -lc`, which
- * resets the environment, and ZDOTDIR (set via codex config) makes the login shell
- * source this file to restore VOLUTE vars and PATH.
+ * Codex minds get it: codex ran commands in `/bin/zsh -lc`, whose login profile
+ * reset the environment, and ZDOTDIR (set via codex config) makes zsh source this
+ * file to restore VOLUTE vars and PATH. The template has since turned login shells
+ * off (#1232), which also covers bash; this file is still written because a codex
+ * mind not yet upgraded runs the old template, still in `zsh -lc`.
  *
  * Every other template must not have it. zsh sources `~/.zshenv` on *every*
  * invocation, so a file left behind by a codex→claude switch overrides the live
