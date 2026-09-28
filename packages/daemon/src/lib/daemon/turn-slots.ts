@@ -19,7 +19,7 @@ const DEFAULT_MIND_CONCURRENT_TURNS = 1;
  * turn: expiring early costs a little extra concurrency, expiring never costs a mind its
  * messages, and only one of those is recoverable.
  */
-export const SLOT_MAX_AGE_MS = 30 * 60_000;
+const SLOT_MAX_AGE_MS = 30 * 60_000;
 
 /**
  * Longest a direct-POST path (system events, the wake flush) will wait for a slot before

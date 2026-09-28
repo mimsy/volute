@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, afterEach, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { drainEvents, recordNotice } from "../packages/daemon/src/lib/chat/system-events.js";
+import { getTypingMap } from "../packages/daemon/src/lib/chat/typing.js";
 import {
   handleMindEvent,
   setNoticeDrainWatermark,
@@ -326,5 +327,100 @@ describe("a done names the deliveries it covers", () => {
     await clearMind(mind);
     assert.equal(takeDrainWatermark(mind, "s1"), undefined);
     assert.equal(takeErrored(mind, "s1"), false);
+  });
+
+  it("a failed delivery's done frees the slot once the turn it failed beside has ended", async () => {
+    // pi awaits the rejected prompt's error before its done, so the running turn's done can
+    // land first — and, with the failed delivery still outstanding, cannot free the slot.
+    const mind = mindNamed("td-pi-failure-late");
+    delivered(mind, "s1", "d1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "a" });
+    delivered(mind, "s1", "d2");
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
+    assert.equal(hasTurnSlot(mind, "s1"), true, "d2 is still outstanding");
+    await handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d2",
+      covers: ["d2"],
+      endsTurn: false,
+    });
+    assert.equal(dm.isSessionBusy(mind, "s1"), false);
+    assert.equal(hasTurnSlot(mind, "s1"), false, "no turn runs on, so the slot goes back");
+  });
+
+  it("a done that ends no turn leaves the running turn's typing indicator be", async () => {
+    const mind = mindNamed("td-typing");
+    delivered(mind, "s1", "d1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "a" });
+    const typing = getTypingMap();
+    typing.set("@alice", mind, { persistent: true });
+    delivered(mind, "s1", "d2");
+    await handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d2",
+      covers: ["d2"],
+      endsTurn: false,
+    });
+    assert.ok(typing.get("@alice").includes(mind), "still typing on d1's turn");
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
+    assert.ok(!typing.get("@alice").includes(mind));
+  });
+
+  it("a variant's turn beside its parent's delivers the notices it drained", async () => {
+    const mind = mindNamed("td-variant-notices");
+    const variant = `${mind}@v`;
+    delivered(mind, "s1", "d1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "p" });
+    delivered(mind, "s1", "v1", variant);
+    const a = await notice(mind, "A");
+    setNoticeDrainWatermark(mind, "s1", a, "v1");
+    await handleMindEvent(
+      mind,
+      { type: "done", session: "s1", messageId: "v1", covers: ["v1"] },
+      variant,
+    );
+    await settled(mind, "A");
+    assert.ok(!(await bodies(mind)).includes("A"), "the variant's clean turn delivered A");
+  });
+
+  it("a done completes only the turn it saw, not one another process opened meanwhile", async () => {
+    const mind = mindNamed("td-late-turn");
+    const variant = `${mind}@v`;
+    delivered(mind, "s1", "v1", variant);
+    // The variant's done arrives with no turn active; before it completes, the parent's
+    // first event opens a turn on the same thread.
+    const vDone = handleMindEvent(
+      mind,
+      { type: "done", session: "s1", messageId: "v1", covers: ["v1"] },
+      variant,
+    );
+    const parent = handleMindEvent(mind, { type: "text", session: "s1", content: "p" });
+    await vDone;
+    const { turnId } = await parent;
+    assert.equal(getActiveTurnId(mind, "s1"), turnId, "the parent's turn runs on");
+    assert.equal(await turnStatus(turnId!), "active");
+  });
+
+  it("an id the daemon never delivered keys nothing of its own", async () => {
+    // Minds are untrusted: an error or drain naming an id that isn't an outstanding
+    // delivery is read as naming no turn, so it can't grow per-delivery state — and it
+    // still counts against the session's next turn.
+    const mind = mindNamed("td-bogus-ids");
+    delivered(mind, "s1", "d1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "a" });
+    const a = await notice(mind, "A");
+    setNoticeDrainWatermark(mind, "s1", a, "made-up-1");
+    await handleMindEvent(mind, {
+      type: "error",
+      session: "s1",
+      messageId: "made-up-2",
+      content: "x",
+    });
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
+    assert.equal(takeDrainWatermark(mind, "s1"), undefined, "the drain went to d1's turn");
+    assert.equal(takeErrored(mind, "s1"), false, "and so did the error");
+    assert.ok((await bodies(mind)).includes("A"), "which errored, so A survives");
   });
 });

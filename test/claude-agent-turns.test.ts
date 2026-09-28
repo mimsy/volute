@@ -24,6 +24,8 @@ type Turn = {
   end?: boolean;
   /** Context tokens the answer reports — past the threshold, the turn ends in a rotation. */
   inputTokens?: number;
+  /** Throw once the prompt is taken, before answering it — a stream that dies mid-turn. */
+  throws?: boolean;
 };
 
 const FAKE_SDK = `
@@ -43,17 +45,22 @@ export function query({ prompt, options }) {
       if (turn.end) return;
       const next = await input.next();
       if (next.done) return;
-      const block = next.value.message.content.find((b) => b.type === "text");
+      const text = next.value.message.content
+        .filter((b) => b.type === "text")
+        .map((b) => b.text)
+        .join("\\n");
       for (const matcher of options.hooks?.UserPromptSubmit ?? []) {
         for (const hook of matcher.hooks) {
           await hook(
-            { hook_event_name: "UserPromptSubmit", prompt: block?.text ?? "", session_id: "sess-1" },
+            { hook_event_name: "UserPromptSubmit", prompt: text, session_id: "sess-1" },
             undefined,
             { signal: new AbortController().signal },
           );
         }
       }
       if (signal?.aborted) throw aborted();
+      if (turn.throws) throw new Error("stream died");
+      control().prompts.push({ session: options.env?.VOLUTE_SESSION, text });
       yield {
         type: "assistant",
         session_id: "sess-1",
@@ -78,7 +85,10 @@ let captureDir: string;
 let server: Server;
 const posted: { path: string; body: any }[] = [];
 /** Scripted turns, by the session whose stream runs them. */
-const control: { turns: Map<string, Turn[]> } = { turns: new Map() };
+const control: { turns: Map<string, Turn[]>; prompts: { session: string; text: string }[] } = {
+  turns: new Map(),
+  prompts: [],
+};
 
 type Mind = {
   resolve: (name: string) => {
@@ -212,16 +222,31 @@ describe("claude: every turn ends with a done naming what it took (#1207)", () =
     assert.notEqual(second.endsTurn, false);
   });
 
-  it("a rotation that fails ends the turn of the input the aborted stream held", async () => {
+  it("a rotation that fails carries the input it held into a fresh session, rather than dropping it", async () => {
     // Over the context threshold, so d1's turn ends in a rotation — which fails, as there
-    // is no transcript to rotate, and the session starts over without d2.
+    // is no transcript to rotate. d2, queued behind d1, runs in the fresh session.
     const mind = newMind({ maxContextTokens: 100 });
     control.turns.set("rotated", [{ inputTokens: 1000 }]);
     send(mind, "rotated", "d1");
     send(mind, "rotated", "d2");
     await waitFor(() => dones("rotated").length === 2, "both dones");
     const [first, second] = dones("rotated").map((d) => d.body);
-    assert.deepEqual(first.covers, ["d1"]);
-    assert.deepEqual(second.covers, ["d2"]);
+    assert.deepEqual([first.messageId, first.covers], ["d1", ["d1"]]);
+    assert.deepEqual([second.messageId, second.covers], ["d2", ["d2"]]);
+    const answered = control.prompts.filter((p) => p.session === "rotated").map((p) => p.text);
+    assert.equal(answered.length, 2, "d2 was answered, not just declared done");
+    assert.match(answered[1], /hello d2/);
+  });
+
+  it("a stream that dies mid-turn redelivers its input to the fresh stream", async () => {
+    const mind = newMind();
+    control.turns.set("resumed", [{ throws: true }]);
+    send(mind, "resumed", "d1");
+    await waitFor(() => dones("resumed").length === 1, "d1's done");
+    const [done] = dones("resumed").map((d) => d.body);
+    assert.deepEqual([done.messageId, done.covers], ["d1", ["d1"]]);
+    const answered = control.prompts.filter((p) => p.session === "resumed").map((p) => p.text);
+    assert.equal(answered.length, 1);
+    assert.match(answered[0], /hello d1/);
   });
 });

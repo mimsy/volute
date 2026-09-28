@@ -11,7 +11,6 @@ import {
   acquireTurnSlot,
   hasTurnSlot,
   releaseTurnSlot,
-  SLOT_MAX_AGE_MS,
   turnSlotHolders,
 } from "../daemon/turn-slots.js";
 import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
@@ -142,9 +141,8 @@ const AVATAR_CACHE_TTL = 5 * 60 * 1000;
 
 /** A delivery the mind has taken but no `done` has covered yet. */
 type Outstanding = {
-  /** The process it was POSTed to — the mind, or one of its variants (see `sessionDone`). */
+  /** The process it was POSTed to — the mind, or one of its variants (see `coveredBy`). */
   process: string;
-  at: number;
 };
 
 /** What a mind's `done` says about the deliveries it finished (see `coveredBy`). */
@@ -999,6 +997,11 @@ export class DeliveryManager {
     return ids;
   }
 
+  /** Whether the daemon delivered `deliveryId` to this session and no `done` has covered it. */
+  isOutstanding(mind: string, session: string, deliveryId: string): boolean {
+    return this.sessionStates.get(mind)?.get(session)?.outstanding.has(deliveryId) ?? false;
+  }
+
   /**
    * Called when a mind's session emits a "done" event: retires the deliveries it finished
    * (see `coveredBy`), frees the turn slot if the turn ended with nothing left to run, and
@@ -1013,7 +1016,10 @@ export class DeliveryManager {
     baseName: string,
     session?: string,
     retired?: string[],
-    /** Whether the `done` ended a turn; one that only retires a failed delivery does not. */
+    /**
+     * Whether a turn has ended — false for a `done` that only retires a delivery that failed
+     * while a turn ran on beside it.
+     */
     endedTurn = true,
   ): void {
     // A completed turn closes the mind's stale-send baselines so the next delivery re-snapshots.
@@ -2800,7 +2806,8 @@ export class DeliveryManager {
     // below, which sits behind an `await` on profile enrichment. `runSequential` keys on
     // (mind, session), so two sessions of one mind are not serialized against each other,
     // and two batch buffers flushing in the same tick would otherwise both pass a gate
-    // neither had claimed. Idempotent, so the later `addOutstanding` is a no-op.
+    // neither had claimed. Idempotent, so the later `addOutstanding` only records the
+    // delivery — its own claim of the slot is a no-op.
     const ownsSlot = acquireTurnSlot(baseName, session);
     const wakeAt = ownsSlot ? this.noteWake(baseName, session, sessionConfig) : undefined;
 
@@ -3376,12 +3383,11 @@ export class DeliveryManager {
       seenChannelProfiles: new Set<string>(),
       announcedChannelInfo: new Map<string, string>(),
     };
-    const now = Date.now();
-    state.outstanding.set(deliveryId, { process, at: now });
+    state.outstanding.set(deliveryId, { process });
     // Take the concurrency slot in the same tick as the gate check above it, so two
     // deliveries can't both pass a gate neither has yet claimed against.
     const owned = acquireTurnSlot(mind, session);
-    state.lastDeliveredAt = now;
+    state.lastDeliveredAt = Date.now();
     if (senders) state.lastDeliverySenders = senders;
     if (channels) state.lastDeliveryChannels = channels;
     mindSessions.set(session, state);
@@ -3407,15 +3413,8 @@ export class DeliveryManager {
     const mindSessions = this.sessionStates.get(mind);
     const state = mindSessions?.get(session);
     if (!mindSessions || !state || state.outstanding.size === 0) return;
-    const now = Date.now();
-    for (const [id, d] of state.outstanding) {
-      // A delivery no `done` will ever cover — its mind lost it without saying, and no later
-      // turn followed to sweep it up (see `coveredBy`) — would hold the session busy and its
-      // slot taken forever; one older than a turn can plausibly run is let go, as the slot's
-      // own TTL lets go of the slot.
-      if (!retired || retired.includes(id) || now - d.at > SLOT_MAX_AGE_MS) {
-        state.outstanding.delete(id);
-      }
+    for (const id of [...state.outstanding.keys()]) {
+      if (!retired || retired.includes(id)) state.outstanding.delete(id);
     }
     if (state.outstanding.size === 0) this.onIdle(mind, session, mindSessions);
   }

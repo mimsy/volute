@@ -13,7 +13,12 @@ import {
 } from "./usage.js";
 
 /** A pending message's daemon-facing id (routing/channel key) paired with its channel `seq`. */
-export type MessageIdEntry = { id: string | undefined; seq: number };
+export type MessageIdEntry = {
+  id: string | undefined;
+  seq: number;
+  /** It interrupted the turn it arrived in, so it runs as a turn of its own, not folded in. */
+  interrupting?: boolean;
+};
 
 export type StreamSession = {
   name: string;
@@ -181,6 +186,12 @@ export async function consumeStream(
       // folded into it (#1207).
       const covers = session.currentMessageId !== undefined ? [session.currentMessageId] : [];
       for (const entry of session.messageIds.splice(preTurnPending)) {
+        // A message that interrupted this turn is not folded into it: the SDK runs it
+        // next, as a turn of its own, whose `done` will cover it.
+        if (entry.interrupting) {
+          session.messageIds.push(entry);
+          continue;
+        }
         if (entry.id !== undefined) {
           session.messageChannels.delete(entry.id);
           covers.push(entry.id);

@@ -121,6 +121,34 @@ describe("claude template: a done covers the deliveries its turn finished", () =
   });
 });
 
+describe("claude template: an interrupting message is not folded into the turn it cut off", () => {
+  it("the interrupted turn's done leaves it out, and it drives the next turn", async () => {
+    captured = [];
+    const session = {
+      name: "interrupted",
+      messageIds: [{ id: "a", seq: 1 }] as {
+        id: string | undefined;
+        seq: number;
+        interrupting?: boolean;
+      }[],
+      currentMessageId: undefined as string | undefined,
+      currentSeq: undefined as number | undefined,
+      messageChannels: new Map<string, { channel: string }>(),
+    };
+    async function* stream() {
+      yield assistant("working on a");
+      session.messageIds.push({ id: "b", seq: 2, interrupting: true });
+      yield result(); // a's turn, cut short
+      yield assistant("working on b");
+      yield result();
+    }
+    await consumeStream(stream() as never, session, { broadcast: () => {}, ack: () => {} });
+    const [first, second] = await dones(2);
+    assert.deepEqual([first.messageId, first.covers], ["a", ["a"]]);
+    assert.deepEqual([second.messageId, second.covers], ["b", ["b"]]);
+  });
+});
+
 describe("the notices hook names the delivery whose prompt it drains for", () => {
   it("sends the messageId its hook input carries, so the drain is that turn's", async () => {
     const hook = resolvePath(

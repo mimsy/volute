@@ -471,6 +471,19 @@ export function createMind(options: {
   /** Sentinel error used to signal that the stream was aborted for compaction */
   class CompactionAbort extends Error {}
 
+  /** A session's pending message ids, led by the turn in flight if there is one. */
+  function withCurrentMessage(session: Session): MessageIdEntry[] {
+    return session.currentSeq !== undefined
+      ? [{ id: session.currentMessageId, seq: session.currentSeq }, ...session.messageIds]
+      : session.messageIds;
+  }
+
+  /** What a fresh session needs of the one it takes redelivered messages over from. */
+  function carryOver(from: Session, to: Session) {
+    for (const [id, ch] of from.messageChannels) to.messageChannels.set(id, ch);
+    for (const listener of from.listeners) to.listeners.add(listener);
+  }
+
   function startSession(
     session: Session,
     savedSessionId?: string,
@@ -756,12 +769,22 @@ export function createMind(options: {
                 committed = false;
                 session.seeded = false;
                 streamAbort = new AbortController();
+                // This stream ends here. The input the aborted one had not finished — the
+                // turn it cut off, and anything queued behind it — goes to a fresh session
+                // under the same name, as the reaper's does, rather than being dropped: the
+                // context is lost, the messages aren't (#1207).
+                const pending = session.channel.recover();
                 session.channel = createMessageChannel();
-                // The stream ends here, and the input the aborted one held goes with it.
-                if (session.currentMessageId !== undefined || session.messageIds.length > 0) {
-                  emitDone();
-                  session.currentMessageId = undefined;
+                if (pending.length > 0) {
+                  const old = withCurrentMessage(session);
+                  session.closed = true;
+                  if (sessions.get(session.name) === session) sessions.delete(session.name);
+                  const fresh = getOrCreateSession(session.name);
+                  carryOver(session, fresh);
+                  relockstepMessageIds(pending, old, fresh.channel.push, fresh.messageIds);
                 }
+                session.currentMessageId = undefined;
+                session.messageIds = [];
                 break;
               }
               // Point the live pointer at the rotated session and arm the boundary
@@ -810,7 +833,6 @@ export function createMind(options: {
           }
         }
       } catch (err) {
-        session.messageChannels.clear();
         if (currentSessionId) {
           log("mind", `session "${session.name}": resume failed, starting fresh:`, err);
           // Mind-level (no `thread`) so it reaches the next turn on any thread (#768).
@@ -830,12 +852,17 @@ export function createMind(options: {
           session.seeded = false;
           session.rotationPending = false;
           streamAbort = new AbortController();
+          // The failed stream's unfinished input goes into the fresh one rather than
+          // being dropped with its channel: the context is lost, the messages aren't.
+          const pending = session.channel.recover();
+          const old = withCurrentMessage(session);
           session.channel = createMessageChannel();
-          // The failed stream's input went with its channel: end its turn before the fresh
-          // one starts, or it would be taken for the fresh stream's first.
-          if (session.currentMessageId !== undefined || session.messageIds.length > 0) {
-            emitDone();
-            session.currentMessageId = undefined;
+          session.currentMessageId = undefined;
+          session.currentSeq = undefined;
+          session.messageIds = relockstepMessageIds(pending, old, session.channel.push, []);
+          const kept = new Set(session.messageIds.map((e) => e.id));
+          for (const id of [...session.messageChannels.keys()]) {
+            if (!kept.has(id)) session.messageChannels.delete(id);
           }
           try {
             await runStream();
@@ -845,6 +872,7 @@ export function createMind(options: {
             emitDone();
           }
         } else {
+          session.messageChannels.clear();
           log("mind", `session "${session.name}": stream consumer error:`, err);
           await emitError(err);
           emitDone();
@@ -1063,12 +1091,12 @@ export function createMind(options: {
         }
 
         // Interrupt if requested and session is mid-turn
-        if (
-          meta.interrupt &&
+        const interrupting =
+          meta.interrupt === true &&
           interruptCurrentTurn(session, (err) =>
             log("mind", `session "${sessionName}": interrupt failed:`, err),
-          )
-        ) {
+          );
+        if (interrupting) {
           log("mind", `session "${sessionName}": interrupting current turn`);
         }
 
@@ -1080,7 +1108,11 @@ export function createMind(options: {
           message: { role: "user", content: toSDKContent(content) },
           parent_tool_use_id: null,
         });
-        session.messageIds.push({ id: meta.messageId, seq });
+        session.messageIds.push({
+          id: meta.messageId,
+          seq,
+          ...(interrupting ? { interrupting: true } : {}),
+        });
 
         return () => {
           if (filteredListener) session.listeners.delete(filteredListener);

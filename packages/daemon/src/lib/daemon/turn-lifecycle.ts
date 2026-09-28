@@ -68,6 +68,21 @@ export type MindEvent = {
   endsTurn?: boolean;
 };
 
+/**
+ * The delivery a mind's event names, if it is one the daemon delivered to that session and
+ * no `done` has covered yet — the only ids a turn's error flag or drain watermark is keyed
+ * by. Anything else a mind sends is read as naming no turn, so a mind can't grow the
+ * daemon's per-delivery state with ids of its own.
+ */
+function outstandingId(mind: string, session: string, messageId: string | undefined) {
+  if (messageId === undefined) return undefined;
+  try {
+    return getDeliveryManager().isOutstanding(mind, session, messageId) ? messageId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Record the high-water notice id drained for a turn (set by the pre-prompt hook). */
 export function setNoticeDrainWatermark(
   mind: string,
@@ -75,18 +90,22 @@ export function setNoticeDrainWatermark(
   id: number,
   messageId?: string,
 ): void {
-  setDrainWatermark(mind, session, id, messageId);
+  setDrainWatermark(mind, session, id, outstandingId(mind, session, messageId));
 }
 
 /** What a `done` does to its session, decided the moment it arrives (see `readDone`). */
 type DoneState = {
-  /** The `done` ends a turn. */
+  /** The `done` ends a turn — the mind's, or a variant's beside it. */
   ends: boolean;
   /** It closes the session's active turn — or there is none to close. */
   closes: boolean;
+  /** The active turn it closes, as it stood when the `done` arrived. */
+  turnId: string | undefined;
+  /** No turn runs on once it is handled, so the session's slot may go back. */
+  releases: boolean;
   /** The outstanding deliveries it finishes (see `DeliveryManager.coveredBy`). */
   retired: string[] | undefined;
-  /** Highest notice id the closed turn drained. */
+  /** Highest notice id the ended turn drained. */
   watermark: number | undefined;
   errored: boolean;
 };
@@ -101,18 +120,20 @@ type DoneState = {
  *
  * A `done` closes the session's active turn only if it comes from the process that opened
  * it: a variant shares its parent's turn key, and its `done` must not cut the parent's
- * turn short. Only a `done` that closes a turn takes its drain watermarks and error flags —
- * the turns it names, and any that named none — before anything awaits, so a drain for the
- * next turn is never claimed by this one's. A `done` that ends no turn drops its failed
- * deliveries' error flags, whose turns never ran.
+ * turn short. A `done` that ends a turn takes the drain watermarks and error flags of the
+ * deliveries it finished — and, if it closes the session's turn, those that named none —
+ * before anything awaits, so a drain for the next turn is never claimed by this one's. A
+ * `done` that ends no turn drops its failed deliveries' flags, whose turns never ran.
  */
 function readDone(mind: string, event: MindEvent, process: string): DoneState {
   const session = event.session;
   const legacy = event.covers === undefined;
   const ends = event.endsTurn !== false;
-  const closes =
-    ends &&
-    (getActiveTurnId(mind, session) === undefined || getActiveTurnOwner(mind, session) === process);
+  const turnId = getActiveTurnId(mind, session);
+  const closes = ends && (turnId === undefined || getActiveTurnOwner(mind, session) === process);
+  // A `done` that ends no turn still frees the slot when no turn runs: the one it failed
+  // beside has already ended, and its own `done` could not free what this delivery held.
+  const releases = ends || turnId === undefined;
   let retired: string[] | undefined;
   try {
     retired = getDeliveryManager().coveredBy(mind, session, {
@@ -126,21 +147,23 @@ function readDone(mind: string, event: MindEvent, process: string): DoneState {
       llog.error(`delivery manager coveredBy failed for ${mind}`, log.errorData(err));
     }
   }
-  if (!session) return { ends, closes, retired, watermark: undefined, errored: false };
+  const state = { ends, closes, turnId, releases, retired };
+  if (!session) return { ...state, watermark: undefined, errored: false };
 
   const named = [...new Set([...(event.covers ?? []), ...(retired ?? [])])];
   if (event.messageId !== undefined) named.push(event.messageId);
-  if (!closes) {
-    if (!ends) takeErrored(mind, session, named, false);
-    return { ends, closes, retired, watermark: undefined, errored: false };
+  if (!ends) {
+    takeDrainWatermark(mind, session, named, false);
+    takeErrored(mind, session, named, false);
+    return { ...state, watermark: undefined, errored: false };
   }
-  const ids = legacy ? undefined : named;
+  // A turn that closes the session's reads the whole session for a template that predates
+  // `covers`, as it always did; one beside another process's turn reads only its own.
+  const ids = closes && legacy ? undefined : named;
   return {
-    ends,
-    closes,
-    retired,
-    watermark: takeDrainWatermark(mind, session, ids),
-    errored: takeErrored(mind, session, ids),
+    ...state,
+    watermark: takeDrainWatermark(mind, session, ids, closes),
+    errored: takeErrored(mind, session, ids, closes),
   };
 }
 
@@ -377,7 +400,7 @@ export async function handleMindEvent(
   // Turn failure: record a notice and flag the session as errored so the upcoming `done`
   // does NOT mark notices delivered (failures accumulate until a clean turn).
   if (event.type === "error" && event.session) {
-    markErrored(mind, event.session, event.messageId);
+    markErrored(mind, event.session, outstandingId(mind, event.session, event.messageId));
     const { reason, detail } = classify(event.content ?? "");
     await recordNotice({
       mind,
@@ -393,23 +416,28 @@ export async function handleMindEvent(
   }
 
   if (done) {
-    // Turn end: clear the persistent typing entries set at delivery (delivery-manager)
-    // and push the update to web clients. This is the canonical mid-flight clear — do
-    // not clear earlier (e.g. on text/outbound); typing means "on a turn", not "about
-    // to send here".
-    const map = getTypingMap();
-    publishTypingForChannels(map.deleteSender(mind), map);
-    broadcast({ type: "mind_done", mind, summary: "Finished processing" });
-    // Retire the deliveries it covers and, if the turn ended with nothing left to run,
+    if (done.ends) {
+      // Turn end: clear the persistent typing entries set at delivery (delivery-manager)
+      // and push the update to web clients. This is the canonical mid-flight clear — do
+      // not clear earlier (e.g. on text/outbound); typing means "on a turn", not "about
+      // to send here". A `done` that ends no turn leaves the one running beside it be.
+      const map = getTypingMap();
+      publishTypingForChannels(map.deleteSender(mind), map);
+      broadcast({ type: "mind_done", mind, summary: "Finished processing" });
+    }
+    // Retire the deliveries it covers and, if no turn runs on with nothing left to run,
     // free its slot.
     try {
-      getDeliveryManager().sessionDone(mind, event.session, done.retired ?? [], done.ends);
+      getDeliveryManager().sessionDone(mind, event.session, done.retired ?? [], done.releases);
     } catch (err) {
       if (!(err instanceof ManagerNotReadyError)) {
         llog.error(`delivery manager sessionDone failed for ${mind}`, log.errorData(err));
       }
     }
-    if (done.closes) await completeTurnAndSummarize(mind, event, insertedId, done);
+    if (done.closes) await completeTurnAndSummarize(mind, event, insertedId, done, process);
+    // A variant's turn beside its parent's: nothing of the parent's to complete, but the
+    // notices its own turn drained are delivered all the same.
+    else if (done.ends && event.session) markDeliveredOnCleanTurn(mind, event.session, done);
   }
 
   // Record spend against the mind's cap and the install-wide cap. `cost_usd` is set
@@ -543,8 +571,12 @@ async function completeTurnAndSummarize(
   event: MindEvent,
   insertedId: number | undefined,
   done: DoneState,
+  process: string,
 ): Promise<void> {
-  const completedTurnId = await completeTurn(mind, event.session);
+  const completedTurnId = await completeTurn(mind, event.session, {
+    turnId: done.turnId,
+    owner: process,
+  });
   if (event.session) markDeliveredOnCleanTurn(mind, event.session, done);
   // If this turn was triggered by an immediate system event (exact match via the
   // turn's trigger_event_id), record its final text as the event's reflection

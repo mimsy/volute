@@ -41,28 +41,39 @@ function key(mind: string, session?: string | null): string {
 }
 
 /**
- * Turns (`mind:session:messageId`) that have seen an `error` event since their `done`.
- * Used to distinguish a failed turn from a clean one: failure notices are only marked
- * delivered after a turn that completed WITHOUT an error, so they accumulate across a
- * full outage and reach the mind on its next genuinely successful turn. Keyed by the
- * delivery the error names, so an error in one turn is never charged to another on the
- * same session; an error naming none is keyed by the session alone.
+ * Per `mind:thread`, the turns that have seen an `error` event since their `done`, by the
+ * delivery the error named ("" for one that named none). Used to distinguish a failed turn
+ * from a clean one: failure notices are only marked delivered after a turn that completed
+ * WITHOUT an error, so they accumulate across a full outage and reach the mind on its next
+ * genuinely successful turn. Keyed by delivery, an error in one turn is never charged to
+ * another on the same session. Callers key only by deliveries the daemon itself has
+ * outstanding (see turn-lifecycle), so a mind can't grow this with ids of its own.
  */
-const erroredSessions = new Set<string>();
+const erroredSessions = new Map<string, Set<string>>();
 
-function errKey(mind: string, session: string | null | undefined, messageId?: string): string {
-  // NUL, not ":", between the parts: thread names are channel-shaped and carry colons.
-  return `${key(mind, session)}\0${messageId ?? ""}`;
-}
+/**
+ * Per `mind:thread`, the highest notice id the pre-prompt hook drained, by the delivery
+ * whose turn drained it ("" when the hook named none — a template that predates the field).
+ * A clean turn only marks notices delivered up to what it drained, so a notice created
+ * mid-turn isn't lost before the mind reads it; keyed by delivery, the next turn's drain can
+ * never be claimed by this turn's `done`, however the two requests interleave (#1207).
+ */
+const drainWatermarks = new Map<string, Map<string, number>>();
 
-/** Flag that the turn driven by `messageId` (or, naming none, the session's) hit an error. */
+/** Flag that the turn of `messageId` (or, naming none, the session's) hit an error. */
 export function markErrored(mind: string, session?: string | null, messageId?: string): void {
-  erroredSessions.add(errKey(mind, session, messageId));
+  const k = key(mind, session);
+  let byDelivery = erroredSessions.get(k);
+  if (!byDelivery) {
+    byDelivery = new Set();
+    erroredSessions.set(k, byDelivery);
+  }
+  byDelivery.add(messageId ?? "");
 }
 
 /**
- * Return whether any of the turns driven by `messageIds` errored, clearing every flag read.
- * The session's unkeyed flag (an error that named no turn) is read too unless `unkeyed` is
+ * Return whether any of the turns of `messageIds` errored, clearing every flag read. The
+ * session's unkeyed flag (an error that named no turn) is read too unless `unkeyed` is
  * false; without `messageIds`, every flag on the session is.
  */
 export function takeErrored(
@@ -71,28 +82,20 @@ export function takeErrored(
   messageIds?: string[],
   unkeyed = true,
 ): boolean {
+  const k = key(mind, session);
+  const byDelivery = erroredSessions.get(k);
+  if (!byDelivery) return false;
   let errored = false;
   if (!messageIds) {
-    const prefix = `${key(mind, session)}\0`;
-    for (const k of [...erroredSessions]) {
-      if (k.startsWith(prefix)) errored = erroredSessions.delete(k) || errored;
-    }
-    return errored;
+    errored = byDelivery.size > 0;
+    byDelivery.clear();
+  } else {
+    if (unkeyed) errored = byDelivery.delete("");
+    for (const id of messageIds) errored = byDelivery.delete(id) || errored;
   }
-  if (unkeyed) errored = erroredSessions.delete(errKey(mind, session));
-  for (const id of messageIds)
-    errored = erroredSessions.delete(errKey(mind, session, id)) || errored;
+  if (byDelivery.size === 0) erroredSessions.delete(k);
   return errored;
 }
-
-/**
- * Highest notice id the pre-prompt hook drained, per `mind:thread` NUL delivery id ("" when
- * the hook named none — a template that predates the field). A clean turn only marks
- * notices delivered up to what it drained, so a notice created mid-turn isn't lost before
- * the mind reads it; keyed by delivery, the next turn's drain can never be claimed by this
- * turn's `done`, however the two requests interleave (#1207).
- */
-const drainWatermarks = new Map<string, number>();
 
 /** Record the high-water notice id drained for the turn of `messageId` (see drainWatermarks). */
 export function setDrainWatermark(
@@ -101,29 +104,39 @@ export function setDrainWatermark(
   id: number,
   messageId?: string,
 ): void {
-  const k = errKey(mind, session, messageId);
-  drainWatermarks.set(k, Math.max(drainWatermarks.get(k) ?? 0, id));
+  const k = key(mind, session);
+  let byDelivery = drainWatermarks.get(k);
+  if (!byDelivery) {
+    byDelivery = new Map();
+    drainWatermarks.set(k, byDelivery);
+  }
+  const d = messageId ?? "";
+  byDelivery.set(d, Math.max(byDelivery.get(d) ?? 0, id));
 }
 
 /**
- * Take the highest watermark drained for any of the turns of `messageIds`, and for no turn
- * in particular — or, without `messageIds`, for any turn on the session — clearing each.
+ * Take the highest watermark drained for any of the turns of `messageIds` — and, unless
+ * `unkeyed` is false, for no turn in particular — or, without `messageIds`, for any turn on
+ * the session, clearing each.
  */
 export function takeDrainWatermark(
   mind: string,
   session: string,
   messageIds?: string[],
+  unkeyed = true,
 ): number | undefined {
-  const keys = messageIds
-    ? [errKey(mind, session), ...messageIds.map((id) => errKey(mind, session, id))]
-    : [...drainWatermarks.keys()].filter((k) => k.startsWith(`${key(mind, session)}\0`));
+  const k = key(mind, session);
+  const byDelivery = drainWatermarks.get(k);
+  if (!byDelivery) return undefined;
+  const keys = messageIds ? [...(unkeyed ? [""] : []), ...messageIds] : [...byDelivery.keys()];
   let watermark: number | undefined;
-  for (const k of keys) {
-    const wm = drainWatermarks.get(k);
+  for (const d of keys) {
+    const wm = byDelivery.get(d);
     if (wm == null) continue;
-    drainWatermarks.delete(k);
+    byDelivery.delete(d);
     watermark = Math.max(watermark ?? 0, wm);
   }
+  if (byDelivery.size === 0) drainWatermarks.delete(k);
   return watermark;
 }
 
@@ -274,10 +287,19 @@ export function getToolUseEventId(
 export async function completeTurn(
   mind: string,
   session?: string | null,
+  /**
+   * Complete it only if it is this turn — or, when this is null, a turn this process
+   * opened. A `done` decides what it closes on arrival; by the time it completes, another
+   * process may have opened a turn on the thread that is not its to end.
+   */
+  only?: { turnId: string | undefined; owner: string },
 ): Promise<string | undefined> {
   const k = key(mind, session);
   const entry = activeTurns.get(k);
   if (!entry) return undefined;
+  if (only && (only.turnId ? entry.turnId !== only.turnId : entry.owner !== only.owner)) {
+    return undefined;
+  }
 
   try {
     const db = await getDb();
@@ -339,7 +361,7 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
   for (const k of toDelete) activeTurns.delete(k);
   // Drop any errored-session flags and drain watermarks for this mind so a hard crash
   // can't leave one stale — keyed per delivery, they would otherwise outlive the process.
-  for (const k of [...erroredSessions]) {
+  for (const k of [...erroredSessions.keys()]) {
     if (k.startsWith(`${mind}:`)) erroredSessions.delete(k);
   }
   for (const k of [...drainWatermarks.keys()]) {
@@ -363,10 +385,10 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
  * Reconcile turns wedged in `active` despite already having received a `done`, and
  * sessionless turns that have gone quiet.
  *
- * A turn with a session completes when a `done` naming its driver arrives from the process
+ * A turn with a session completes when a `done` that ends a turn arrives from the process
  * that opened it (see `handleMindEvent`). One that saw a `done` yet stayed active — its
- * completion failed to persist, or a `done` named some other delivery and the turn's own
- * never came — would stay active indefinitely, never summarized, absorbing later events.
+ * completion failed to persist — would stay active indefinitely, never summarized,
+ * absorbing later events.
  *
  * This sweep catches that: an active turn that has seen ≥1 `done` and has had no
  * events for `idleMs` is genuinely finished. A sessionless `mind:*` turn is closed only
