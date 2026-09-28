@@ -3,7 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, describe, it } from "node:test";
-import { addCustomModel, removeCustomModel } from "../packages/daemon/src/lib/ai-service.js";
+import {
+  addCustomModel,
+  removeAiConfig,
+  removeCustomModel,
+  saveProviderConfig,
+} from "../packages/daemon/src/lib/ai-service.js";
 import {
   mindModelId,
   mindPricingContext,
@@ -127,5 +132,54 @@ describe("resolveModelAlias", () => {
     await addMind("pc-alias", 4805, undefined, "claude");
     writeConfig(mindDir("pc-alias"), "haiku");
     assert.equal(await mindModelId("pc-alias"), "anthropic:claude-haiku-4-5");
+  });
+});
+
+describe("mindModelId for a codex mind (#1228)", () => {
+  // A codex mind's config.json carries a bare id; the mind thinks through the host's
+  // openai-codex credentials, so that is where its summaries have to be written.
+  it("resolves a bare id to openai-codex when that provider is configured", async () => {
+    await addMind("pc-codex", 4806, undefined, "codex");
+    writeConfig(mindDir("pc-codex"), "gpt-5.5");
+    saveProviderConfig("openai-codex", { apiKey: "sk-test" });
+    try {
+      assert.equal(await mindModelId("pc-codex"), "openai-codex:gpt-5.5");
+      // Pricing is untouched: the platform catalog prices the same model at the same rates.
+      const priced = priceUsageMetadata(
+        { model: "gpt-5.5", input_tokens: 1000, output_tokens: 100 },
+        await mindPricingContext("pc-codex"),
+      );
+      assert.equal(priced.model, "openai:gpt-5.5");
+    } finally {
+      removeAiConfig();
+    }
+  });
+
+  it("keeps openai for a bare id when openai-codex isn't configured", async () => {
+    await addMind("pc-codex-openai", 4807, undefined, "codex");
+    writeConfig(mindDir("pc-codex-openai"), "gpt-5.5");
+    assert.equal(await mindModelId("pc-codex-openai"), "openai:gpt-5.5");
+  });
+
+  it("keeps a provider the mind's config names explicitly", async () => {
+    await addMind("pc-codex-explicit", 4808, undefined, "codex");
+    writeConfig(mindDir("pc-codex-explicit"), "openai:gpt-5.5");
+    saveProviderConfig("openai-codex", { apiKey: "sk-test" });
+    try {
+      assert.equal(await mindModelId("pc-codex-explicit"), "openai:gpt-5.5");
+    } finally {
+      removeAiConfig();
+    }
+  });
+
+  it("leaves a claude mind on anthropic", async () => {
+    await addMind("pc-claude-codexhost", 4809, undefined, "claude");
+    writeConfig(mindDir("pc-claude-codexhost"), "claude-haiku-4-5");
+    saveProviderConfig("openai-codex", { apiKey: "sk-test" });
+    try {
+      assert.equal(await mindModelId("pc-claude-codexhost"), "anthropic:claude-haiku-4-5");
+    } finally {
+      removeAiConfig();
+    }
   });
 });

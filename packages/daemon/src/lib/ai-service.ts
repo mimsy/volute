@@ -1,5 +1,6 @@
 import {
   type Api,
+  type CredentialStore,
   defaultProviderAuthContext,
   type Model,
   type OAuthAuth,
@@ -25,11 +26,34 @@ export type { AiConfig, AiProviderConfig, CustomModel } from "./config/setup.js"
 
 const aiLog = log.child("ai-service");
 
+/**
+ * pi-ai takes a passed `apiKey` only for providers with an API-key method; an OAuth-only provider
+ * (openai-codex) is resolved from the credential store alone, so without this a completion on it
+ * fails "Provider is not configured" whatever we pass (#1228). The store serves Volute's own
+ * stored OAuth credentials and never writes: Volute is the single refresh authority
+ * (`resolveOAuthCredentials`, run before every completion), and a refresh pi-ai started here would
+ * rotate the refresh token into a store nothing persists.
+ */
+const voluteCredentials: CredentialStore = {
+  async read(providerId) {
+    const oauth = getAiConfig()?.providers[providerId]?.oauth;
+    return oauth && { ...oauth, type: "oauth" };
+  },
+  async list() {
+    return [];
+  },
+  async modify(providerId) {
+    return voluteCredentials.read(providerId);
+  },
+  async delete() {},
+};
+
 // One Models collection with every built-in provider registered. Used for
-// completion (auth resolved from the apiKey we pass in options) and for
-// provider auth introspection. Catalog reads go through the static
-// getBuiltin* helpers so they stay synchronous.
-const models = builtinModels();
+// completion (auth resolved from the apiKey we pass in options, or for an
+// OAuth-only provider from `voluteCredentials`) and for provider auth
+// introspection. Catalog reads go through the static getBuiltin* helpers so
+// they stay synchronous.
+const models = builtinModels({ credentials: voluteCredentials });
 const authContext = defaultProviderAuthContext();
 
 /**
@@ -193,6 +217,7 @@ export async function aiCompleteModelOutcome(
 ): Promise<CompletionOutcome> {
   const model = findModel(modelId);
   if (!model || !getAiConfig()?.providers[model.provider]) return { status: "unconfigured" };
+  if (!callableModel(model)) return { status: "unconfigured" };
   const qualified = `${model.provider}:${model.id}`;
   if (!getEnabledModels().some((id) => qualifyModelId(id) === qualified)) {
     return { status: "unconfigured" };
@@ -730,21 +755,41 @@ export type CompletionOptions = {
   onCost?: (costUsd: number | null) => void;
 };
 
+/**
+ * The model a completion actually calls, or undefined when there is none. An `openai-codex` API
+ * key is an OpenAI platform key — the codex CLI spends it against api.openai.com
+ * (`MindManager.startMind` injects it as OPENAI_API_KEY) — while pi-ai's codex API accepts only a
+ * ChatGPT OAuth token. So without OAuth a codex model is called as the platform model of the same
+ * id, with the codex provider's key (#1228).
+ */
+function callableModel(model: Model<Api>): Model<Api> | undefined {
+  if (model.provider !== "openai-codex" || getAiConfig()?.providers["openai-codex"]?.oauth) {
+    return model;
+  }
+  return getBuiltinModel("openai" as never, model.id as never) as Model<Api> | undefined;
+}
+
 export async function aiComplete(
   systemPrompt: string,
   userMessage: string,
   modelId?: string,
   opts?: CompletionOptions,
 ): Promise<string | null> {
-  const model = modelId ? findModel(modelId) : autoSelectModel();
-  if (!model) {
+  const found = modelId ? findModel(modelId) : autoSelectModel();
+  if (!found) {
     if (modelId) aiLog.warn(`model not found: ${modelId}`);
     else aiLog.debug("no enabled model available for auto-selection");
     return null;
   }
+  const model = callableModel(found);
+  if (!model) {
+    aiLog.warn(`${found.provider}:${found.id} needs OAuth, or a platform model of the same id`);
+    return null;
+  }
 
   try {
-    const apiKey = await resolveApiKey(model.provider);
+    // The credential is the configured provider's, even when the call goes to its platform twin.
+    const apiKey = await resolveApiKey(found.provider);
 
     const signal = opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined;
     const request = models.complete(

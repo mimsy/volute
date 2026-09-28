@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModel, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-import { getCustomModels } from "../ai-service.js";
+import { getAiConfig, getCustomModels } from "../ai-service.js";
 import { findMind, mindDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 
@@ -488,10 +488,19 @@ export function resolveModelAlias(ref: string): string {
  */
 export async function mindModelId(mind: string): Promise<string | null> {
   const { template, configuredModel } = await mindPricingContext(mind);
-  const ref = parseModelRef(
-    configuredModel ?? (template ? TEMPLATE_DEFAULT_MODEL[template] : undefined),
-    template,
-  );
+  const model = configuredModel ?? (template ? TEMPLATE_DEFAULT_MODEL[template] : undefined);
+  let ref = parseModelRef(model, template);
   if (!ref) return null;
+  // A codex mind thinks through the host's `openai-codex` credentials (`MindManager.startMind`),
+  // so when that provider is configured its bare id belongs there — asking `openai`, the pricing
+  // default, finds nothing on a host without that provider (#1228). Pricing keeps `openai`: the
+  // rates are the same, and its catalog carries ids the codex one doesn't.
+  if (
+    template === "codex" &&
+    !parseModelRef(model)?.provider &&
+    getAiConfig()?.providers["openai-codex"]
+  ) {
+    ref = { ...ref, provider: "openai-codex" };
+  }
   return resolveModelAlias(formatModelRef({ ...ref, id: ref.id.replace(/\[1m\]$/i, "") }));
 }
