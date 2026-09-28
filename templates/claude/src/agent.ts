@@ -310,7 +310,7 @@ export function createMind(options: {
         // The SDK's hook input carries only its own `session_id` (a UUID); the volute
         // session name lives in the prompt header. Inject it explicitly so pre-prompt
         // hooks (notices, cross-session activity) can scope their daemon queries — and
-        // so the notices drain watermark keys on the same session the "done" event uses.
+        // so the notices it drains are recorded on the same session the "done" event uses.
         const result = await runHooks(hooksDir, event, {
           ...(input as Record<string, unknown>),
           session: session.name,

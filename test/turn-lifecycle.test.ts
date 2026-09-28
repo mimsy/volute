@@ -136,12 +136,10 @@ describe("turn-lifecycle: handleMindEvent", () => {
   });
 
   it("events drained mid-outage survive an errored turn and clear only on a clean one", async () => {
-    // The exactly-once machinery: the pre-prompt hook drains (recording a watermark);
+    // The exactly-once machinery: the pre-prompt hook drains (recording what it drained);
     // a clean `done` marks the drained events delivered, but an errored turn must NOT —
     // failures accumulate until the mind demonstrably completes a turn.
-    const { setNoticeDrainWatermark } = await import(
-      "../packages/daemon/src/lib/daemon/turn-lifecycle.js"
-    );
+    const { drainNotices } = await import("../packages/daemon/src/lib/daemon/turn-lifecycle.js");
     const { recordNotice } = await import("../packages/daemon/src/lib/chat/system-events.js");
     const mind = "tl-errored-redelivery";
 
@@ -154,21 +152,19 @@ describe("turn-lifecycle: handleMindEvent", () => {
     });
 
     // Turn 1: drains the notice, then errors — the notice must survive.
-    let drained = await drainEvents(mind, "s1");
+    let drained = await drainNotices(mind, "s1", mind);
     assert.equal(drained.length, 1);
-    setNoticeDrainWatermark(mind, "s1", Math.max(...drained.map((n) => n.id)));
     await handleMindEvent(mind, { type: "text", session: "s1", content: "trying…" });
     await handleMindEvent(mind, { type: "error", session: "s1", content: "boom again" });
     await handleMindEvent(mind, { type: "done", session: "s1" });
 
-    drained = await drainEvents(mind, "s1");
+    drained = await drainNotices(mind, "s1", mind);
     assert.ok(
       drained.some((n) => n.body === "flaky"),
       "the drained notice must be redelivered after an errored turn",
     );
 
-    // Turn 2: drains again and completes cleanly — everything drained clears.
-    setNoticeDrainWatermark(mind, "s1", Math.max(...drained.map((n) => n.id)));
+    // Turn 2: that drain was its own, and it completes cleanly — everything drained clears.
     await handleMindEvent(mind, { type: "text", session: "s1", content: "recovered" });
     await handleMindEvent(mind, { type: "done", session: "s1" });
     // The clear runs fire-and-forget on done; poll briefly.

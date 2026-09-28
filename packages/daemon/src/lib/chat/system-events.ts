@@ -1,4 +1,18 @@
-import { and, asc, desc, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  ne,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { getSpiritName } from "../config/setup.js";
 import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
 import { getDb } from "../db.js";
@@ -952,12 +966,15 @@ export function pendingEventsLine(count: number): string {
 
 /**
  * Undrained next-turn events for a mind+thread, oldest first. Includes mind-level
- * events (thread = "") so they reach whichever thread next runs a turn.
+ * events (thread = "") so they reach whichever thread next runs a turn. `exclude` leaves
+ * out events already drained into a turn still running, so a prompt folded into that turn
+ * isn't told them again (#1233).
  */
 export async function drainEvents(
   mind: string,
   thread: string,
   limit = MAX_NEXT_TURN_EVENTS,
+  exclude: number[] = [],
 ): Promise<SystemEvent[]> {
   const db = await getDb();
   return db
@@ -969,6 +986,7 @@ export async function drainEvents(
         eq(systemEvents.delivery, "next-turn"),
         isNull(systemEvents.delivered_at),
         or(eq(systemEvents.thread, thread), eq(systemEvents.thread, MIND_LEVEL_THREAD)),
+        exclude.length > 0 ? notInArray(systemEvents.id, exclude) : undefined,
       ),
     )
     .orderBy(asc(systemEvents.id))
@@ -1087,7 +1105,8 @@ export function localHM(createdAt: string): string {
 }
 
 /**
- * Mark next-turn events delivered for a mind+thread up to and including `uptoId`. Unlike
+ * Mark the next-turn events `ids` delivered for a mind+thread — exactly the ones a turn was
+ * shown, never ones it skipped because another turn held them (#1233). Unlike
  * the old notices table (which deleted rows on write), events persist — we stamp
  * `delivered_at` so they stay visible in the events history/UI until swept by
  * {@link cleanExpiredEvents} after {@link EVENT_RETENTION_MS}.
@@ -1095,8 +1114,9 @@ export function localHM(createdAt: string): string {
 export async function clearDeliveredEvents(
   mind: string,
   thread: string,
-  uptoId: number,
+  ids: number[],
 ): Promise<void> {
+  if (ids.length === 0) return;
   try {
     const db = await getDb();
     await db
@@ -1108,7 +1128,7 @@ export async function clearDeliveredEvents(
           eq(systemEvents.delivery, "next-turn"),
           isNull(systemEvents.delivered_at),
           or(eq(systemEvents.thread, thread), eq(systemEvents.thread, MIND_LEVEL_THREAD)),
-          lte(systemEvents.id, uptoId),
+          inArray(systemEvents.id, ids),
         ),
       );
   } catch (err) {

@@ -997,9 +997,13 @@ export class DeliveryManager {
     return ids;
   }
 
-  /** Whether the daemon delivered `deliveryId` to this session and no `done` has covered it. */
-  isOutstanding(mind: string, session: string, deliveryId: string): boolean {
-    return this.sessionStates.get(mind)?.get(session)?.outstanding.has(deliveryId) ?? false;
+  /**
+   * Whether the daemon delivered `deliveryId` to this session — to `process`, if given — and
+   * no `done` has covered it.
+   */
+  isOutstanding(mind: string, session: string, deliveryId: string, process?: string): boolean {
+    const d = this.sessionStates.get(mind)?.get(session)?.outstanding.get(deliveryId);
+    return d !== undefined && (process === undefined || d.process === process);
   }
 
   /**

@@ -3,8 +3,10 @@ import {
   captureReflection,
   clearDeliveredEvents,
   deliverEvent,
+  drainEvents,
   MIND_LEVEL_THREAD,
   recordNotice,
+  type SystemEvent,
 } from "../chat/system-events.js";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { getDb } from "../db.js";
@@ -24,13 +26,14 @@ import { summarizeTurn } from "./summarizer.js";
 import {
   completeTurn,
   createTurn,
+  drainedByDelivery,
   getActiveTurnId,
   getActiveTurnOwner,
   getToolUseEventId,
   markErrored,
   normalizeThread,
-  setDrainWatermark,
-  takeDrainWatermark,
+  recordDrained,
+  takeDrained,
   takeErrored,
   trackToolUse,
 } from "./turn-tracker.js";
@@ -70,27 +73,57 @@ export type MindEvent = {
 
 /**
  * The delivery a mind's event names, if it is one the daemon delivered to that session and
- * no `done` has covered yet — the only ids a turn's error flag or drain watermark is keyed
+ * no `done` has covered yet — the only ids a turn's error flag or drained notices are keyed
  * by. Anything else a mind sends is read as naming no turn, so a mind can't grow the
  * daemon's per-delivery state with ids of its own.
  */
-function outstandingId(mind: string, session: string, messageId: string | undefined) {
+function outstandingId(
+  mind: string,
+  session: string,
+  messageId: string | undefined,
+  process?: string,
+) {
   if (messageId === undefined) return undefined;
   try {
-    return getDeliveryManager().isOutstanding(mind, session, messageId) ? messageId : undefined;
+    return getDeliveryManager().isOutstanding(mind, session, messageId, process)
+      ? messageId
+      : undefined;
   } catch {
     return undefined;
   }
 }
 
-/** Record the high-water notice id drained for a turn (set by the pre-prompt hook). */
-export function setNoticeDrainWatermark(
+/**
+ * Drain a session's next-turn notices for a prompt of the turn of `messageId`, and record
+ * what it drained against that turn. A notice already drained into a delivery `process`
+ * still has outstanding — its `done` not yet in — is left out: the prompt is folded into
+ * that turn, and the mind has been told (#1233). A notice held only by a variant's turn, or
+ * by a drain that named no delivery, is not: that is another context. Held notices are only
+ * skipped, never claimed, so if the turn holding one fails, a later turn drains it again —
+ * one turn late, when the skipping prompt was the next turn's, racing the holder's `done`.
+ *
+ * Once a `done` arrives its drains are no longer held, but they stay undelivered until its
+ * clear commits; a prompt of the next turn drained in that gap is shown them again. That is
+ * a repeat across two turns, never a loss.
+ */
+export async function drainNotices(
   mind: string,
   session: string,
-  id: number,
+  process: string,
   messageId?: string,
-): void {
-  setDrainWatermark(mind, session, id, outstandingId(mind, session, messageId));
+): Promise<SystemEvent[]> {
+  const held: number[] = [];
+  for (const [delivery, ids] of drainedByDelivery(mind, session)) {
+    if (outstandingId(mind, session, delivery, process)) held.push(...ids);
+  }
+  const notices = await drainEvents(mind, session, undefined, held);
+  recordDrained(
+    mind,
+    session,
+    notices.map((n) => n.id),
+    outstandingId(mind, session, messageId, process),
+  );
+  return notices;
 }
 
 /** What a `done` does to its session, decided the moment it arrives (see `readDone`). */
@@ -105,8 +138,8 @@ type DoneState = {
   releases: boolean;
   /** The outstanding deliveries it finishes (see `DeliveryManager.coveredBy`). */
   retired: string[] | undefined;
-  /** Highest notice id the ended turn drained. */
-  watermark: number | undefined;
+  /** The notice ids the ended turn drained. */
+  drained: number[];
   errored: boolean;
 };
 
@@ -120,7 +153,7 @@ type DoneState = {
  *
  * A `done` closes the session's active turn only if it comes from the process that opened
  * it: a variant shares its parent's turn key, and its `done` must not cut the parent's
- * turn short. A `done` that ends a turn takes the drain watermarks and error flags of the
+ * turn short. A `done` that ends a turn takes the drained notices and error flags of the
  * deliveries it finished — and, if it closes the session's turn, those that named none —
  * before anything awaits, so a drain for the next turn is never claimed by this one's. A
  * `done` that ends no turn drops its failed deliveries' flags, whose turns never ran.
@@ -148,21 +181,21 @@ function readDone(mind: string, event: MindEvent, process: string): DoneState {
     }
   }
   const state = { ends, closes, turnId, releases, retired };
-  if (!session) return { ...state, watermark: undefined, errored: false };
+  if (!session) return { ...state, drained: [], errored: false };
 
   const named = [...new Set([...(event.covers ?? []), ...(retired ?? [])])];
   if (event.messageId !== undefined) named.push(event.messageId);
   if (!ends) {
-    takeDrainWatermark(mind, session, named, false);
+    takeDrained(mind, session, named, false);
     takeErrored(mind, session, named, false);
-    return { ...state, watermark: undefined, errored: false };
+    return { ...state, drained: [], errored: false };
   }
   // A turn that closes the session's reads the whole session for a template that predates
   // `covers`, as it always did; one beside another process's turn reads only its own.
   const ids = closes && legacy ? undefined : named;
   return {
     ...state,
-    watermark: takeDrainWatermark(mind, session, ids, closes),
+    drained: takeDrained(mind, session, ids, closes),
     errored: takeErrored(mind, session, ids, closes),
   };
 }
@@ -173,8 +206,8 @@ function readDone(mind: string, event: MindEvent, process: string): DoneState {
  * the mind on its next genuinely successful turn.
  */
 function markDeliveredOnCleanTurn(mind: string, session: string, done: DoneState): void {
-  if (!done.errored && done.watermark != null) {
-    clearDeliveredEvents(mind, session, done.watermark).catch((err) =>
+  if (!done.errored && done.drained.length > 0) {
+    clearDeliveredEvents(mind, session, done.drained).catch((err) =>
       llog.warn(`failed to clear delivered notices for ${mind}:${session}`, log.errorData(err)),
     );
   }
