@@ -36,7 +36,7 @@ describe("syncMindZshenv", () => {
   });
 
   it("a daemon started from a mind's shell doesn't pin every codex thread to its slug (#1173)", async (t) => {
-    // codex runs each command in `zsh -lc` with the per-session shell environment
+    // codex runs each command in `zsh -c` with the per-session shell environment
     // (VOLUTE_SESSION among it) and ZDOTDIR=home, so zsh sources this file *after* the
     // env is set: a slug written here would override every thread's own. The daemon's
     // own VOLUTE_SESSION must not reach the composed mind env this file is written from.

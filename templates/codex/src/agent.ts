@@ -421,7 +421,7 @@ export function createMind(options: {
         // Enable reasoning summaries so they appear as events
         model_reasoning_summary: "auto",
         model_supports_reasoning_summaries: true,
-        shell_environment_policy: shellEnv(sessionName),
+        ...shellConfig(sessionName),
         ...(subagentServer && {
           mcp_servers: {
             subagents: {
@@ -442,15 +442,22 @@ export function createMind(options: {
   };
 
   /** The shell a thread's codex (or its subagent's) runs commands in. */
-  function shellEnv(sessionName: string) {
-    // The codex sandbox runs commands in /bin/zsh -lc which resets the environment.
-    // Set ZDOTDIR so the login shell sources our .zshenv with VOLUTE env vars and PATH.
-    // That file never names VOLUTE_SESSION (the daemon rewrites it on every start), so
-    // the value set here survives it.
+  function shellConfig(sessionName: string) {
     return {
-      inherit: "all" as const,
-      ignore_default_excludes: true,
-      set: { ZDOTDIR: options.cwd, VOLUTE_SESSION: sessionName },
+      // No login shells. A login shell sources /etc/profile, which on Debian (our Docker
+      // image) resets PATH and drops home/.local/bin — the mind's skill commands went
+      // missing (#1232). With this off, codex runs `<shell> -c` and doesn't replay its
+      // login-shell snapshot, so commands see the environment set below.
+      allow_login_shell: false,
+      // ZDOTDIR points zsh (which reads .zshenv on every start, login or not) at the
+      // mind's home/.zshenv with its VOLUTE env vars and PATH. That file never names
+      // VOLUTE_SESSION (the daemon rewrites it on every start), so the value set here
+      // survives it.
+      shell_environment_policy: {
+        inherit: "all" as const,
+        ignore_default_excludes: true,
+        set: { ZDOTDIR: options.cwd, VOLUTE_SESSION: sessionName },
+      },
     };
   }
 
@@ -539,7 +546,7 @@ export function createMind(options: {
         project_doc_max_bytes: 0,
         skills: { include_instructions: false },
         features: { multi_agent: false },
-        shell_environment_policy: shellEnv(sessionName),
+        ...shellConfig(sessionName),
       },
     });
     const signal = AbortSignal.any([run.signal, AbortSignal.timeout(SUBAGENT_TIMEOUT_MS)]);

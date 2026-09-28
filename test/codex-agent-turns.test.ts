@@ -1390,6 +1390,9 @@ describe("codex subagents are real, and their usage counts (#1200)", () => {
     assert.equal(nested.config.skills.include_instructions, false);
     assert.equal(nested.config.features.multi_agent, false);
     assert.equal(nested.config.mcp_servers, undefined, "a subagent doesn't get subagents");
+    // Neither shell is a login shell: /etc/profile would drop home/.local/bin (#1232).
+    assert.equal(parentConfig("sub-run").allow_login_shell, false);
+    assert.equal(nested.config.allow_login_shell, false);
     const call = control.calls.filter((c) => c.session === "sub-run")[1];
     assert.equal(call.input, "dream of tides");
 
