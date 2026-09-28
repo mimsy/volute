@@ -83,8 +83,31 @@ type RolloutLine = Record<string, unknown> & {
   };
 };
 
-/** A resolved archive pointer: the previous thread id and when it was archived. */
-export type ArchivedThread = { threadId: string; archivedAt: number | null };
+/**
+ * A resolved archive pointer: the previous thread id, when it was archived, and whether
+ * it was archived by an import that didn't bring the thread's rollout along — a committed
+ * thread the mind may have lost, and has yet to be told about (`rolloutLeftBehind`).
+ */
+export type ArchivedThread = {
+  threadId: string;
+  archivedAt: number | null;
+  rolloutLeftBehind: boolean;
+  path: string;
+};
+
+/**
+ * Clear an archived pointer's `rolloutLeftBehind` mark once the mind has been told, or
+ * its thread carried: the news is given once, not on every restart.
+ */
+export function clearRolloutLeftBehind(archived: ArchivedThread): void {
+  try {
+    const data = JSON.parse(readFileSync(archived.path, "utf-8"));
+    delete data.rolloutLeftBehind;
+    writeFileSync(archived.path, JSON.stringify(data));
+  } catch {
+    // Best effort: at worst the mind hears it again on its next start.
+  }
+}
 
 /**
  * Newest archived codex thread for `<name>` under `<sessionsDir>/archive/`, or
@@ -117,9 +140,15 @@ export function findLatestArchivedThread(sessionsDir: string, name: string): Arc
   if (!bestFile) return null;
 
   try {
-    const data = JSON.parse(readFileSync(resolve(archiveDir, bestFile), "utf-8"));
+    const path = resolve(archiveDir, bestFile);
+    const data = JSON.parse(readFileSync(path, "utf-8"));
     if (typeof data.threadId !== "string") return null;
-    return { threadId: data.threadId, archivedAt: parseArchiveTimestamp(bestTs) };
+    return {
+      threadId: data.threadId,
+      archivedAt: parseArchiveTimestamp(bestTs),
+      rolloutLeftBehind: data.rolloutLeftBehind === true,
+      path,
+    };
   } catch {
     return null;
   }

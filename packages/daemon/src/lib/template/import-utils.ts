@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   utimesSync,
   writeFileSync,
@@ -13,6 +14,7 @@ import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 import { setBridgeConfig } from "../bridges/bridges.js";
 import { readEnv, sharedEnvPath, writeEnv } from "../config/env.js";
+import { CODEX_HOMES, CODEX_STATE_INDEX } from "../mind/archive.js";
 
 /** Find the most recent OpenClaw session whose cwd matches the workspace being imported. */
 export function findOpenClawSession(workspaceDir: string): string | undefined {
@@ -122,6 +124,107 @@ export function rewritePiSessionCwds(root: string, cwd: string): void {
   };
   const sessionsDir = resolve(root, ".mind/pi-sessions");
   if (existsSync(sessionsDir) && lstatSync(sessionsDir).isDirectory()) walk(sessionsDir);
+}
+
+/** Entries of `dir` if it is a real directory (not a link to one), else none. */
+function realDirEntries(dir: string): string[] {
+  try {
+    return lstatSync(dir).isDirectory() ? readdirSync(dir) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Names of every regular file under `dir`, descending real directories only. */
+function fileNamesUnder(dir: string, into: Set<string> = new Set()): Set<string> {
+  for (const entry of realDirEntries(dir)) {
+    const stat = lstatSync(resolve(dir, entry));
+    if (stat.isDirectory()) fileNamesUnder(resolve(dir, entry), into);
+    else if (stat.isFile()) into.add(entry);
+  }
+  return into;
+}
+
+/**
+ * Make a codex mind's state, as it arrives in an extracted archive, safe to
+ * wake into under a new home. Run on the archive before it is copied into the
+ * mind dir, as {@link rewritePiSessionCwds} is.
+ *
+ * Codex's thread index (`state_<n>.sqlite`) names every rollout by its absolute
+ * path on the exporting host, and codex 0.156 trusts that path over its own
+ * `sessions/` for every thread it has marked paginated — which is every thread
+ * `codex exec` makes. A path that no longer exists fails the resume with "no
+ * rollout found" on every turn, though the rollout came with the mind (#1194);
+ * a path that does exist — the original mind's home, on the same host — is
+ * opened, and the copy appends to the original's conversation. So the index is
+ * dropped, whatever wrote it: codex rebuilds it from the rollouts in its own
+ * `sessions/`, which is the only place a moved mind's threads are. Exports
+ * leave it out since #1229; an older or hand-built archive may still carry it.
+ *
+ * And a live thread pointer (`.mind/codex-sessions/<name>.json`) whose rollout
+ * the archive does not carry is archived, the way sleep archives it — marked
+ * `rolloutLeftBehind` when it had carried a turn, so the mind is still told. Under
+ * sandbox or no isolation an API-key codex mind keeps its rollouts in the
+ * host's own `~/.codex`, which no export carries and which every such mind on
+ * that host shares — so on the same host the pointer would resume the
+ * original's live thread, appending to it. Archived, it seeds the copy's first
+ * thread from that thread's tail where the rollout can be read, and resumes
+ * nothing.
+ */
+export function prepareCodexImport(root: string, now: Date = new Date()): void {
+  for (const home of CODEX_HOMES) {
+    const dir = resolve(root, home);
+    for (const entry of realDirEntries(dir)) {
+      if (CODEX_STATE_INDEX.test(entry))
+        rmSync(resolve(dir, entry), { recursive: true, force: true });
+    }
+  }
+
+  const pointersDir = resolve(root, ".mind/codex-sessions");
+  const pointers = realDirEntries(pointersDir).filter(
+    (f) => f.endsWith(".json") && lstatSync(resolve(pointersDir, f)).isFile(),
+  );
+  if (pointers.length === 0) return;
+
+  const rollouts = new Set<string>();
+  for (const home of CODEX_HOMES) fileNamesUnder(resolve(root, home, "sessions"), rollouts);
+  // Codex names a rollout `rollout-<time>-<thread id>.jsonl`, as the template reads it.
+  const carried = (threadId: string) =>
+    [...rollouts].some(
+      (f) => f.startsWith("rollout-") && f.endsWith(".jsonl") && f.includes(`-${threadId}`),
+    );
+
+  // sleep-manager's archive timestamp, which the template's seeding reads.
+  const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 16);
+  for (const file of pointers) {
+    const path = resolve(pointersDir, file);
+    let pointer: { threadId?: unknown; committed?: unknown };
+    try {
+      pointer = JSON.parse(readFileSync(path, "utf-8"));
+    } catch {
+      continue; // the template renames a corrupt pointer aside itself
+    }
+    const { threadId, committed } = pointer;
+    if (typeof threadId !== "string" || (threadId && carried(threadId))) continue;
+    const archiveDir = resolve(pointersDir, "archive");
+    let archiveIsDir: boolean;
+    try {
+      archiveIsDir = lstatSync(archiveDir).isDirectory();
+    } catch {
+      mkdirSync(archiveDir);
+      archiveIsDir = true;
+    }
+    const dest = resolve(archiveDir, `${file.replace(/\.json$/, "")}-${timestamp}.json`);
+    // Only into a real directory, and never over an archived pointer already
+    // there; otherwise the live one is just dropped.
+    if (archiveIsDir && !existsSync(dest)) {
+      // A committed thread is marked: the template tells the mind it lost it, unless it
+      // can carry the thread's tail over from wherever the rollout still is.
+      const archived = committed === true ? { ...pointer, rolloutLeftBehind: true } : pointer;
+      writeFileSync(dest, JSON.stringify(archived), { flag: "wx" });
+    }
+    rmSync(path);
+  }
 }
 
 /**

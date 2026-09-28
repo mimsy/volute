@@ -38,6 +38,7 @@ import {
   importOpenClawConnectors,
   importPiSession,
   parseNameFromIdentity,
+  prepareCodexImport,
   rewritePiSessionCwds,
 } from "../template/import-utils.js";
 import {
@@ -768,6 +769,8 @@ async function importFromFullArchive(
     // The mind's pi sessions name the exporting host's home; re-pointed here, in
     // the archive, so the mind resumes them rather than silently starting empty.
     rewritePiSessionCwds(extractedMindDir, canonicalHome(dest));
+    // Likewise codex's, which name the exporting host's paths in an index.
+    prepareCodexImport(extractedMindDir);
 
     // Copy extracted mind directory to final location, keeping mtimes: pi picks
     // the session it resumes by them (see rewritePiSessionCwds).
@@ -882,6 +885,10 @@ async function importFromHomeOnlyArchive(
   );
 
   try {
+    // Codex's state spans home/ and .mind/, so it is made safe to move before
+    // either is overlaid — see importFromFullArchive.
+    prepareCodexImport(extractedMindDir);
+
     // 1. Compose fresh template
     copyTemplateToDir(composedDir, dest, name, templateManifest);
     seedInitLedger(name, applyInitFiles(dest));

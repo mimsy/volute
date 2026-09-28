@@ -92,13 +92,9 @@ const EXCLUDED_DIRS = new Set([
  *   (`writeClaudeCredentials`).
  * - `.mind/pi-agent/auth.json` — the host's provider API keys and OAuth grants
  *   (`setPiAuthEntry`).
- * - `.mind/codex/auth.json` — the host's `openai-codex` OAuth tokens
- *   (mind-manager's codex branch).
  *
- * And `.mind/codex/shell_snapshots`, where the codex CLI records the mind's
- * shell, `export -p` included: the whole mind environment, which carries the
- * mind's live token, an injected provider key, and every `env.json` variable
- * that `--include-env` exists to gate. Codex recaptures it each session.
+ * Codex's are judged separately, by {@link codexHomeEntry}, because codex has
+ * two homes.
  *
  * Applied to every path an export considers, both walked and git-listed. The
  * template's `.gitignore` already covers most of them on the git branch, but
@@ -109,8 +105,6 @@ const EXCLUDED_PATHS = [
   ".mind/tmp",
   "home/.claude/.credentials.json",
   ".mind/pi-agent/auth.json",
-  ".mind/codex/auth.json",
-  ".mind/codex/shell_snapshots",
   "home/.npm",
   "home/.cache",
   "home/.rustup",
@@ -120,6 +114,79 @@ const EXCLUDED_PATHS = [
   "home/.local/lib",
   "home/.local/pipx",
 ];
+
+/**
+ * The two places codex keeps its state (its `CODEX_HOME`): `.mind/codex` when
+ * the daemon points it there, which it does only for an OAuth provider, and
+ * `~/.codex` otherwise — `home/.codex` under `isolation: user`, where a mind's
+ * HOME is its own home (#1229). Which one a mind uses can change with the
+ * host's provider, so both are judged the same way, for every template: a
+ * mind of any template that runs codex itself leaves the same files in the
+ * same place.
+ */
+export const CODEX_HOMES = [".mind/codex", "home/.codex"];
+
+/** Codex's thread index, and the files SQLite keeps beside it. See {@link CODEX_EXCLUDED}. */
+export const CODEX_STATE_INDEX = /^state_\d+\.sqlite(-wal|-shm|-journal)?$/;
+
+/**
+ * Top-level entries of a codex home dropped from every archive.
+ *
+ * - `auth.json` — the host's `openai-codex` OAuth tokens (mind-manager's codex
+ *   branch), which the daemon rewrites on every start.
+ * - `shell_snapshots/` — codex records the mind's shell there, `export -p`
+ *   included: the whole mind environment, which carries the mind's live token,
+ *   an injected provider key, and every `env.json` variable that
+ *   `--include-env` exists to gate. Codex recaptures it each session.
+ * - `state_<n>.sqlite` — codex's thread index, which names each rollout by its
+ *   absolute path on the exporting host. Codex trusts that path over its own
+ *   `sessions/` whenever the file exists, so an imported mind wedged on every
+ *   thread it resumed — or, on the same host, resumed the original mind's own
+ *   rollout (#1194). Codex rebuilds the index from `sessions/` when it is
+ *   missing, so nothing is lost by leaving it; the import drops it too
+ *   (`prepareCodexImport`).
+ * - Caches and logs codex rebuilds on its own: `.tmp/` alone held 31 MB of
+ *   plugin checkouts on a live mind.
+ */
+const CODEX_EXCLUDED = [
+  /^auth\.json$/,
+  /^shell_snapshots$/,
+  CODEX_STATE_INDEX,
+  /^logs_\d+\.sqlite(-wal|-shm|-journal)?$/,
+  /^(\.tmp|tmp|cache|log)$/,
+  /^models_cache\.json$/,
+];
+
+/**
+ * Top-level entries of a codex home that are the mind's conversations,
+ * carried only when the export was asked for sessions: the rollouts, codex's
+ * archive of them, its prompt history, and its projection of the rollouts'
+ * turns (keyed by thread id and byte offset, so it stays true of the
+ * rollouts it travels with).
+ */
+const CODEX_SESSIONS = [
+  /^(sessions|archived_sessions)$/,
+  /^history\.jsonl$/,
+  /^thread_history_\d+\.sqlite(-wal|-shm|-journal)?$/,
+];
+
+/**
+ * The top-level entry of a codex home a mind-relative path is, or is inside,
+ * or `null` for a path in neither home.
+ */
+function codexHomeEntry(relPath: string): string | null {
+  const rel = toPosix(relPath);
+  for (const home of CODEX_HOMES) {
+    if (rel.startsWith(`${home}/`)) return rel.slice(home.length + 1).split("/")[0];
+  }
+  return null;
+}
+
+/** Whether a path's codex home entry is one of `patterns`. */
+function isCodexEntry(relPath: string, patterns: RegExp[]): boolean {
+  const entry = codexHomeEntry(relPath);
+  return entry !== null && patterns.some((p) => p.test(entry));
+}
 
 /**
  * Secrets the daemon writes into a codex mind only, dropped from its exports.
@@ -156,13 +223,14 @@ const SESSION_PATHS = [
  * template (#1084). Kept apart from that list only because it is walked in
  * differently: these sit under `.mind/`, which every export walks anyway.
  *
- * Codex's two directories travel together or not at all: `codex-sessions`
- * holds the thread pointers and `codex/sessions` the rollouts they resolve to,
- * and a pointer whose rollout is missing resumes into nothing. Left behind, a
- * pi or codex mind starts its sessions fresh on the new host — the same as a
- * claude mind exported without sessions.
+ * Codex's pointers travel with its rollouts ({@link CODEX_SESSIONS}) or not at
+ * all: `codex-sessions` holds the thread pointers and a codex home's
+ * `sessions/` the rollouts they resolve to, and a pointer whose rollout is
+ * missing resumes into nothing. Left behind, a pi or codex mind starts its
+ * sessions fresh on the new host — the same as a claude mind exported without
+ * sessions.
  */
-const MIND_SESSION_PATHS = [".mind/pi-sessions", ".mind/codex-sessions", ".mind/codex/sessions"];
+const MIND_SESSION_PATHS = [".mind/pi-sessions", ".mind/codex-sessions"];
 
 /** `.gitignore` rules and zip entry names both speak forward slashes. */
 function toPosix(relPath: string): string {
@@ -203,12 +271,16 @@ function isUnder(relPath: string, subtrees: string[]): boolean {
 
 /** Whether a mind-relative path is dropped from every archive. */
 function isExcludedPath(relPath: string): boolean {
-  return isUnder(relPath, EXCLUDED_PATHS);
+  return isUnder(relPath, EXCLUDED_PATHS) || isCodexEntry(relPath, CODEX_EXCLUDED);
 }
 
 /** Whether a mind-relative path is dropped unless the export asked for sessions. */
 function isSessionPath(relPath: string): boolean {
-  return isUnder(relPath, SESSION_PATHS) || isUnder(relPath, MIND_SESSION_PATHS);
+  return (
+    isUnder(relPath, SESSION_PATHS) ||
+    isUnder(relPath, MIND_SESSION_PATHS) ||
+    isCodexEntry(relPath, CODEX_SESSIONS)
+  );
 }
 
 /**
@@ -465,6 +537,12 @@ function listHomeFiles(dir: string, includeSessions: boolean): string[] {
 
   const localDir = resolve(dir, HOME_LOCAL_REL);
   files.push(...walkDir(localDir, dir, includeSessions).map(toPosix));
+
+  // And `home/.codex`, for the same reason: git never reports it, and it is where
+  // an API-key codex mind under `isolation: user` keeps its config, memories and —
+  // gated like the rest — the rollouts its `.mind/codex-sessions` pointers resolve
+  // to (#1229). The walk applies the codex home rules ({@link CODEX_HOMES}).
+  files.push(...walkDir(resolve(dir, "home/.codex"), dir, includeSessions).map(toPosix));
 
   // Walked in for the same reason `.local/` is: the template `.gitignore` hides
   // `home/.claude/*` from git, so on a git-repo mind — which is every ordinary

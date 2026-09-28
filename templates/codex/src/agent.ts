@@ -8,7 +8,12 @@ import {
   type ThreadItem,
 } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
-import { rotateCodexSession, seedCodexSession } from "./lib/codex-session-seed.js";
+import {
+  clearRolloutLeftBehind,
+  findLatestArchivedThread,
+  rotateCodexSession,
+  seedCodexSession,
+} from "./lib/codex-session-seed.js";
 import { extractImages, extractText, type ImagePart, writeImages } from "./lib/content.js";
 import {
   countSdkInstructionTokens,
@@ -339,7 +344,8 @@ export function createMind(options: {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
   }
 
-  const sessionStore = createSessionStore(resolvePath(options.mindDir, ".mind/codex-sessions"));
+  const sessionsDir = resolvePath(options.mindDir, ".mind/codex-sessions");
+  const sessionStore = createSessionStore(sessionsDir);
 
   /**
    * Rollout path per thread id. `findCodexSessionFile` walks the whole `YYYY/MM/DD`
@@ -677,6 +683,21 @@ export function createMind(options: {
         resumeThreadId = undefined;
       } else if (stored && resumeThreadId) {
         session.committed = stored.committed;
+      }
+
+      // An import that didn't bring a committed thread's rollout along archived its pointer
+      // rather than let it resume a thread that isn't this mind's, and marked it: the mind
+      // is owed the same account of that thread as of any other it lost (#1194).
+      if (!resumeThreadId && !lostThreadId) {
+        const archived = findLatestArchivedThread(sessionsDir, session.name);
+        if (archived?.rolloutLeftBehind) {
+          log(
+            "mind",
+            `session "${session.name}": thread ${archived.threadId} left behind on import`,
+          );
+          clearRolloutLeftBehind(archived);
+          lostThreadId = archived.threadId;
+        }
       }
 
       // The lost rollout may still exist in the root codex used to read — a provider switch
@@ -1029,18 +1050,60 @@ export function createMind(options: {
       // on an empty thread believing it continuous. If it never held any — typically a
       // brand-new thread whose first turn failed before codex wrote anything — nothing was
       // lost, and a retry would only repeat whatever failed.
+      //
+      // Codex can also refuse a rollout that is right there: its thread index names the
+      // file by an absolute path, and when that path is stale it says so instead of looking
+      // in its own sessions dir (#1194) — a mind imported before the import dropped that
+      // index. Same wedge, but the conversation isn't lost: its tail is carried onto a
+      // fresh thread, as a restart carries one, and the message retried there.
       const lostThreadId = session.currentThreadId;
-      if (failure && lostThreadId && !rolloutVisibleToCodex(lostThreadId)) {
+      if (
+        failure &&
+        lostThreadId &&
+        (!rolloutVisibleToCodex(lostThreadId) ||
+          failure.includes(`no rollout found for thread id ${lostThreadId}`))
+      ) {
         const lostContext = session.committed;
+        const persistent = !session.name.startsWith("new-");
         log(
           "mind",
-          `session "${session.name}": thread ${lostThreadId} has no rollout codex can find — starting fresh`,
+          `session "${session.name}": thread ${lostThreadId} has no rollout codex can resume — starting fresh`,
         );
-        if (!session.name.startsWith("new-")) sessionStore.delete(session.name);
-        startFreshThread(session);
-        if (lostContext) {
+        if (persistent) sessionStore.delete(session.name);
+        const carried =
+          lostContext && persistent && findCodexSessionFile(lostThreadId, options.mindDir)
+            ? await rotateCodexSession({
+                mindDir: options.mindDir,
+                name: session.name,
+                oldThreadId: lostThreadId,
+                ...seam(),
+              })
+            : null;
+        if (carried) {
+          log(
+            "mind",
+            `session "${session.name}": carried ${lostThreadId} onto ${carried.threadId}`,
+          );
+          session.thread = codexFor(session).resumeThread(carried.threadId, threadOptions());
+          session.currentThreadId = carried.threadId;
+          session.contextTokens = 0;
+          session.lastUsage = ZERO_USAGE;
+          armSeeded(session, carried.threadId, null, carried.recallEntries);
+          // This turn's boundary note has been taken already, so the retry carries it.
+          session.seeded = false;
+          const note = buildSeededNote({
+            cause: session.seededCause,
+            archivedAtMs: null,
+            recollection: session.seededRecollection,
+          });
+          emit(session, { type: "context", content: note, metadata: { source: "seeded-session" } });
+          failure = await streamTurn(session, prependText(input, note));
+        } else {
+          startFreshThread(session);
+        }
+        if (lostContext && !carried) {
           const lost =
-            `${threadRef(session.name)} couldn't be resumed (its codex rollout is missing), ` +
+            `${threadRef(session.name)} couldn't be resumed (codex couldn't find its rollout), ` +
             "so it started fresh — the conversation before the reset was lost. " +
             "`volute mind history` has the record of what you were doing.";
           if (session.thread) {

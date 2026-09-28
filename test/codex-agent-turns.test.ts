@@ -476,6 +476,50 @@ describe("codex resume checks the rollout codex will read (#1188, #985)", () => 
     assert.deepEqual(readPointer("moved"), { threadId: "t-moved-fresh", committed: true });
   });
 
+  it("tells a mind about a thread its import left behind, once (#1194)", async () => {
+    // What prepareCodexImport leaves for a committed thread whose rollout didn't travel.
+    const archiveDir = resolve(mindDir, ".mind/codex-sessions/archive");
+    mkdirSync(archiveDir, { recursive: true });
+    const marked = resolve(archiveDir, "behind-2026-09-28T13-22.json");
+    writeFileSync(
+      marked,
+      JSON.stringify({ threadId: "t-behind", committed: true, rolloutLeftBehind: true }),
+    );
+    script("behind", {
+      events: [
+        { type: "thread.started", thread_id: "t-behind-fresh" },
+        { type: "turn.completed", usage: USAGE },
+      ],
+    });
+    await send("behind");
+    const call = control.calls.find((c) => c.session === "behind");
+    assert.equal(call?.threadId, null, "resumed a thread that isn't there");
+    await settle();
+    const notices = noticesMentioning("behind");
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].body.kind, "context_lost");
+    assert.match(notices[0].body.message, /its codex rollout is missing/);
+    assert.equal(JSON.parse(readFileSync(marked, "utf-8")).rolloutLeftBehind, undefined);
+  });
+
+  it("carries a thread its import left behind when the rollout can still be read", async () => {
+    // Same host, shared ~/.codex: the rollout never travelled, but it is readable.
+    const behind = "019f5e60-0000-7000-8000-0000000be41d";
+    writeConversation(resolve(process.env.HOME ?? "", ".codex/sessions"), behind);
+    const archiveDir = resolve(mindDir, ".mind/codex-sessions/archive");
+    mkdirSync(archiveDir, { recursive: true });
+    writeFileSync(
+      resolve(archiveDir, "behind2-2026-09-28T13-22.json"),
+      JSON.stringify({ threadId: behind, committed: true, rolloutLeftBehind: true }),
+    );
+    await send("behind2");
+    const call = control.calls.find((c) => c.session === "behind2");
+    assert.ok(call?.threadId && call.threadId !== behind, "expected a carried thread");
+    assert.match(call.input as string, /restored/i);
+    await settle();
+    assert.equal(noticesMentioning("behind2").length, 0, "nothing was lost");
+  });
+
   it("stamps a seeded thread's pointer before its first turn runs", async () => {
     const archived = "019f5e60-86f5-7770-80fa-6e9eadf58c24";
     writeArchivePointer("seeded", "2026-09-20T10-00", archived);
@@ -587,6 +631,64 @@ describe("codex resume checks the rollout codex will read (#1188, #985)", () => 
     await settle();
     assert.equal(noticesMentioning("vanish").length, 0);
     assert.deepEqual(readPointer("vanish"), { threadId: "t-vanish-fresh", committed: true });
+  });
+
+  it("carries a thread codex refuses though its rollout is right there (#1194)", async () => {
+    // Codex's thread index names a stale path — a moved mind — and codex fails the resume
+    // rather than finding the rollout that sits in its own sessions dir. The conversation
+    // is on disk, so it is carried onto a fresh thread, not thrown away.
+    const stale = "019f5e60-0000-7000-8000-000000057a1e";
+    writeConversation(resolve(codexHome, "sessions"), stale);
+    writePointer("stale", stale, true);
+    script("stale", {
+      throws: `Codex Exec exited with code 1: thread/resume failed: no rollout found for thread id ${stale}`,
+    });
+    await send("stale", [{ type: "text", text: "are you there" }]);
+    const calls = control.calls.filter((c) => c.session === "stale");
+    assert.equal(calls.length, 2, "expected one retry");
+    assert.equal(calls[0].threadId, stale);
+    const carried = calls[1].threadId;
+    assert.ok(carried && carried !== stale, "expected the retry on a carried thread");
+    const { rolloutVisibleToCodex } = await import(resolve(composedDir, "src/lib/rollout.ts"));
+    assert.ok(rolloutVisibleToCodex(carried), "carried rollout isn't where codex reads");
+    // What the mind is told: its conversation was restored, not lost.
+    const retry = calls[1].input as string;
+    assert.ok(retry.endsWith(calls[0].input as string), "the retry carries the same message");
+    assert.match(retry, /restored/i);
+    assert.doesNotMatch(retry, /couldn't be resumed|was lost/);
+    assert.equal(eventsFor("stale", "error").length, 0);
+    await settle();
+    assert.equal(noticesMentioning("stale").length, 0, "nothing was lost");
+    assert.deepEqual(readPointer("stale"), { threadId: carried, committed: true });
+  });
+
+  it("tells the mind the truth when codex refuses a rollout it can't carry", async () => {
+    const rollout = writeRollout(resolve(codexHome, "sessions"), "t-refused");
+    writePointer("refused", "t-refused", true);
+    await send("refused");
+    // Present but unreadable as a conversation — nothing a tail can be built from.
+    writeFileSync(rollout, "not json\n");
+    script(
+      "refused",
+      { throws: "no rollout found for thread id t-refused" },
+      {
+        events: [
+          { type: "thread.started", thread_id: "t-refused-fresh" },
+          { type: "turn.completed", usage: USAGE },
+        ],
+      },
+    );
+    await send("refused");
+    const calls = control.calls.filter((c) => c.session === "refused");
+    assert.deepEqual(
+      calls.map((c) => c.threadId),
+      ["t-refused", "t-refused", null],
+    );
+    assert.match(
+      calls[2].input as string,
+      /`refused` thread couldn't be resumed \(codex couldn't find its rollout\)/,
+    );
+    assert.deepEqual(readPointer("refused"), { threadId: "t-refused-fresh", committed: true });
   });
 
   it("records the loss as a notice when the retry fails too", async () => {

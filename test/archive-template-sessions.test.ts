@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -23,6 +26,7 @@ import {
   stateDir,
 } from "../packages/daemon/src/lib/mind/registry.js";
 import {
+  prepareCodexImport,
   rewritePiSessionCwds,
   withPiSessionCwd,
 } from "../packages/daemon/src/lib/template/import-utils.js";
@@ -291,4 +295,202 @@ describe("pi session headers follow a home-only import too", () => {
       "the mtime pi resumes by survives the copy into the mind dir",
     );
   });
+});
+
+describe("both codex homes are judged the same way (#1229)", () => {
+  // `.mind/codex` is CODEX_HOME under an OAuth provider; `home/.codex` is where codex
+  // keeps everything with an API key under `isolation: user`.
+  const homes = [".mind/codex", "home/.codex"];
+  const never = [
+    "auth.json",
+    "shell_snapshots/019a.sh",
+    "state_5.sqlite",
+    "state_5.sqlite-wal",
+    "state_5.sqlite-shm",
+    "logs_2.sqlite",
+    "logs_2.sqlite-wal",
+    ".tmp/plugins/some-plugin/README.md",
+    "tmp/x",
+    "cache/x",
+    "log/codex-tui.log",
+    "models_cache.json",
+  ];
+  const sessions = [
+    "sessions/2026/09/01/rollout-2026-09-01T10-00-00-abc.jsonl",
+    "archived_sessions/rollout-2026-08-01T10-00-00-old.jsonl",
+    "history.jsonl",
+    "thread_history_1.sqlite",
+  ];
+  const kept = ["config.toml", "memories_1.sqlite", "skills/x/SKILL.md"];
+
+  for (const includeSrc of [false, true]) {
+    const label = includeSrc ? "a full export" : "a home-only export";
+
+    for (const template of ["codex", "claude"]) {
+      it(`${label} of a ${template} mind drops secrets, index and caches, and gates sessions`, () => {
+        const name = `codex-homes-${template}-${includeSrc ? "full" : "home"}`;
+        const dir = freshMind(name);
+        for (const home of homes) {
+          for (const rel of [...never, ...sessions, ...kept]) {
+            put(dir, `${home}/${rel}`, "x\n");
+          }
+        }
+        // Every real mind is a repo whose `.gitignore` hides `home/*` from the listing.
+        put(dir, ".gitignore", "home/*\n!home/SOUL.md\n");
+        put(dir, "home/ignored.txt", "x\n");
+        execFileSync("git", ["init", "-q"], { cwd: dir });
+
+        for (const opts of [{}, everything]) {
+          const entries = entriesOf(name, template, { includeSrc, ...opts });
+          assert.equal(entries.includes("mind/home/ignored.txt"), includeSrc, "git was asked");
+          for (const home of homes) {
+            for (const rel of never) {
+              assert.ok(!entries.includes(`mind/${home}/${rel}`), `${home}/${rel}`);
+            }
+            for (const rel of sessions) {
+              assert.equal(
+                entries.includes(`mind/${home}/${rel}`),
+                opts === everything,
+                `${home}/${rel} ${opts === everything ? "with" : "without"} sessions`,
+              );
+            }
+            for (const rel of kept) {
+              assert.ok(entries.includes(`mind/${home}/${rel}`), `kept: ${home}/${rel}`);
+            }
+          }
+        }
+      });
+    }
+  }
+
+  it("a home-only export walks in home/.codex's rollouts, which git never reports", () => {
+    const name = "codex-homes-git";
+    const dir = freshMind(name);
+    put(dir, ".gitignore", "home/*\n!home/SOUL.md\n");
+    put(dir, "home/ignored.txt", "x\n");
+    put(dir, "home/.codex/sessions/2026/09/01/rollout-2026-09-01T10-00-00-abc.jsonl", "x\n");
+    put(dir, "home/.codex/auth.json", "x\n");
+    put(dir, ".mind/codex-sessions/main.json", '{"threadId":"abc"}');
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+
+    const rollout = "mind/home/.codex/sessions/2026/09/01/rollout-2026-09-01T10-00-00-abc.jsonl";
+    const withSessions = entriesOf(name, "codex", { includeSessions: true });
+    assert.ok(!withSessions.includes("mind/home/ignored.txt"), "git listing was used");
+    assert.ok(withSessions.includes(rollout), "the rollout travels with its pointer");
+    assert.ok(withSessions.includes("mind/.mind/codex-sessions/main.json"));
+    assert.ok(!withSessions.includes("mind/home/.codex/auth.json"));
+    assert.ok(!entriesOf(name, "codex").includes(rollout), "and not without the flag");
+  });
+});
+
+describe("an imported codex mind resumes its own threads (#1194)", () => {
+  const rolloutRel = "sessions/2026/09/01/rollout-2026-09-01T10-00-00-t-carried.jsonl";
+  const now = new Date("2026-09-28T13:22:45.123Z");
+
+  it("drops codex's thread index from both homes, whatever the archive carried", () => {
+    const root = tmp("codex-prep-");
+    for (const home of [".mind/codex", "home/.codex"]) {
+      for (const f of ["state_5.sqlite", "state_5.sqlite-wal", "state_5.sqlite-shm"]) {
+        put(root, `${home}/${f}`, "x");
+      }
+      put(root, `${home}/config.toml`, "x");
+    }
+    prepareCodexImport(root, now);
+    for (const home of [".mind/codex", "home/.codex"]) {
+      assert.deepEqual(readdirSync(resolve(root, home)), ["config.toml"], home);
+    }
+  });
+
+  it("keeps a pointer whose rollout came along and archives one whose did not", () => {
+    const root = tmp("codex-prep-");
+    put(root, `home/.codex/${rolloutRel}`, "{}\n");
+    put(root, ".mind/codex-sessions/main.json", '{"threadId":"t-carried","committed":true}');
+    put(root, ".mind/codex-sessions/other.json", '{"threadId":"t-elsewhere","committed":true}');
+    put(root, ".mind/codex-sessions/idle.json", '{"threadId":"t-idle","committed":false}');
+    put(root, ".mind/codex-sessions/archive/main-2026-08-01T00-00.json", '{"threadId":"t-old"}');
+
+    prepareCodexImport(root, now);
+
+    const sessionsDir = resolve(root, ".mind/codex-sessions");
+    assert.deepEqual(readdirSync(sessionsDir).sort(), ["archive", "main.json"]);
+    assert.deepEqual(readdirSync(resolve(sessionsDir, "archive")).sort(), [
+      "idle-2026-09-28T13-22.json",
+      "main-2026-08-01T00-00.json",
+      "other-2026-09-28T13-22.json",
+    ]);
+    const archived = (f: string) =>
+      JSON.parse(readFileSync(resolve(sessionsDir, "archive", f), "utf-8"));
+    // Marked, so the mind is told what it lost — but only for a thread that held a turn.
+    assert.deepEqual(archived("other-2026-09-28T13-22.json"), {
+      threadId: "t-elsewhere",
+      committed: true,
+      rolloutLeftBehind: true,
+    });
+    assert.deepEqual(archived("idle-2026-09-28T13-22.json"), {
+      threadId: "t-idle",
+      committed: false,
+    });
+  });
+
+  it("never archives through a link", () => {
+    const root = tmp("codex-prep-");
+    const outside = tmp("codex-prep-outside-");
+    put(root, ".mind/codex-sessions/main.json", '{"threadId":"t-elsewhere"}');
+    symlinkSync(outside, resolve(root, ".mind/codex-sessions/archive"));
+
+    prepareCodexImport(root, now);
+
+    assert.deepEqual(readdirSync(outside), [], "nothing was written through the link");
+    assert.ok(!existsSync(resolve(root, ".mind/codex-sessions/main.json")), "pointer dropped");
+
+    // A dangling link, too, is refused rather than failing the import.
+    const dangling = tmp("codex-prep-");
+    put(dangling, ".mind/codex-sessions/main.json", '{"threadId":"t-elsewhere"}');
+    symlinkSync(resolve(outside, "gone"), resolve(dangling, ".mind/codex-sessions/archive"));
+    prepareCodexImport(dangling, now);
+    assert.ok(!existsSync(resolve(dangling, ".mind/codex-sessions/main.json")), "pointer dropped");
+    assert.deepEqual(readdirSync(outside), []);
+  });
+
+  for (const includeSrc of [true, false]) {
+    const label = includeSrc ? "a full-archive" : "a home-only";
+
+    it(`${label} import under a new name keeps the thread and none of the old host's index`, async () => {
+      const from = `codex-src-${includeSrc ? "full" : "home"}`;
+      const to = `codex-dest-${includeSrc ? "full" : "home"}`;
+      const dir = freshMind(from);
+      mindNames.push(to);
+      put(dir, "package.json", `{"name":"${to}","private":true}\n`);
+      put(dir, `home/.codex/${rolloutRel}`, '{"type":"session_meta"}\n');
+      put(dir, "home/.codex/state_5.sqlite", "index naming the old home");
+      put(dir, ".mind/codex/state_5.sqlite", "index naming the old home");
+      put(dir, ".mind/codex-sessions/main.json", '{"threadId":"t-carried","committed":true}');
+
+      const archivePath = resolve(tmp("codex-archive-"), "cx.volute");
+      createExportArchive({
+        name: from,
+        template: "codex",
+        includeSrc,
+        includeSessions: true,
+      }).writeZip(archivePath);
+      const tempDir = tmp("codex-extract-");
+      const { manifest } = extractArchive(archivePath, tempDir);
+      // An archive written before #1229 carries the index; the import must not trust it.
+      put(tempDir, "mind/home/.codex/state_5.sqlite", "index naming the old home");
+      put(tempDir, "mind/.mind/codex/state_5.sqlite", "index naming the old home");
+
+      const result = await importMindFromArchive(tempDir, to, manifest);
+      assert.ok(result.ok, JSON.stringify(result));
+
+      const dest = mindDir(to);
+      assert.ok(existsSync(resolve(dest, `home/.codex/${rolloutRel}`)), "the rollout came along");
+      assert.deepEqual(
+        JSON.parse(readFileSync(resolve(dest, ".mind/codex-sessions/main.json"), "utf-8")),
+        { threadId: "t-carried", committed: true },
+      );
+      for (const home of ["home/.codex", ".mind/codex"]) {
+        assert.ok(!existsSync(resolve(dest, home, "state_5.sqlite")), `${home} index dropped`);
+      }
+    });
+  }
 });
