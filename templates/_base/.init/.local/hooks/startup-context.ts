@@ -1,8 +1,13 @@
-// Startup context hook — generates orientation context for new sessions.
-// Edit this script to customize what you see when your session starts.
-// Input: JSON on stdin with { "source": "startup" | "SessionStart" }
-// Output: JSON with hookSpecificOutput.additionalContext (for SessionStart hook)
-//         or plain text (for direct execution by pi template)
+// Startup context hook — orientation context, run for each thread as its session starts.
+// Edit this script to customize what you see when a session starts.
+// Input: JSON on stdin with { "hook_event_name": "SessionStart", "source": ... }. On pi and
+//   codex, source is "startup" (a new or freshly seeded session), "resume" (one continued
+//   after a restart), "compact" (one rotated at the context limit), or "clear" (one started
+//   over). On claude the SDK sets it: a rotated or re-seeded session says "resume", and
+//   "compact" follows only the SDK's own compaction.
+//   $VOLUTE_SESSION names the thread; on pi and codex, "session" in the input does too.
+// Output: claude's hook JSON (hookSpecificOutput.additionalContext) or plain text —
+//   every framework accepts either.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
