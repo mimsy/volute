@@ -120,14 +120,14 @@ describe("npmInstallAsMind retry", () => {
 
   it("prefers the local cache on the first attempt", async () => {
     const { attempts, run } = recorder([], etarget);
-    await npmInstallAsMind(cwd, "test-mind", run);
+    await npmInstallAsMind(cwd, "test-mind", [], run);
     assert.equal(attempts.length, 1);
     assert.ok(attempts[0].args.includes("--prefer-offline"));
   });
 
   it("retries without --prefer-offline when the cached resolve fails", async () => {
     const { attempts, run } = recorder([1], etarget);
-    await npmInstallAsMind(cwd, "test-mind", run);
+    await npmInstallAsMind(cwd, "test-mind", [], run);
     assert.equal(attempts.length, 2);
     assert.ok(attempts[0].args.includes("--prefer-offline"));
     assert.ok(
@@ -140,6 +140,15 @@ describe("npmInstallAsMind retry", () => {
     assert.ok(attempts[1].args.includes("install"));
   });
 
+  it("adds the given packages on both attempts", async () => {
+    const { attempts, run } = recorder([1], etarget);
+    await npmInstallAsMind(cwd, "test-mind", ["libsql", "left-pad"], run);
+    assert.equal(attempts.length, 2);
+    for (const { args } of attempts) {
+      assert.deepEqual(args.slice(-2), ["libsql", "left-pad"]);
+    }
+  });
+
   it("gives up after the retry and rethrows the second failure", async () => {
     const second = Object.assign(new Error("second failure"), { stderr: "npm error E404" });
     const attempts: Attempt[] = [];
@@ -147,7 +156,7 @@ describe("npmInstallAsMind retry", () => {
       attempts.push({ cmd, args });
       throw attempts.length === 1 ? etarget : second;
     };
-    await assert.rejects(() => npmInstallAsMind(cwd, "test-mind", run), /second failure/);
+    await assert.rejects(() => npmInstallAsMind(cwd, "test-mind", [], run), /second failure/);
     assert.equal(attempts.length, 2);
   });
 
@@ -158,7 +167,7 @@ describe("npmInstallAsMind retry", () => {
       stderr: "npm error code EACCES\nnpm error syscall mkdir",
     });
     const { attempts, run } = recorder([1], eacces);
-    await assert.rejects(() => npmInstallAsMind(cwd, "test-mind", run), /Command failed/);
+    await assert.rejects(() => npmInstallAsMind(cwd, "test-mind", [], run), /Command failed/);
     assert.equal(attempts.length, 1, "one attempt only");
   });
 
