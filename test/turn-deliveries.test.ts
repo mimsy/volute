@@ -3,16 +3,14 @@ import { after, afterEach, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { drainEvents, recordNotice } from "../packages/daemon/src/lib/chat/system-events.js";
 import { getTypingMap } from "../packages/daemon/src/lib/chat/typing.js";
-import {
-  handleMindEvent,
-  setNoticeDrainWatermark,
-} from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
+import { drainNotices, handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import { hasTurnSlot } from "../packages/daemon/src/lib/daemon/turn-slots.js";
 import {
   clearMind,
   getActiveTurnId,
   markErrored,
-  takeDrainWatermark,
+  recordDrained,
+  takeDrained,
   takeErrored,
 } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
@@ -124,9 +122,9 @@ describe("a done names the deliveries it covers", () => {
 
   it("a folded turn marks the notices it drained delivered", async () => {
     const mind = mindNamed("td-folded-notices");
-    const a = await notice(mind, "A");
+    await notice(mind, "A");
     delivered(mind, "s1", "d1");
-    setNoticeDrainWatermark(mind, "s1", a, "d1");
+    await drainNotices(mind, "s1", mind, "d1");
     await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "a" });
     delivered(mind, "s1", "d2");
     await handleMindEvent(mind, {
@@ -141,15 +139,15 @@ describe("a done names the deliveries it covers", () => {
 
   it("the next turn's drain stays with the next turn, whatever order it lands in", async () => {
     const mind = mindNamed("td-drain-race");
-    const a = await notice(mind, "A");
+    await notice(mind, "A");
     delivered(mind, "s1", "d1");
-    setNoticeDrainWatermark(mind, "s1", a, "d1");
+    await drainNotices(mind, "s1", mind, "d1");
     await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "N" });
 
     // d2 was queued behind N. Its turn's drain of B lands before N's done is even handled.
     delivered(mind, "s1", "d2");
-    const b = await notice(mind, "B");
-    setNoticeDrainWatermark(mind, "s1", b, "d2");
+    await notice(mind, "B");
+    await drainNotices(mind, "s1", mind, "d2");
     await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
 
     await settled(mind, "A");
@@ -190,8 +188,8 @@ describe("a done names the deliveries it covers", () => {
     assert.equal(hasTurnSlot(mind, "s1"), true);
 
     // d2's error was d2's: the running turn still completes clean and clears its drain.
-    const a = await notice(mind, "A");
-    setNoticeDrainWatermark(mind, "s1", a, "d1");
+    await notice(mind, "A");
+    await drainNotices(mind, "s1", mind, "d1");
     await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
     assert.equal(await turnStatus(turnId!), "complete");
     assert.equal(dm.isSessionBusy(mind, "s1"), false);
@@ -284,8 +282,8 @@ describe("a done names the deliveries it covers", () => {
       messageId: "d1",
       content: "parent",
     });
-    const a = await notice(mind, "A");
-    setNoticeDrainWatermark(mind, "s1", a, "d1");
+    await notice(mind, "A");
+    await drainNotices(mind, "s1", mind, "d1");
     await handleMindEvent(mind, { type: "error", session: "s1", messageId: "d1", content: "e" });
 
     // A bare done from an un-upgraded variant: it covers only the variant's own.
@@ -310,8 +308,8 @@ describe("a done names the deliveries it covers", () => {
       messageId: "d1",
       content: "a",
     });
-    const a = await notice(mind, "A");
-    setNoticeDrainWatermark(mind, "s1", a);
+    await notice(mind, "A");
+    await drainNotices(mind, "s1", mind);
     await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1" });
     assert.equal(await turnStatus(turnId!), "complete");
     assert.equal(dm.isSessionBusy(mind, "s1"), false);
@@ -320,12 +318,12 @@ describe("a done names the deliveries it covers", () => {
     assert.deepEqual(await bodies(mind), []);
   });
 
-  it("a mind's stop forgets the drain watermarks and error flags of turns that never ended", async () => {
+  it("a mind's stop forgets the drained notices and error flags of turns that never ended", async () => {
     const mind = mindNamed("td-stop");
-    setNoticeDrainWatermark(mind, "s1", 7, "d1");
+    recordDrained(mind, "s1", [7], "d1");
     markErrored(mind, "s1", "d1");
     await clearMind(mind);
-    assert.equal(takeDrainWatermark(mind, "s1"), undefined);
+    assert.deepEqual(takeDrained(mind, "s1"), []);
     assert.equal(takeErrored(mind, "s1"), false);
   });
 
@@ -374,8 +372,8 @@ describe("a done names the deliveries it covers", () => {
     delivered(mind, "s1", "d1");
     await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "p" });
     delivered(mind, "s1", "v1", variant);
-    const a = await notice(mind, "A");
-    setNoticeDrainWatermark(mind, "s1", a, "v1");
+    await notice(mind, "A");
+    await drainNotices(mind, "s1", variant, "v1");
     await handleMindEvent(
       mind,
       { type: "done", session: "s1", messageId: "v1", covers: ["v1"] },
@@ -410,8 +408,8 @@ describe("a done names the deliveries it covers", () => {
     const mind = mindNamed("td-bogus-ids");
     delivered(mind, "s1", "d1");
     await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "a" });
-    const a = await notice(mind, "A");
-    setNoticeDrainWatermark(mind, "s1", a, "made-up-1");
+    await notice(mind, "A");
+    await drainNotices(mind, "s1", mind, "made-up-1");
     await handleMindEvent(mind, {
       type: "error",
       session: "s1",
@@ -419,7 +417,7 @@ describe("a done names the deliveries it covers", () => {
       content: "x",
     });
     await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
-    assert.equal(takeDrainWatermark(mind, "s1"), undefined, "the drain went to d1's turn");
+    assert.deepEqual(takeDrained(mind, "s1"), [], "the drain went to d1's turn");
     assert.equal(takeErrored(mind, "s1"), false, "and so did the error");
     assert.ok((await bodies(mind)).includes("A"), "which errored, so A survives");
   });
@@ -461,5 +459,86 @@ describe("a done names the deliveries it covers", () => {
       variant,
     );
     assert.ok(typing.get("@bob").includes(mind), "the parent is still on its turn");
+  });
+});
+
+describe("a notice is told once per turn (#1233)", () => {
+  async function drained(mind: string, messageId?: string, process = mind): Promise<string[]> {
+    return (await drainNotices(mind, "s1", process, messageId)).map((n) => n.body);
+  }
+
+  it("a prompt folded into a running turn isn't told what the turn already drained", async () => {
+    const mind = mindNamed("tn-folded");
+    await notice(mind, "A");
+    delivered(mind, "s1", "d1");
+    assert.deepEqual(await drained(mind, "d1"), ["A"]);
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "a" });
+
+    // A second message folds in; its prompt names the running turn (claude) or itself (pi,
+    // codex). Either way A is already in this turn's context — but a notice that arrived
+    // since is news.
+    delivered(mind, "s1", "d2");
+    assert.deepEqual(await drained(mind, "d1"), []);
+    await notice(mind, "B");
+    assert.deepEqual(await drained(mind, "d2"), ["B"]);
+
+    await handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d1",
+      covers: ["d1", "d2"],
+    });
+    await settled(mind, "B");
+    await settled(mind, "A");
+    assert.deepEqual(await bodies(mind), [], "the clean turn delivered both");
+  });
+
+  it("a notice a prompt skipped comes back if the turn that held it fails", async () => {
+    // d2's drain races d1's done: A is held by d1, so d2 is shown only B. d1 then fails and
+    // d2 completes clean — d2 must clear only what it showed, or A is lost unread.
+    const mind = mindNamed("tn-skipped-held");
+    await notice(mind, "A");
+    delivered(mind, "s1", "d1");
+    assert.deepEqual(await drained(mind, "d1"), ["A"]);
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "a" });
+    delivered(mind, "s1", "d2");
+    await notice(mind, "B");
+    assert.deepEqual(await drained(mind, "d2"), ["B"]);
+
+    await handleMindEvent(mind, { type: "error", session: "s1", messageId: "d1", content: "x" });
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d2", content: "b" });
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d2", covers: ["d2"] });
+    await settled(mind, "B");
+
+    delivered(mind, "s1", "d3");
+    assert.ok((await drained(mind, "d3")).includes("A"), "A reaches the next turn");
+  });
+
+  it("a variant is told what its parent's running turn drained", async () => {
+    const mind = mindNamed("tn-variant");
+    const variant = `${mind}@v`;
+    await notice(mind, "A");
+    delivered(mind, "s1", "d1");
+    assert.deepEqual(await drained(mind, "d1"), ["A"]);
+    delivered(mind, "s1", "v1", variant);
+    assert.deepEqual(await drained(mind, "v1", variant), ["A"], "another context entirely");
+  });
+
+  it("only a turn still running holds a notice back", async () => {
+    const mind = mindNamed("tn-not-running");
+    await notice(mind, "A");
+    // A record left under a delivery that is no longer outstanding must not hide A forever.
+    recordDrained(mind, "s1", [(await drainEvents(mind, "s1"))[0].id], "gone");
+    delivered(mind, "s1", "d1");
+    assert.deepEqual(await drained(mind, "d1"), ["A"]);
+  });
+
+  it("a drain that names no delivery holds nothing back", async () => {
+    // A notices hook that predates `messageId`: its drains key no turn, as before.
+    const mind = mindNamed("tn-unkeyed");
+    await notice(mind, "A");
+    assert.deepEqual(await drained(mind), ["A"]);
+    assert.deepEqual(await drained(mind), ["A"]);
   });
 });

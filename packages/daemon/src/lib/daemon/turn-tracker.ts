@@ -52,13 +52,14 @@ function key(mind: string, session?: string | null): string {
 const erroredSessions = new Map<string, Set<string>>();
 
 /**
- * Per `mind:thread`, the highest notice id the pre-prompt hook drained, by the delivery
- * whose turn drained it ("" when the hook named none — a template that predates the field).
- * A clean turn only marks notices delivered up to what it drained, so a notice created
- * mid-turn isn't lost before the mind reads it; keyed by delivery, the next turn's drain can
- * never be claimed by this turn's `done`, however the two requests interleave (#1207).
+ * Per `mind:thread`, the notice ids the pre-prompt hook drained, by the delivery whose turn
+ * drained them ("" when the hook named none — a template that predates the field). A clean
+ * turn marks exactly these delivered, so a notice created mid-turn — or one a prompt was not
+ * shown because another turn still held it (#1233) — isn't lost before the mind reads it;
+ * keyed by delivery, the next turn's drain can never be claimed by this turn's `done`,
+ * however the two requests interleave (#1207).
  */
-const drainWatermarks = new Map<string, Map<string, number>>();
+const drainedNotices = new Map<string, Map<string, Set<number>>>();
 
 /** Flag that the turn of `messageId` (or, naming none, the session's) hit an error. */
 export function markErrored(mind: string, session?: string | null, messageId?: string): void {
@@ -97,47 +98,55 @@ export function takeErrored(
   return errored;
 }
 
-/** Record the high-water notice id drained for the turn of `messageId` (see drainWatermarks). */
-export function setDrainWatermark(
+/** Record the notice ids drained for the turn of `messageId` (see drainedNotices). */
+export function recordDrained(
   mind: string,
   session: string,
-  id: number,
+  ids: number[],
   messageId?: string,
 ): void {
+  if (ids.length === 0) return;
   const k = key(mind, session);
-  let byDelivery = drainWatermarks.get(k);
+  let byDelivery = drainedNotices.get(k);
   if (!byDelivery) {
     byDelivery = new Map();
-    drainWatermarks.set(k, byDelivery);
+    drainedNotices.set(k, byDelivery);
   }
   const d = messageId ?? "";
-  byDelivery.set(d, Math.max(byDelivery.get(d) ?? 0, id));
+  const drained = byDelivery.get(d) ?? new Set();
+  for (const id of ids) drained.add(id);
+  byDelivery.set(d, drained);
+}
+
+/** The notice ids drained so far, by each delivery that named itself, on the session. */
+export function drainedByDelivery(mind: string, session: string): [string, Set<number>][] {
+  return [...(drainedNotices.get(key(mind, session)) ?? [])].filter(([d]) => d !== "");
 }
 
 /**
- * Take the highest watermark drained for any of the turns of `messageIds` — and, unless
- * `unkeyed` is false, for no turn in particular — or, without `messageIds`, for any turn on
- * the session, clearing each.
+ * Take the notice ids drained for any of the turns of `messageIds` — and, unless `unkeyed`
+ * is false, for no turn in particular — or, without `messageIds`, for any turn on the
+ * session, clearing each.
  */
-export function takeDrainWatermark(
+export function takeDrained(
   mind: string,
   session: string,
   messageIds?: string[],
   unkeyed = true,
-): number | undefined {
+): number[] {
   const k = key(mind, session);
-  const byDelivery = drainWatermarks.get(k);
-  if (!byDelivery) return undefined;
+  const byDelivery = drainedNotices.get(k);
+  if (!byDelivery) return [];
   const keys = messageIds ? [...(unkeyed ? [""] : []), ...messageIds] : [...byDelivery.keys()];
-  let watermark: number | undefined;
+  const taken = new Set<number>();
   for (const d of keys) {
-    const wm = byDelivery.get(d);
-    if (wm == null) continue;
+    const drained = byDelivery.get(d);
+    if (!drained) continue;
     byDelivery.delete(d);
-    watermark = Math.max(watermark ?? 0, wm);
+    for (const id of drained) taken.add(id);
   }
-  if (byDelivery.size === 0) drainWatermarks.delete(k);
-  return watermark;
+  if (byDelivery.size === 0) drainedNotices.delete(k);
+  return [...taken];
 }
 
 /**
@@ -357,13 +366,13 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
     }
   }
   for (const k of toDelete) activeTurns.delete(k);
-  // Drop any errored-session flags and drain watermarks for this mind so a hard crash
+  // Drop any errored-session flags and drained notice ids for this mind so a hard crash
   // can't leave one stale — keyed per delivery, they would otherwise outlive the process.
   for (const k of [...erroredSessions.keys()]) {
     if (k.startsWith(`${mind}:`)) erroredSessions.delete(k);
   }
-  for (const k of [...drainWatermarks.keys()]) {
-    if (k.startsWith(`${mind}:`)) drainWatermarks.delete(k);
+  for (const k of [...drainedNotices.keys()]) {
+    if (k.startsWith(`${mind}:`)) drainedNotices.delete(k);
   }
   // Mark orphaned turns as complete in DB
   if (orphaned.length > 0) {

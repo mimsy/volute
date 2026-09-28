@@ -912,7 +912,7 @@ describe("system-events next-turn drain", () => {
     await cleanupMind(mind);
   });
 
-  it("clears delivered events up to a watermark id, leaving newer ones queued", async () => {
+  it("clears exactly the drained events, leaving newer ones queued", async () => {
     const mind = uniqueMind();
     await recordNotice({
       mind,
@@ -931,9 +931,7 @@ describe("system-events next-turn drain", () => {
 
     const drained = await drainEvents(mind, "main");
     assert.equal(drained.length, 2);
-    const watermark = Math.max(...drained.map((n) => n.id));
-
-    // An event created AFTER the drain (id > watermark) must survive the clear.
+    // An event created AFTER the drain must survive the clear.
     await recordNotice({
       mind,
       thread: "main",
@@ -942,7 +940,11 @@ describe("system-events next-turn drain", () => {
       detail: "c",
     });
 
-    await clearDeliveredEvents(mind, "main", watermark);
+    await clearDeliveredEvents(
+      mind,
+      "main",
+      drained.map((n) => n.id),
+    );
     const remaining = await drainEvents(mind, "main");
     assert.deepEqual(
       remaining.map((n) => n.body),
@@ -951,7 +953,7 @@ describe("system-events next-turn drain", () => {
     await cleanupMind(mind);
   });
 
-  it("mind-level events (session '') drain into any session and clear by watermark", async () => {
+  it("mind-level events (session '') drain into any session and clear by id", async () => {
     const mind = uniqueMind();
     await recordNotice({
       mind,
@@ -975,8 +977,12 @@ describe("system-events next-turn drain", () => {
       ["session-scoped", "pip commented on your note"],
     );
 
-    // A clean turn clears both by watermark — the "" row must not redeliver.
-    await clearDeliveredEvents(mind, "main", Math.max(...drained.map((n) => n.id)));
+    // A clean turn clears both by id — the "" row must not redeliver.
+    await clearDeliveredEvents(
+      mind,
+      "main",
+      drained.map((n) => n.id),
+    );
     assert.deepEqual(await drainEvents(mind, "main"), []);
     assert.deepEqual(await drainEvents(mind, "other"), []);
     await cleanupMind(mind);
@@ -1068,7 +1074,11 @@ describe("system-events latestFailureEvent", () => {
     assert.ok(await latestFailureEvent(mind));
 
     const drained = await drainEvents(mind, "main");
-    await clearDeliveredEvents(mind, "main", Math.max(...drained.map((n) => n.id)));
+    await clearDeliveredEvents(
+      mind,
+      "main",
+      drained.map((n) => n.id),
+    );
     assert.equal(await latestFailureEvent(mind), null);
     await cleanupMind(mind);
   });

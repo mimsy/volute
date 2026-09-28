@@ -8,7 +8,6 @@ import { z } from "zod";
 import { deleteMindUser, getDisplayNames, withSenderDisplayNames } from "../../lib/auth.js";
 import { announceSprout, joinCommonsChannelForMind } from "../../lib/chat/commons-channel.js";
 import {
-  drainEvents,
   eventLabel,
   formatEvents,
   latestEvent,
@@ -39,7 +38,7 @@ import { getRecollection } from "../../lib/daemon/recollection.js";
 import { isShuttingDown } from "../../lib/daemon/shutdown-state.js";
 import { DEFAULT_SPEND_PERIOD_MINUTES, getSpendBudget } from "../../lib/daemon/spend-budget.js";
 import { supersedeTurnSummary } from "../../lib/daemon/summarizer.js";
-import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
+import { drainNotices, handleMindEvent } from "../../lib/daemon/turn-lifecycle.js";
 import { readWindow, usageReport } from "../../lib/daemon/usage-report.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager, UnknownChannelError } from "../../lib/delivery/delivery-manager.js";
@@ -2255,22 +2254,22 @@ const app = new Hono<AuthEnv>()
   })
   // Drain undelivered failure notices for a session. The pre-prompt hook calls this to
   // whisper prior failures into the mind's next turn. Does not delete them (the DB rows
-  // are only removed once a turn completes cleanly, see TurnLifecycle); it records an
-  // in-memory drain watermark (setNoticeDrainWatermark) so that clean turn clears these.
+  // are only removed once a turn completes cleanly, see TurnLifecycle); drainNotices
+  // records what it drained against the turn of the delivery the hook names, so that
+  // turn's clean `done` clears exactly these, and a prompt folded into it isn't told again.
   .get("/:name/history/notices", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const baseName = await getBaseName(name);
     const session = c.req.query("session");
     if (!session) return c.json({ context: null, notices: [] });
 
-    const notices = await drainEvents(baseName, session);
+    const notices = await drainNotices(
+      baseName,
+      session,
+      name,
+      c.req.query("messageId") || undefined,
+    );
     if (notices.length === 0) return c.json({ context: null, notices: [] });
-
-    // Remember the high-water id so a clean turn clears exactly these — the turn of the
-    // delivery the hook names, when it names one.
-    const maxId = notices.reduce((m, n) => Math.max(m, n.id), 0);
-    setNoticeDrainWatermark(baseName, session, maxId, c.req.query("messageId") || undefined);
-
     return c.json({ context: formatEvents(notices), notices });
   })
   // Ambient turn context contributed by extensions — "here is what's around", as
