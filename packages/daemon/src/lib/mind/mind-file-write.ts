@@ -190,7 +190,9 @@ async function serialized<T>(path: string, fn: () => Promise<T>): Promise<T> {
  *
  * Replaces in place — truncate and write the open handle — not temp-file-and-rename, so the
  * inode (which the Agent SDK watches for credential reloads) survives. `owner` is set on
- * the handle as soon as it is open; null when isolation is off. A file this call created
+ * the handle as soon as it is open; null when isolation is off. `mode` applies to a file
+ * this creates; `enforceMode` sets it on an existing one too (a shim that must stay
+ * executable). A file this call created
  * is removed again if nothing ends up written to it (null from `content`, or a throw).
  * Returns whether it wrote.
  */
@@ -198,7 +200,12 @@ export async function writeMindFile(
   mindDir: string,
   relPath: string,
   content: string | Buffer | ((current: string) => string | Buffer | null),
-  opts: { owner: MindFileOwner | null; mode?: number; create?: boolean | "if-absent" },
+  opts: {
+    owner: MindFileOwner | null;
+    mode?: number;
+    enforceMode?: boolean;
+    create?: boolean | "if-absent";
+  },
 ): Promise<boolean> {
   const create = opts.create ?? true;
   const path = await containedPath(mindDir, relPath, opts.owner, create !== false);
@@ -219,6 +226,7 @@ export async function writeMindFile(
       if (opts.owner) await handle.chown(opts.owner.uid, opts.owner.gid);
       const data = transform ? transform(await readCapped(handle, path)) : content;
       if (data == null) return false;
+      if (opts.enforceMode) await handle.chmod(mode);
       await handle.truncate(0);
       const buf = typeof data === "string" ? Buffer.from(data) : (data as Buffer);
       for (let off = 0; off < buf.length; ) {
@@ -237,39 +245,69 @@ export async function writeMindFile(
 /**
  * Replace a file in a mind's directory whole: write a fresh temp file beside it (through
  * the same anchor, walk and vetted exclusive create as {@link writeMindFile}), then rename
- * it over the name. Unlike {@link writeMindFile} this never leaves a half-written file at
- * the name — a crash mid-write leaves the old one — and it replaces whatever the mind put
- * there (a link, a hard link) rather than refusing it, since a rename swaps the name and
- * never follows it. The inode changes, so use it only where nothing watches the file.
+ * it over the name. Unlike {@link writeMindFile} a reader never sees a half-written file —
+ * not a synchronous reader in this process between two awaits, not after a crash — so use
+ * it for files the daemon reads synchronously (volute.json, routes.json). The inode
+ * changes, so don't use it where something watches one.
+ *
+ * `content` is the bytes, or a function of the current text ("" when absent) returning
+ * them or null to leave the file alone; only that form reads the file, through the vetted
+ * open, so a link or FIFO at the name refuses. Plain content replaces whatever is at the
+ * name (a rename swaps the name's entry, never following it). `create: false` leaves an
+ * absent file absent. An existing file's mode is kept. Returns whether it wrote.
  */
 export async function replaceMindFile(
   mindDir: string,
   relPath: string,
-  content: string | Buffer,
-  opts: { owner: MindFileOwner | null; mode?: number },
-): Promise<void> {
-  const path = await containedPath(mindDir, relPath, opts.owner, true);
-  if (!path) throw new Error(`could not resolve ${relPath} in ${mindDir}`);
-  const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString("hex")}.tmp`);
-  const { O_WRONLY, O_CREAT, O_EXCL } = constants;
-  await serialized(path, async () => {
-    const handle = await openVetted(tmp, O_WRONLY | O_CREAT | O_EXCL, opts.mode ?? 0o644);
+  content: string | Buffer | ((current: string) => string | Buffer | null),
+  opts: { owner: MindFileOwner | null; mode?: number; create?: boolean },
+): Promise<boolean> {
+  const create = opts.create ?? true;
+  const path = await containedPath(mindDir, relPath, opts.owner, create);
+  if (!path) return false;
+  const { O_RDONLY, O_WRONLY, O_CREAT, O_EXCL } = constants;
+  return serialized(path, async () => {
+    let current: string | null = null;
+    let mode = opts.mode ?? 0o644;
+    if (typeof content === "function" || !create) {
+      const existing = await openVetted(path, O_RDONLY, 0);
+      if (existing) {
+        try {
+          mode = (await existing.stat()).mode & 0o7777;
+          current = await readCapped(existing, path);
+        } finally {
+          await existing.close();
+        }
+      }
+      if (current === null && !create) return false;
+    }
+    const data = typeof content === "function" ? content(current ?? "") : content;
+    if (data == null) return false;
+
+    const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString("hex")}.tmp`);
+    const handle = await openVetted(tmp, O_WRONLY | O_CREAT | O_EXCL, mode);
     if (!handle) throw new Error(`refusing ${tmp}: already present`);
     try {
       try {
         if (opts.owner) await handle.chown(opts.owner.uid, opts.owner.gid);
-        const buf = typeof content === "string" ? Buffer.from(content) : content;
+        // The create mode is masked by the umask; an existing file's mode is kept exactly.
+        if (current !== null) await handle.chmod(mode);
+        const buf = typeof data === "string" ? Buffer.from(data) : data;
         for (let off = 0; off < buf.length; ) {
           off += (await handle.write(buf, off, buf.length - off, off)).bytesWritten;
         }
       } finally {
         await handle.close();
       }
+      // By path: a rename never follows its last component, but a directory above it
+      // swapped for a link between the walk and here could still carry the file out of
+      // the tree — the same race the module header names.
       await rename(tmp, path);
     } catch (err) {
       await rm(tmp, { force: true });
       throw err;
     }
+    return true;
   });
 }
 
@@ -330,7 +368,9 @@ export function readMindFileSync(path: string): string {
   const fd = openSync(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1) {
+    // nlink 0 is a file replaceMindFile renamed over after we opened it: its content is
+    // whole, just no longer current. More than one link is a hard link to elsewhere.
+    if (!st.isFile() || st.nlink > 1) {
       throw new Error(`refusing ${path}: not a regular file with a single link`);
     }
     if (st.size > MAX_READ_BYTES) {

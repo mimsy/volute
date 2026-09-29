@@ -1,7 +1,7 @@
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { extname, join, resolve } from "node:path";
+import { extname, relative, resolve } from "node:path";
 import { Hono } from "hono";
 import { syncMindProfile } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
@@ -11,6 +11,7 @@ import { findMind, getBaseName, mindDir } from "../../lib/mind/registry.js";
 import {
   type MindProfile,
   readVoluteConfig,
+  UnparseableConfigError,
   updateMindVoluteConfig,
 } from "../../lib/mind/volute-config.js";
 import { normalizeAvatar } from "../../lib/util/avatar-image.js";
@@ -93,13 +94,18 @@ const app = new Hono<AuthEnv>()
     // Delete old avatar if different extension. The stored avatar value is
     // mind-controllable (via volute.json / the profile PATCH), so it is contained
     // like any other path — never let it delete a file outside the mind's home.
-    const oldAvatar = readVoluteConfig(dir)?.profile?.avatar;
-    if (
-      oldAvatar &&
-      oldAvatar !== filename &&
-      safeResolveWithinBase(resolve(dir, "home"), oldAvatar)
-    ) {
-      await removeMindFile(dir, join("home", oldAvatar), { owner }).catch(() => {});
+    const config = readVoluteConfig(dir);
+    // Refuse before touching any file: an unparseable volute.json can't record the new
+    // avatar, and deleting the old one first would leave the mind with neither.
+    if (!config && existsSync(resolve(dir, "home/.config/volute.json"))) {
+      throw new UnparseableConfigError(
+        "home/.config/volute.json is unparseable — fix or remove it; not modifying it",
+      );
+    }
+    const oldAvatar = config?.profile?.avatar;
+    const oldAvatarPath = oldAvatar && safeResolveWithinBase(resolve(dir, "home"), oldAvatar);
+    if (oldAvatarPath && oldAvatar !== filename) {
+      await removeMindFile(dir, relative(dir, oldAvatarPath), { owner }).catch(() => {});
     }
 
     try {

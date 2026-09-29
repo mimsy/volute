@@ -400,7 +400,8 @@ export class Scheduler {
     this.noticeInvalidSchedule(mind, schedule, reason).catch((err) =>
       slog.warn(`failed to record undated notice for ${key}`, log.errorData(err)),
     );
-    if (schedule.fireAt) this.removeSchedule(mind, schedule.id);
+    // An undated one-timer is skipped again (and silently) if it survives a reload.
+    if (schedule.fireAt) void this.removeSchedule(mind, schedule.id);
   }
 
   /**
@@ -590,7 +591,7 @@ export class Scheduler {
         detail,
       });
     } finally {
-      if (schedule.fireAt && consumeOneTimer) this.removeSchedule(mindName, schedule.id);
+      if (schedule.fireAt && consumeOneTimer) await this.removeSchedule(mindName, schedule.id);
       // Released only after the one-timer above has been consumed. Releasing it
       // when the script alone finished left a window: a run ending just before a
       // minute boundary frees the guard while `removeSchedule` is still behind an
@@ -622,7 +623,7 @@ export class Scheduler {
     );
   }
 
-  private removeSchedule(mindName: string, scheduleId: string): void {
+  private async removeSchedule(mindName: string, scheduleId: string): Promise<void> {
     // Drop the bookkeeping with the schedule. Ids get reused — `clock add --id
     // reminder --in 5m` is the natural repeat — and loadSchedules only baselines
     // keys it has never seen, so a surviving key would hand a brand-new schedule
@@ -648,22 +649,23 @@ export class Scheduler {
       }
     }
 
+    // Awaited by the fire path: until this lands, a loadSchedules re-reads the old file
+    // and would re-add (and re-fire) the one-timer.
     const dir = this.mindDirs.get(mindName) ?? mindDir(mindName);
-    updateMindVoluteConfig(mindName, dir, (config) => {
-      if (!config.schedules) return null;
-      config.schedules = config.schedules.filter((s) => s.id !== scheduleId);
-      if (config.schedules.length === 0) config.schedules = undefined;
-      return config;
-    }).then(
-      (wrote) => {
-        if (wrote) slog.info(`removed one-time schedule "${scheduleId}" for ${mindName}`);
-      },
-      (err) =>
-        slog.error(
-          `failed to persist removal of schedule "${scheduleId}" for ${mindName} (removed from memory)`,
-          log.errorData(err),
-        ),
-    );
+    try {
+      const wrote = await updateMindVoluteConfig(mindName, dir, (config) => {
+        if (!config.schedules) return null;
+        config.schedules = config.schedules.filter((s) => s.id !== scheduleId);
+        if (config.schedules.length === 0) config.schedules = undefined;
+        return config;
+      });
+      if (wrote) slog.info(`removed one-time schedule "${scheduleId}" for ${mindName}`);
+    } catch (err) {
+      slog.error(
+        `failed to persist removal of schedule "${scheduleId}" for ${mindName} (removed from memory)`,
+        log.errorData(err),
+      );
+    }
   }
 
   /**

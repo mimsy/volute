@@ -20,7 +20,7 @@ import { readInitLedgerFile, writeLedgerFile } from "./mind/init-ledger.js";
 import { chownMindDir, mindFileOwner } from "./mind/isolation.js";
 import {
   ensureMindDir,
-  readMindFile,
+  readMindFileBytes,
   readMindFileSync,
   removeMindFile,
   writeMindFile,
@@ -512,8 +512,11 @@ export async function updateSkill(
   // aborts the update) instead of aiming the merge at a file elsewhere.
   const owner = await mindFileOwner(await getBaseName(mindName));
   const inSkill = (file: string) => relative(dir, join(skillDir, file));
+  // Skill files have no size limit of their own; the cap only bounds the read.
   const readCurrent = async (file: string) =>
-    (await readMindFile(dir, inSkill(file), { owner }))?.text ?? null;
+    (await readMindFileBytes(dir, inSkill(file), { owner, maxBytes: 64 * 1024 * 1024 }))?.toString(
+      "utf-8",
+    ) ?? null;
   const writeCurrent = (file: string, content: string | Buffer, mode?: number) =>
     writeMindFile(dir, inSkill(file), content, { owner, mode });
 

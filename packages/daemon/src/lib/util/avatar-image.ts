@@ -1,5 +1,5 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { extname, join, resolve } from "node:path";
+import { extname, relative, resolve } from "node:path";
 import { mindFileOwner } from "../mind/isolation.js";
 import { readMindFileBytes, writeMindFile } from "../mind/mind-file-write.js";
 import { getBaseName, mindDir, readAllMinds, voluteHome } from "../mind/registry.js";
@@ -137,8 +137,9 @@ export async function migrateAvatarSizes(): Promise<void> {
   for (const mind of minds) {
     const dir = mind.dir ?? mindDir(mind.name);
     const avatar = readVoluteConfig(dir)?.profile?.avatar;
-    if (!avatar || !safeResolveWithinBase(resolve(dir, "home"), avatar)) continue;
-    const rel = join("home", avatar);
+    const avatarPath = avatar && safeResolveWithinBase(resolve(dir, "home"), avatar);
+    if (!avatarPath) continue;
+    const rel = relative(dir, avatarPath);
     try {
       const owner = await mindFileOwner(await getBaseName(mind.name));
       const data = await readMindFileBytes(dir, rel, {

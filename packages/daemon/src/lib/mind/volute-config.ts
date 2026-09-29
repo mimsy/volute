@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { mindFileOwner } from "./isolation.js";
-import { type MindFileOwner, readMindFileSync, writeMindFile } from "./mind-file-write.js";
+import { type MindFileOwner, readMindFileSync, replaceMindFile } from "./mind-file-write.js";
 import { getBaseName } from "./registry.js";
 
 export type Schedule = {
@@ -100,11 +100,15 @@ export function readVoluteConfig(mindDir: string): VoluteConfig | null {
 
 const VOLUTE_JSON = "home/.config/volute.json";
 
+/** volute.json is there but unparseable: refused rather than overwritten (it is the mind's). */
+export class UnparseableConfigError extends Error {}
+
 /**
- * Write volute.json through {@link writeMindFile}: the daemon is root under user
- * isolation and the mind owns this tree, so a link or FIFO it plants is refused, and
+ * Write volute.json through {@link replaceMindFile}: the daemon is root under user
+ * isolation and the mind owns this tree, so nothing it plants redirects the write, and
  * whatever the write creates (the file, `.config/`) is handed to `owner` — or the mind
- * could not edit its own config (#1072). `owner` is null for a tree not handed over yet
+ * could not edit its own config (#1072). Replaced whole, never truncated in place:
+ * `readVoluteConfig` is synchronous, and must never read a half-written file. `owner` is null for a tree not handed over yet
  * (creation, before `chownMindDir`) or when isolation is off.
  */
 export async function writeVoluteConfig(
@@ -112,7 +116,7 @@ export async function writeVoluteConfig(
   config: VoluteConfig,
   owner: MindFileOwner | null,
 ): Promise<void> {
-  await writeMindFile(mindDir, VOLUTE_JSON, `${JSON.stringify(config, null, 2)}\n`, { owner });
+  await replaceMindFile(mindDir, VOLUTE_JSON, `${JSON.stringify(config, null, 2)}\n`, { owner });
 }
 
 /**
@@ -127,7 +131,7 @@ export async function updateVoluteConfig(
   owner: MindFileOwner | null,
   fn: (config: VoluteConfig) => VoluteConfig | null,
 ): Promise<boolean> {
-  return writeMindFile(
+  return replaceMindFile(
     mindDir,
     VOLUTE_JSON,
     (text) => {
@@ -136,7 +140,9 @@ export async function updateVoluteConfig(
         try {
           current = JSON.parse(text);
         } catch {
-          throw new Error(`${VOLUTE_JSON} in ${mindDir} is unparseable — not modifying it`);
+          throw new UnparseableConfigError(
+            `${VOLUTE_JSON} is unparseable — fix or remove it; not modifying it`,
+          );
         }
       }
       const next = fn(current);

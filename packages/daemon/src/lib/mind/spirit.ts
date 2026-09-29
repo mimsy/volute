@@ -621,7 +621,7 @@ export async function syncSpiritTemplate(): Promise<void> {
   // would come straight back the next morning if the ledger weren't consulted
   // (#811).
   try {
-    const { added, refreshed, withheld } = backfillInitInfrastructure(
+    const { added, refreshed, withheld } = await backfillInitInfrastructure(
       resolve(dir, "home"),
       template,
       spiritName,

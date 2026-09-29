@@ -16,7 +16,11 @@ import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { deliverEvent } from "../packages/daemon/src/lib/chat/system-events.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
+import {
+  clearConfigCache,
+  getRoutingConfig,
+  registerMindDir,
+} from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
   migrateScheduleThreadsToRoutes,
   readRoutesConfig,
@@ -165,5 +169,38 @@ describe("upsertEventRule", () => {
     const dir = scratch();
     assert.equal(await upsertEventRule(dir, "schedule:x", null, { owner: null }), false);
     assert.equal(existsSync(resolve(dir, "home")), false);
+  });
+});
+
+// The router reads routes.json synchronously on every delivery. A write that truncated in
+// place and then awaited would let it read "" → {} in between, and with gateUnmatched a
+// message landing then is gated with nothing to release it.
+describe("routes.json writes vs the router's synchronous read", () => {
+  it("the router never sees a half-written routes.json", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "routes-reader-"));
+    const name = `routes-reader-${process.pid}`;
+    registerMindDir(name, dir);
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    const rules = Array.from({ length: 300 }, (_, i) => ({ channel: `c${i}`, thread: `t${i}` }));
+    writeFileSync(resolve(dir, "home/.config/routes.json"), JSON.stringify({ rules }));
+    let done = false;
+    let reads = 0;
+    let empty = 0;
+    const reader = (async () => {
+      while (!done) {
+        clearConfigCache(name, { notify: false });
+        reads++;
+        if (!getRoutingConfig(name).rules?.length) empty++;
+        await new Promise((r) => setImmediate(r));
+      }
+    })();
+    for (let i = 0; i < 40; i++) {
+      await upsertEventRule(dir, `schedule:${i}`, "$new", { owner: null });
+    }
+    done = true;
+    await reader;
+    clearConfigCache(name, { notify: false });
+    assert.ok(reads > 40, `reader ran (${reads})`);
+    assert.equal(empty, 0);
   });
 });

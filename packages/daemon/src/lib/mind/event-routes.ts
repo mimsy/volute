@@ -17,12 +17,7 @@ import {
 } from "../delivery/delivery-router.js";
 import log from "../util/logger.js";
 import { mindFileOwner } from "./isolation.js";
-import {
-  type MindFileOwner,
-  readMindFile,
-  rewriteMindFileInPlace,
-  writeMindFile,
-} from "./mind-file-write.js";
+import { type MindFileOwner, readMindFile, replaceMindFile } from "./mind-file-write.js";
 import { getBaseName } from "./registry.js";
 import { readVoluteConfig, updateVoluteConfig } from "./volute-config.js";
 
@@ -57,10 +52,11 @@ export async function readRoutesConfig(
  * when `thread` is null); otherwise a new rule is prepended, so a specific event rule wins
  * over any hand-written wildcard. Returns whether the file changed.
  *
- * The read-modify-write is one {@link writeMindFile} call: the daemon is root under user
+ * The read-modify-write is one {@link replaceMindFile} call: the daemon is root under user
  * isolation and the mind owns this tree, so a planted link or FIFO refuses, and a
  * routes.json (or `.config/`) this creates is handed to `owner` — or the mind could not
- * edit its own routing (#1116). A corrupt file is replaced, as the router already reads it
+ * edit its own routing (#1116). Replaced whole, so the router's synchronous read never
+ * sees a half-written file. A corrupt file is replaced, as the router already reads it
  * as `{}`.
  */
 export async function upsertEventRule(
@@ -69,7 +65,7 @@ export async function upsertEventRule(
   thread: string | null,
   opts: { owner: MindFileOwner | null; name?: string },
 ): Promise<boolean> {
-  const wrote = await writeMindFile(
+  const wrote = await replaceMindFile(
     dir,
     ROUTES_JSON,
     (text) => {
@@ -213,8 +209,8 @@ function renameThreadBatchText(text: string): string {
  * rewrite is surgical (see {@link renameThreadBatchText}); returns what was migrated,
  * empty when there was nothing to do, which also makes a second run a no-op.
  *
- * The write goes through {@link rewriteMindFileInPlace}, which refuses symlinks, hard
- * links, and a `.config/` that resolves outside the mind dir.
+ * The write goes through {@link replaceMindFile}, which refuses symlinks, hard links,
+ * and a `.config/` that resolves outside the mind dir.
  */
 export async function migrateThreadBatchToDelivery(
   dir: string,
@@ -222,7 +218,17 @@ export async function migrateThreadBatchToDelivery(
   owner: MindFileOwner | null = null,
 ): Promise<MigratedThreadBatch[]> {
   let migrated: MigratedThreadBatch[] = [];
-  const wrote = await rewriteMindFileInPlace(dir, resolve(dir, ROUTES_JSON), repair, owner);
+  // Replaced whole rather than rewritten in place: the router reads routes.json
+  // synchronously and must never see it half-written.
+  let wrote = false;
+  try {
+    wrote = await replaceMindFile(dir, ROUTES_JSON, (text) => repair(text), {
+      owner,
+      create: false,
+    });
+  } catch (err) {
+    rlog.warn(`not rewriting ${resolve(dir, ROUTES_JSON)}`, log.errorData(err));
+  }
   function repair(text: string): string | null {
     let parsed: RoutingConfig;
     try {

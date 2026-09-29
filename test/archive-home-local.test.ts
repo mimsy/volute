@@ -186,7 +186,7 @@ describe("home-only archives carry home/.local/", () => {
       );
     });
 
-    it(`does not reinstall a hook the mind deleted, from ${label}`, () => {
+    it(`does not reinstall a hook the mind deleted, from ${label}`, async () => {
       const { destHome, importedName } = roundTrip(`home-local-refusal-${git ? "git" : "nogit"}`);
 
       assert.ok(
@@ -196,7 +196,11 @@ describe("home-only archives carry home/.local/", () => {
 
       // And it stays gone: the refusal has to outlive the import itself, or the
       // mind re-acquires the hook on its first upgrade on the new host.
-      const { added, withheld } = backfillInitInfrastructure(destHome, "claude", importedName);
+      const { added, withheld } = await backfillInitInfrastructure(
+        destHome,
+        "claude",
+        importedName,
+      );
       assert.ok(withheld.includes(REFUSED), "the refusal must survive onto the new host's ledger");
       assert.ok(!added.includes(REFUSED));
       assert.ok(!existsSync(resolve(destHome, REFUSED)));

@@ -606,7 +606,7 @@ async function mergeUpgradeAndRestart(
   // backfillInitInfrastructure throws rather than exiting, so a broken template
   // install is a warning here, not a failed upgrade.
   try {
-    const { added, refreshed, withheld } = backfillInitInfrastructure(
+    const { added, refreshed, withheld } = await backfillInitInfrastructure(
       resolve(dir, "home"),
       template,
       mindName,

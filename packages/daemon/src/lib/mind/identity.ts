@@ -4,7 +4,12 @@ import { resolve } from "node:path";
 import { readSystemsConfig } from "../config/systems-config.js";
 import log from "../util/logger.js";
 import { writeMindFile } from "./mind-file-write.js";
-import { readVoluteConfig, updateVoluteConfig } from "./volute-config.js";
+import {
+  readVoluteConfig,
+  UnparseableConfigError,
+  updateVoluteConfig,
+  writeVoluteConfig,
+} from "./volute-config.js";
 
 /**
  * Generate an Ed25519 keypair and write to .mind/identity/. Runs on a tree not handed to
@@ -22,14 +27,18 @@ export async function generateIdentity(
   await writeMindFile(mindDir, ".mind/identity/private.pem", privateKey, { owner, mode: 0o600 });
   await writeMindFile(mindDir, ".mind/identity/public.pem", publicKey, { owner, mode: 0o644 });
 
-  // Record paths in volute.json
-  await updateVoluteConfig(mindDir, owner, (config) => {
-    config.identity = {
-      privateKey: ".mind/identity/private.pem",
-      publicKey: ".mind/identity/public.pem",
-    };
-    return config;
-  });
+  // Record paths in volute.json. At creation or import an unparseable one (an archive's)
+  // is replaced, as it always was — there is no mind yet whose config it would destroy.
+  const identity = {
+    privateKey: ".mind/identity/private.pem",
+    publicKey: ".mind/identity/public.pem",
+  };
+  try {
+    await updateVoluteConfig(mindDir, owner, (config) => ({ ...config, identity }));
+  } catch (err) {
+    if (!(err instanceof UnparseableConfigError)) throw err;
+    await writeVoluteConfig(mindDir, { identity }, owner);
+  }
 
   return { publicKeyPem: publicKey, privateKeyPem: privateKey };
 }

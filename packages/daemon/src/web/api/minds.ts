@@ -1247,10 +1247,11 @@ const app = new Hono<AuthEnv>()
       if (spiritEntry) {
         const { firstWeekSchedules, spiritDir } = await import("../../lib/mind/spirit.js");
         const sDir = spiritEntry.dir ?? spiritDir();
-        // An unparseable config is refused by the update (it throws, logged below), and
-        // an absent one arrives as {} and is left alone.
+        // An unparseable config is refused by the update (it throws, logged below); a
+        // missing one is left alone.
+        const present = existsSync(resolve(sDir, "home/.config/volute.json"));
         const wrote = await updateMindVoluteConfig(spiritName, sDir, (spiritConfig) => {
-          if (Object.keys(spiritConfig).length === 0) return null;
+          if (!present) return null;
           const schedules = (spiritConfig.schedules ?? []).filter(
             (s) => s.id !== `nurture-${name}`,
           );

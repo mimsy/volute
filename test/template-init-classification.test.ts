@@ -3,9 +3,11 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -152,32 +154,68 @@ describe("backfillInitInfrastructure", () => {
     return resolve(dir, "home");
   }
 
-  it("adds nothing to a mind created from the current template", () => {
+  it("adds nothing to a mind created from the current template", async () => {
     const home = createdMind("fresh");
-    const { added } = backfillInitInfrastructure(home, "claude", "fresh");
+    const { added } = await backfillInitInfrastructure(home, "claude", "fresh");
     assert.deepEqual(added, [], "a current mind should already have every infrastructure file");
   });
 
-  it("restores an infrastructure file the mind never had", () => {
+  // The daemon is root under user isolation and the mind owns home/ (#1167): a link it
+  // plants under .local/ must not carry the backfill's writes outside its tree.
+  it("writes nothing through a .local/ directory the mind linked out of its tree", async () => {
+    const home = createdMind("linked-hooks");
+    const elsewhere = scratch();
+    rmSync(resolve(home, ".local/hooks"), { recursive: true, force: true });
+    symlinkSync(elsewhere, resolve(home, ".local/hooks"));
+
+    // An install that fails takes the run down, as any failed install always has (so
+    // the ledger never records a file that did not land).
+    await assert.rejects(backfillInitInfrastructure(home, "claude", "linked-hooks"));
+    assert.deepEqual(readdirSync(elsewhere), [], "nothing written outside the mind");
+  });
+
+  it("refreshes a stale hook it can read, but never through a link at its name", async () => {
+    const rel = ".local/hooks/pre-prompt/notices.ts";
+    const home = createdMind("linked-hook-file");
+    const outside = resolve(scratch(), "outside.ts");
+    writeFileSync(outside, preNoticesHook());
+    rmSync(resolve(home, rel));
+    symlinkSync(outside, resolve(home, rel));
+
+    const { refreshed } = await backfillInitInfrastructure(home, "claude", "linked-hook-file");
+
+    assert.ok(!refreshed.includes(rel));
+    assert.equal(readFileSync(outside, "utf-8"), preNoticesHook(), "link target untouched");
+  });
+
+  it("keeps an added shim executable", async () => {
+    const home = createdMind("shim-mode");
+    rmSync(resolve(home, ".local/bin/volute"));
+    const { added } = await backfillInitInfrastructure(home, "claude", "shim-mode");
+    assert.ok(added.includes(".local/bin/volute"));
+    assert.ok(statSync(resolve(home, ".local/bin/volute")).mode & 0o100, "owner-executable");
+  });
+
+  it("restores an infrastructure file the mind never had", async () => {
     const home = createdMind("deaf");
     const hook = resolve(home, ".local/hooks/pre-prompt/notices.ts");
     // Model a mind created before the hook existed: it simply isn't there.
     rmSync(hook, { force: true });
     assert.ok(!existsSync(hook));
 
-    const { added } = backfillInitInfrastructure(home, "claude", "deaf");
+    const { added } = await backfillInitInfrastructure(home, "claude", "deaf");
 
     assert.ok(added.includes(".local/hooks/pre-prompt/notices.ts"), `added: ${added.join(", ")}`);
     assert.ok(existsSync(hook), "the drain hook must be back on disk");
     assert.match(readFileSync(hook, "utf-8"), /history\/notices/);
   });
 
-  it("recreates the whole .local tree when it is missing entirely", () => {
+  it("recreates the whole .local tree when it is missing entirely", async () => {
     // The state the production minds were actually in: no home/.local at all.
     const home = createdMind("nolocal");
     rmSync(resolve(home, ".local"), { recursive: true, force: true });
 
-    const { added } = backfillInitInfrastructure(home, "claude", "nolocal");
+    const { added } = await backfillInitInfrastructure(home, "claude", "nolocal");
 
     assert.ok(added.includes(".local/hooks/pre-prompt/notices.ts"));
     assert.ok(added.includes(".local/bin/volute"));
@@ -185,18 +223,18 @@ describe("backfillInitInfrastructure", () => {
     assert.ok(existsSync(resolve(home, ".local/bin/volute")));
   });
 
-  it("never overwrites an infrastructure file the mind has edited", () => {
+  it("never overwrites an infrastructure file the mind has edited", async () => {
     const home = createdMind("tinkerer");
     const hook = resolve(home, ".local/hooks/pre-prompt/notices.ts");
     writeFileSync(hook, "// I rewrote this myself\n");
 
-    const { added } = backfillInitInfrastructure(home, "claude", "tinkerer");
+    const { added } = await backfillInitInfrastructure(home, "claude", "tinkerer");
 
     assert.ok(!added.includes(".local/hooks/pre-prompt/notices.ts"));
     assert.equal(readFileSync(hook, "utf-8"), "// I rewrote this myself\n");
   });
 
-  it("respects an emptied hook — the other way to decline one", () => {
+  it("respects an emptied hook — the other way to decline one", async () => {
     // Emptying a hook was the only way to decline one before the ledger, and
     // minds were told to do it, so it must keep working forever. hook-loader
     // skips an empty script outright; before that it ran it as a no-op (exit 0,
@@ -205,13 +243,13 @@ describe("backfillInitInfrastructure", () => {
     const hook = resolve(home, ".local/hooks/pre-prompt/notices.ts");
     writeFileSync(hook, "");
 
-    const { added } = backfillInitInfrastructure(home, "claude", "decliner");
+    const { added } = await backfillInitInfrastructure(home, "claude", "decliner");
 
     assert.ok(!added.includes(".local/hooks/pre-prompt/notices.ts"));
     assert.equal(readFileSync(hook, "utf-8"), "", "an emptied hook must stay empty");
   });
 
-  it("never touches identity files, even when they are missing", () => {
+  it("never touches identity files, even when they are missing", async () => {
     const home = createdMind("stripped");
     // A mind may legitimately have deleted these. The framework must not put
     // them back — a blank SOUL.md reappearing is worse than its absence.
@@ -219,7 +257,7 @@ describe("backfillInitInfrastructure", () => {
       rmSync(resolve(home, rel), { force: true });
     }
 
-    const { added } = backfillInitInfrastructure(home, "claude", "stripped");
+    const { added } = await backfillInitInfrastructure(home, "claude", "stripped");
 
     assert.deepEqual(added, []);
     for (const rel of ["SOUL.md", "MEMORY.md", ".config/routes.json"]) {
@@ -227,34 +265,34 @@ describe("backfillInitInfrastructure", () => {
     }
   });
 
-  it("keeps the volute shim executable", () => {
+  it("keeps the volute shim executable", async () => {
     const home = createdMind("shim");
     const shim = resolve(home, ".local/bin/volute");
     const originalMode = statSync(shim).mode;
     rmSync(shim, { force: true });
 
-    backfillInitInfrastructure(home, "claude", "shim");
+    await backfillInitInfrastructure(home, "claude", "shim");
 
     assert.equal(statSync(shim).mode, originalMode);
     assert.ok(statSync(shim).mode & 0o111, "the shim must stay executable");
   });
 
-  it("is idempotent", () => {
+  it("is idempotent", async () => {
     const home = createdMind("twice");
     rmSync(resolve(home, ".local"), { recursive: true, force: true });
 
-    const { added: first } = backfillInitInfrastructure(home, "claude", "twice");
-    const { added: second } = backfillInitInfrastructure(home, "claude", "twice");
+    const { added: first } = await backfillInitInfrastructure(home, "claude", "twice");
+    const { added: second } = await backfillInitInfrastructure(home, "claude", "twice");
 
     assert.ok(first.length > 0);
     assert.deepEqual(second, [], "a second run must add nothing");
   });
 
-  it("substitutes {{name}} in backfilled files and leaves no placeholder behind", () => {
+  it("substitutes {{name}} in backfilled files and leaves no placeholder behind", async () => {
     const home = createdMind("named");
     rmSync(resolve(home, ".local"), { recursive: true, force: true });
 
-    const { added } = backfillInitInfrastructure(home, "claude", "named");
+    const { added } = await backfillInitInfrastructure(home, "claude", "named");
 
     for (const rel of added) {
       const content = readFileSync(resolve(home, rel), "utf-8");
@@ -265,7 +303,7 @@ describe("backfillInitInfrastructure", () => {
     }
   });
 
-  it("throws (never exits) when the template cannot be composed", () => {
+  it("throws (never exits) when the template cannot be composed", async () => {
     // composeTemplate/findTemplatesRoot process.exit(1) on a missing templates
     // root, template dir, or manifest. Both callers run inside the daemon, where
     // an uncatchable exit takes down every mind on the host — so the pre-checks
@@ -273,30 +311,30 @@ describe("backfillInitInfrastructure", () => {
     const home = resolve(scratch(), "unknown-template-home");
     mkdirSync(home, { recursive: true });
 
-    assert.throws(
-      () => backfillInitInfrastructure(home, "no-such-template", "whoever"),
+    await assert.rejects(
+      backfillInitInfrastructure(home, "no-such-template", "whoever"),
       /no-such-template/,
     );
   });
 
-  it("creates missing parent directories", () => {
+  it("creates missing parent directories", async () => {
     const home = resolve(scratch(), "bare-home");
     mkdirSync(home, { recursive: true });
 
-    const { added } = backfillInitInfrastructure(home, "claude", "bare");
+    const { added } = await backfillInitInfrastructure(home, "claude", "bare");
 
     assert.ok(added.includes(".local/hooks/pre-prompt/notices.ts"));
     assert.ok(existsSync(resolve(home, ".local/hooks/pre-prompt/notices.ts")));
   });
 
   for (const template of TEMPLATES) {
-    it(`delivers the drain hook for the ${template} template`, () => {
+    it(`delivers the drain hook for the ${template} template`, async () => {
       const home = resolve(scratch(), `home-${template}`);
       mkdirSync(home, { recursive: true });
       // A distinct name per template: the ledger is per-mind and durable, so
       // three templates sharing one name would have the second run reading the
       // first's record and withholding the hook as a deliberate removal.
-      const { added } = backfillInitInfrastructure(home, template, `any-${template}`);
+      const { added } = await backfillInitInfrastructure(home, template, `any-${template}`);
       assert.ok(
         added.includes(".local/hooks/pre-prompt/notices.ts"),
         `${template} must ship the drain hook`,
@@ -426,14 +464,18 @@ describe("backfillInitInfrastructure: a deletion the mind meant", () => {
     }
   });
 
-  it("leaves a hook the mind deleted deleted", () => {
+  it("leaves a hook the mind deleted deleted", async () => {
     // The whole point of #811. A mind that removes a piece of machinery has
     // authored that removal, and the daemon's confidence that the machinery is
     // good for it does not outrank the removal.
     const home = createdMind("refuser", true);
     rmSync(resolve(home, NOTICES));
 
-    const { added, refreshed, withheld } = backfillInitInfrastructure(home, "claude", "refuser");
+    const { added, refreshed, withheld } = await backfillInitInfrastructure(
+      home,
+      "claude",
+      "refuser",
+    );
 
     assert.ok(withheld.includes(NOTICES), "a deliberate removal must be reported as withheld");
     assert.ok(!added.includes(NOTICES));
@@ -441,20 +483,20 @@ describe("backfillInitInfrastructure: a deletion the mind meant", () => {
     assert.equal(existsSync(resolve(home, NOTICES)), false, "the hook must stay gone");
   });
 
-  it("keeps honouring the removal on every later run", () => {
+  it("keeps honouring the removal on every later run", async () => {
     // Property 1 of the issue: the removal is durable. It must not need re-doing
     // after each restart — for the spirit, the backfill runs every daemon start.
     const home = createdMind("persistent", true);
     rmSync(resolve(home, NOTICES));
 
     for (let run = 0; run < 3; run++) {
-      const { withheld } = backfillInitInfrastructure(home, "claude", "persistent");
+      const { withheld } = await backfillInitInfrastructure(home, "claude", "persistent");
       assert.ok(withheld.includes(NOTICES), `run ${run} put the hook back`);
       assert.equal(existsSync(resolve(home, NOTICES)), false);
     }
   });
 
-  it("still adds a hook the mind was never given", () => {
+  it("still adds a hook the mind was never given", async () => {
     // The #808 regression guard, and the reason the ledger is seeded from what is
     // on disk rather than from the full shipped set: a mind that legitimately
     // never had the drain hook must still get it, or it stays deaf to every
@@ -467,14 +509,14 @@ describe("backfillInitInfrastructure: a deletion the mind meant", () => {
       [...readInitLedger("newcomer")].filter((p) => p !== NOTICES),
     );
 
-    const { added, withheld } = backfillInitInfrastructure(home, "claude", "newcomer");
+    const { added, withheld } = await backfillInitInfrastructure(home, "claude", "newcomer");
 
     assert.ok(added.includes(NOTICES), "a hook never given must still be delivered");
     assert.deepEqual(withheld, []);
     assert.ok(existsSync(resolve(home, NOTICES)));
   });
 
-  it("undoes a removal made before the ledger existed exactly once", () => {
+  it("undoes a removal made before the ledger existed exactly once", async () => {
     // The one-time cost of seeding from disk, stated plainly: every mind alive
     // when this ships has no ledger, so its first run cannot tell a pre-existing
     // removal from "never had it" and re-adds the file. The second removal is
@@ -482,23 +524,23 @@ describe("backfillInitInfrastructure: a deletion the mind meant", () => {
     const home = createdMind("legacy", false);
     rmSync(resolve(home, NOTICES));
 
-    const first = backfillInitInfrastructure(home, "claude", "legacy");
+    const first = await backfillInitInfrastructure(home, "claude", "legacy");
     assert.ok(first.added.includes(NOTICES), "the pre-ledger removal comes back once");
     assert.ok(readInitLedger("legacy").has(NOTICES), "and is recorded when it does");
 
     rmSync(resolve(home, NOTICES));
-    const second = backfillInitInfrastructure(home, "claude", "legacy");
+    const second = await backfillInitInfrastructure(home, "claude", "legacy");
     assert.ok(second.withheld.includes(NOTICES), "the second removal must stick");
     assert.equal(existsSync(resolve(home, NOTICES)), false);
   });
 
-  it("never records a path whose file is not on disk", () => {
+  it("never records a path whose file is not on disk", async () => {
     // The safety invariant. An entry for a file that never landed reads as
     // "given, then removed" and would withhold that file from the mind forever.
     const home = createdMind("invariant", false);
     rmSync(resolve(home, ".local"), { recursive: true, force: true });
 
-    backfillInitInfrastructure(home, "claude", "invariant");
+    await backfillInitInfrastructure(home, "claude", "invariant");
 
     const ledger = readInitLedger("invariant");
     assert.ok(ledger.size > 0);
@@ -507,7 +549,7 @@ describe("backfillInitInfrastructure: a deletion the mind meant", () => {
     }
   });
 
-  it("re-adds a withheld file when the caller says the absence is its own fault", () => {
+  it("re-adds a withheld file when the caller says the absence is its own fault", async () => {
     // An upgrade whose restore of merge-deleted home/ files threw partway leaves
     // .local/ files missing for a reason that has nothing to do with the mind.
     // Reading that as authorship would withhold them permanently and silently —
@@ -515,10 +557,10 @@ describe("backfillInitInfrastructure: a deletion the mind meant", () => {
     const home = createdMind("damaged", true);
     rmSync(resolve(home, NOTICES));
 
-    const honoured = backfillInitInfrastructure(home, "claude", "damaged");
+    const honoured = await backfillInitInfrastructure(home, "claude", "damaged");
     assert.ok(honoured.withheld.includes(NOTICES), "the default must honour the removal");
 
-    const repaired = backfillInitInfrastructure(home, "claude", "damaged", {
+    const repaired = await backfillInitInfrastructure(home, "claude", "damaged", {
       honorRemovals: false,
     });
     assert.ok(repaired.added.includes(NOTICES));
@@ -544,14 +586,14 @@ describe("backfillInitInfrastructure: a deletion the mind meant", () => {
     }
   });
 
-  it("degrades to adding, and rewrites itself, when the ledger is corrupt", () => {
+  it("degrades to adding, and rewrites itself, when the ledger is corrupt", async () => {
     // Same posture as readShippedHashes: an unreadable ledger costs one re-add,
     // not a mind permanently withheld from its own infrastructure.
     const home = createdMind("corrupt", true);
     rmSync(resolve(home, NOTICES));
     writeFileSync(initLedgerPath("corrupt"), "{ not json");
 
-    const { added } = backfillInitInfrastructure(home, "claude", "corrupt");
+    const { added } = await backfillInitInfrastructure(home, "claude", "corrupt");
 
     assert.ok(added.includes(NOTICES));
     assert.ok(readInitLedger("corrupt").has(NOTICES), "the ledger must repair itself");
@@ -649,7 +691,7 @@ describe("backfillInitInfrastructure: refreshing stale infrastructure", () => {
     return resolve(dir, "home");
   }
 
-  it("replaces a hook the mind still has verbatim from an older release", () => {
+  it("replaces a hook the mind still has verbatim from an older release", async () => {
     // The bug this PR exists for: bardo's minds carried the pre-#900
     // notices.ts, which calls the removed /api/minds/ path and 404s on every
     // turn, and `volute mind upgrade` would not touch it because it was
@@ -662,7 +704,7 @@ describe("backfillInitInfrastructure: refreshing stale infrastructure", () => {
     const currentContent = readFileSync(hook, "utf-8");
     writeFileSync(hook, pre900);
 
-    const { added, refreshed } = backfillInitInfrastructure(home, "claude", "stale");
+    const { added, refreshed } = await backfillInitInfrastructure(home, "claude", "stale");
 
     assert.deepEqual(added, [], "nothing was missing");
     assert.ok(refreshed.includes(rel), `expected ${rel} refreshed; got ${refreshed.join(", ")}`);
@@ -670,7 +712,7 @@ describe("backfillInitInfrastructure: refreshing stale infrastructure", () => {
     assert.match(readFileSync(hook, "utf-8"), /\/api\/v1\/minds\//);
   });
 
-  it("refreshes only the stale files, leaving the mind's edits beside them", () => {
+  it("refreshes only the stale files, leaving the mind's edits beside them", async () => {
     const staleRel = ".local/hooks/pre-prompt/notices.ts";
     const ownRel = ".local/hooks/startup-context.ts";
     const pre900 = preNoticesHook();
@@ -679,24 +721,24 @@ describe("backfillInitInfrastructure: refreshing stale infrastructure", () => {
     writeFileSync(resolve(home, staleRel), pre900);
     writeFileSync(resolve(home, ownRel), "// mine\n");
 
-    const { refreshed } = backfillInitInfrastructure(home, "claude", "mixed");
+    const { refreshed } = await backfillInitInfrastructure(home, "claude", "mixed");
 
     assert.deepEqual(refreshed, [staleRel]);
     assert.equal(readFileSync(resolve(home, ownRel), "utf-8"), "// mine\n");
   });
 
-  it("is idempotent — a second pass refreshes nothing", () => {
+  it("is idempotent — a second pass refreshes nothing", async () => {
     const rel = ".local/hooks/pre-prompt/notices.ts";
     const pre900 = preNoticesHook();
 
     const home = createdMind("twice2");
     writeFileSync(resolve(home, rel), pre900);
 
-    assert.ok(backfillInitInfrastructure(home, "claude", "twice2").refreshed.includes(rel));
-    assert.deepEqual(backfillInitInfrastructure(home, "claude", "twice2").refreshed, []);
+    assert.ok((await backfillInitInfrastructure(home, "claude", "twice2")).refreshed.includes(rel));
+    assert.deepEqual((await backfillInitInfrastructure(home, "claude", "twice2")).refreshed, []);
   });
 
-  it("keeps going when one .local/ path is unreadable", () => {
+  it("keeps going when one .local/ path is unreadable", async () => {
     // A directory where a file belongs (or a permission the daemon lost) is one
     // mind's one file. If it threw out of the loop, upgrade would log a single
     // warning and silently skip the *adds* for everything after it — which is
@@ -708,36 +750,36 @@ describe("backfillInitInfrastructure: refreshing stale infrastructure", () => {
     mkdirSync(hook, { recursive: true }); // a directory in a file's place
     rmSync(resolve(home, ".local/bin/volute"), { force: true });
 
-    const { added, refreshed } = backfillInitInfrastructure(home, "claude", "unreadable");
+    const { added, refreshed } = await backfillInitInfrastructure(home, "claude", "unreadable");
 
     assert.ok(added.includes(".local/bin/volute"), "later files must still be delivered");
     assert.ok(!refreshed.includes(".local/hooks/pre-prompt/notices.ts"));
   });
 
-  it("leaves a current mind completely alone", () => {
+  it("leaves a current mind completely alone", async () => {
     const home = createdMind("current");
-    const { added, refreshed } = backfillInitInfrastructure(home, "claude", "current");
+    const { added, refreshed } = await backfillInitInfrastructure(home, "claude", "current");
     assert.deepEqual(added, []);
     assert.deepEqual(refreshed, []);
   });
 
-  it("never refreshes a file the mind edited", () => {
+  it("never refreshes a file the mind edited", async () => {
     const home = createdMind("author");
     const hook = resolve(home, ".local/hooks/pre-prompt/notices.ts");
     writeFileSync(hook, "// my own drain, thanks\n");
 
-    const { refreshed } = backfillInitInfrastructure(home, "claude", "author");
+    const { refreshed } = await backfillInitInfrastructure(home, "claude", "author");
 
     assert.deepEqual(refreshed, []);
     assert.equal(readFileSync(hook, "utf-8"), "// my own drain, thanks\n");
   });
 
-  it("never refreshes an emptied hook — declining still works", () => {
+  it("never refreshes an emptied hook — declining still works", async () => {
     const home = createdMind("decliner2");
     const hook = resolve(home, ".local/hooks/pre-prompt/notices.ts");
     writeFileSync(hook, "");
 
-    const { refreshed } = backfillInitInfrastructure(home, "claude", "decliner2");
+    const { refreshed } = await backfillInitInfrastructure(home, "claude", "decliner2");
 
     assert.deepEqual(refreshed, []);
     assert.equal(readFileSync(hook, "utf-8"), "");
