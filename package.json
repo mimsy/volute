@@ -76,22 +76,22 @@
     "cron-parser": "^5.10.1",
     "discord.js": "^14.27.0",
     "drizzle-orm": "^0.45.3",
-    "hono": "^4.13.9",
-    "isomorphic-dompurify": "^4.3.0",
+    "hono": "^4.13.10",
+    "isomorphic-dompurify": "^4.4.0",
     "libsql": "^0.5.29",
     "replicate": "^1.4.0",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "telegraf": "^4.16.3",
-    "undici": "^7.29.1",
+    "undici": "^7.30.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.283",
+    "@anthropic-ai/claude-agent-sdk": "0.3.284",
     "@biomejs/biome": "2.5.14",
     "@earendil-works/pi-coding-agent": "0.87.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/adm-zip": "^0.5.8",
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.3",
     "dompurify": "3.4.16",
     "drizzle-kit": "^0.31.11",
     "knip": "^6.38.0",
@@ -102,6 +102,6 @@
     "tsup": "^8.5.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "vite": "^8.3.0"
+    "vite": "^8.3.1"
   }
 }
