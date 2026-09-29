@@ -10,6 +10,9 @@ import { detectSystemInstallHint } from "./system-install.js";
 // daemon is a trusted process on localhost, so disable the headers/body timeouts
 // for CLI→daemon calls (a hung request can still be interrupted with Ctrl-C).
 // TODO(#330 follow-up): restore sane timeouts once lifecycle ops are async jobs.
+// This Agent is handed to Node's *global* fetch, so the `undici` dependency must
+// stay on the major Node bundles (Node 24 → undici 7): an undici 8 Agent is
+// rejected with "invalid onRequestStart method" (test/daemon-client.test.ts).
 export const daemonDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
 function voluteUserHome(): string {

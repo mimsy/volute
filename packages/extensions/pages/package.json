@@ -14,7 +14,7 @@
   "dependencies": {
     "@volute/extensions": "*",
     "@volute/ui": "*",
-    "isomorphic-dompurify": "^4.3.0",
+    "isomorphic-dompurify": "^4.4.0",
     "libsql": "*",
     "marked": "^18.0.14"
   },

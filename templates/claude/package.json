@@ -9,13 +9,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.283",
+    "@anthropic-ai/claude-agent-sdk": "0.3.284",
     "@anthropic-ai/tokenizer": "^0.0.4",
     "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.3",
     "typescript": "^6.0.3"
   }
 }
