@@ -1,6 +1,10 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
+import {
+  installedSystemServiceFile,
+  planServiceFile,
+} from "@volute/daemon/lib/config/service-install.js";
 import {
   LAUNCHD_PLIST_LABEL,
   LAUNCHD_PLIST_PATH,
@@ -80,6 +84,58 @@ async function status(): Promise<void> {
   }
 }
 
+/**
+ * Bring the installed system service file up to date with what this version's setup
+ * writes (#874, #1224). Setup is the only thing that ever writes it, so without this a
+ * fix to the unit reaches new installs only.
+ *
+ * Applies only the known migrations (line removals); anything else that differs is
+ * the host's and is shown, not changed. Reloads the definition but never restarts:
+ * `volute update` runs this just before its own restart, and a host running it by
+ * hand chooses when to interrupt the minds.
+ */
+async function reconcile(): Promise<void> {
+  const installed = installedSystemServiceFile();
+  if (!installed) {
+    console.log("No system service installed; nothing to reconcile.");
+    return;
+  }
+  if ("unreadable" in installed) {
+    console.error(`Could not read ${installed.path} (${installed.unreadable}); left it alone.`);
+    process.exit(1);
+  }
+  const plan = planServiceFile(installed.kind, installed.text);
+  if (plan.status === "unrecognised") {
+    console.error(
+      `${installed.path} does not have the \`<absolute path> up --foreground\` command volute setup writes, so it was left alone.\n` +
+        "To regenerate it, rerun `sudo volute setup --system`.",
+    );
+    process.exit(1);
+  }
+  if (!plan.rewrite && !plan.customised) {
+    console.log(`${installed.path} is up to date.`);
+    return;
+  }
+  if (plan.customised) {
+    console.log(`${installed.path} is customised; these differences are not changed:`);
+    for (const line of plan.customised.extra) console.log(`  here:        ${line}`);
+    for (const line of plan.customised.missing) console.log(`  setup writes: ${line}`);
+  }
+  if (!plan.rewrite) return;
+
+  console.log(`${installed.path} carries lines this version of volute no longer writes:`);
+  for (const { line, why } of plan.migrated) console.log(`  - ${line}  (${why})`);
+  if (process.getuid?.() !== 0) {
+    console.error("Removing them needs root: sudo volute service reconcile");
+    process.exit(1);
+  }
+  writeFileSync(installed.path, plan.rewrite);
+  if (installed.kind === "systemd") await execFileAsync("systemctl", ["daemon-reload"]);
+  console.log(
+    `Removed them. The change takes effect when the service next restarts: volute restart`,
+  );
+}
+
 const cmd = subcommands({
   name: "volute service",
   description: "Manage the system service",
@@ -87,6 +143,10 @@ const cmd = subcommands({
     status: {
       description: "Check service status",
       run: async () => status(),
+    },
+    reconcile: {
+      description: "Rewrite the system service file if this version would write it differently",
+      run: async () => reconcile(),
     },
   },
 });
