@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { after, before, describe, it } from "node:test";
 import {
   depsChangedSince,
@@ -213,5 +221,46 @@ describe("npmInstallAsMind retry", () => {
     // A failure raised before npm ran at all has no stderr and must not qualify.
     assert.equal(isStaleCacheFailure(new Error("runuser: user mind-x does not exist")), false);
     assert.equal(isStaleCacheFailure(undefined), false);
+  });
+});
+
+// #1239: a raw `npm install` in a mind's tree runs as the daemon — root under user
+// isolation — and leaves root-owned node_modules entries the mind's own npm then
+// EACCESes on. It also skips the stale-cache retry. Every install in a mind's tree
+// goes through npmInstallAsMind.
+describe("npm install call sites", () => {
+  const repoRoot = resolve(import.meta.dirname, "..");
+  /**
+   * Raw installs that are not a running mind's tree, each with its reason:
+   *  - extensions.ts — third-party extensions into the daemon's own npm dir
+   *  - spirit.ts     — the spirit's first install, before its OS user exists; the
+   *                    chownMindDir that follows hands the whole tree over
+   */
+  const ALLOWED = new Map([
+    ["packages/daemon/src/lib/extensions.ts", 1],
+    ["packages/daemon/src/lib/mind/spirit.ts", 1],
+  ]);
+
+  function* walk(dir: string): Generator<string> {
+    for (const entry of readdirSync(dir)) {
+      if (entry === "node_modules" || entry === "dist" || entry.startsWith(".")) continue;
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) yield* walk(full);
+      else if (full.endsWith(".ts") && !full.endsWith(".d.ts")) yield full;
+    }
+  }
+
+  it("only npmInstallAsMind runs npm install, bar the documented exceptions", () => {
+    const counts = new Map<string, number>();
+    for (const file of walk(join(repoRoot, "packages/daemon/src"))) {
+      const rel = relative(repoRoot, file).split(sep).join("/");
+      const n = readFileSync(file, "utf-8").match(/"npm",\s*\[\s*"install"/g)?.length ?? 0;
+      if (n > 0) counts.set(rel, n);
+    }
+    assert.deepEqual(
+      counts,
+      ALLOWED,
+      "npm install in a mind's tree must go through npmInstallAsMind (lib/mind/npm-install.ts)",
+    );
   });
 });

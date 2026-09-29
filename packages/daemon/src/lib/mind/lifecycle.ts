@@ -52,7 +52,7 @@ import {
   type TemplateManifest,
 } from "../template/template.js";
 import { computeTemplateHash } from "../template/template-hash.js";
-import { exec, gitExec } from "../util/exec.js";
+import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { fireWebhook } from "../webhook.js";
 import { consolidateMemory } from "./consolidate.js";
@@ -64,7 +64,6 @@ import {
   createMindUser,
   ensureVoluteGroup,
   isIsolationEnabled,
-  wrapForIsolation,
 } from "./isolation.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import {
@@ -1332,12 +1331,7 @@ export async function createVariant(input: CreateVariantInput): Promise<CreateVa
 
   // Install dependencies
   try {
-    if (isIsolationEnabled()) {
-      const [cmd, args] = await wrapForIsolation("npm", ["install"], parentName);
-      await exec(cmd, args, { cwd: variantDir, env: { HOME: resolve(variantDir, "home") } });
-    } else {
-      await exec("npm", ["install"], { cwd: variantDir });
-    }
+    await npmInstallAsMind(variantDir, parentName);
   } catch (e: unknown) {
     await rollbackSplit();
     const msg = e instanceof Error ? e.message : String(e);

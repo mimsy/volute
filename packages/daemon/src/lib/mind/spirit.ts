@@ -23,6 +23,7 @@ import log from "../util/logger.js";
 import { repairThreadBatchConfig } from "./event-routes.js";
 import { seedInitLedger } from "./init-ledger.js";
 import { repairMechanicsDoc } from "./mechanics-doc.js";
+import { npmInstallAsMind } from "./npm-install.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
 import {
   chownVoluteConfigPaths,
@@ -505,7 +506,7 @@ export async function syncSpiritTemplate(): Promise<void> {
     const newPkg = renderComposedPackageJson(newComposed.composedDir, spiritName);
     if (newPkg) {
       cpSync(newPkg, resolve(dir, "package.json"));
-      await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
+      await npmInstallAsMind(dir, spiritName);
     }
     // Update DB template
     const db = await (await import("../db.js")).getDb();
@@ -587,10 +588,10 @@ export async function syncSpiritTemplate(): Promise<void> {
       if (composedContent !== currentContent) {
         cpSync(composedPkg, currentPkg);
       }
-      await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
+      await npmInstallAsMind(dir, spiritName);
     }
   } else if (nodeModulesMissing) {
-    await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
+    await npmInstallAsMind(dir, spiritName);
   }
 
   // Restore preserved files
