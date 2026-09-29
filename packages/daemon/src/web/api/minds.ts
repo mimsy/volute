@@ -41,7 +41,11 @@ import { supersedeTurnSummary } from "../../lib/daemon/summarizer.js";
 import { drainNotices, handleMindEvent } from "../../lib/daemon/turn-lifecycle.js";
 import { readWindow, usageReport } from "../../lib/daemon/usage-report.js";
 import { getDb } from "../../lib/db.js";
-import { getDeliveryManager, UnknownChannelError } from "../../lib/delivery/delivery-manager.js";
+import {
+  getDeliveryManager,
+  tryGetDeliveryManager,
+  UnknownChannelError,
+} from "../../lib/delivery/delivery-manager.js";
 import { turnStamp } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
@@ -1520,12 +1524,32 @@ const app = new Hono<AuthEnv>()
         }
       }
       const { before, limit } = c.req.valid("query");
-      if (before === undefined && limit === undefined) {
-        const msgs = await getMessages(convId);
-        return c.json(cursorResponse(await withSenderDisplayNames(msgs), false));
+      const msgs =
+        before === undefined && limit === undefined
+          ? await getMessages(convId)
+          : await getMessagesPaginated(convId, { before, limit });
+      const shown = Array.isArray(msgs) ? msgs : msgs.messages;
+      // A mind reading the latest messages from one of its threads has now seen any of them
+      // still waiting to reach it — note that, so they don't arrive later looking new. Same
+      // reader rule as a gated peek.
+      const user = c.get("user");
+      const thread = c.get("mindSession");
+      if (
+        before === undefined &&
+        shown.length > 0 &&
+        isLocalMind(user) &&
+        thread &&
+        !c.get("viaScript")
+      ) {
+        const since = shown.map((m) => m.created_at).sort()[0];
+        await tryGetDeliveryManager()?.notePeekedInConversation(
+          { name: user.username, thread },
+          convId,
+          since,
+        );
       }
-      const result = await getMessagesPaginated(convId, { before, limit });
-      return c.json(cursorResponse(await withSenderDisplayNames(result.messages), result.hasMore));
+      const hasMore = Array.isArray(msgs) ? false : msgs.hasMore;
+      return c.json(cursorResponse(await withSenderDisplayNames(shown), hasMore));
     },
   )
   // Budget status
