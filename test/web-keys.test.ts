@@ -11,11 +11,11 @@ describe("web keys routes", () => {
   let publicKeyPem: string;
   let fingerprint: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     addMind(TEST_MIND, 4999);
     const dir = mindDir(TEST_MIND);
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
-    const identity = generateIdentity(dir);
+    const identity = await generateIdentity(dir);
     publicKeyPem = identity.publicKeyPem;
     fingerprint = getFingerprint(publicKeyPem);
   });

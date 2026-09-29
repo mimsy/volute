@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import {
-  chmodSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -15,6 +15,9 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { readInitLedger, writeInitLedger } from "../mind/init-ledger.js";
+import { mindFileOwner } from "../mind/isolation.js";
+import { readMindFileBytes, writeMindFile } from "../mind/mind-file-write.js";
+import { getBaseName } from "../mind/registry.js";
 
 export type TemplateManifest = {
   rename: Record<string, string>;
@@ -434,18 +437,36 @@ export function mayRefreshInfrastructure(
  * not allowlist, so this writes untracked files and cannot interact with the
  * upgrade's git merge.
  *
+ * Every read and write in `home/` goes through the mind-file helpers, anchored at
+ * `homeDir`: the daemon is root under user isolation and the mind owns this tree, so a
+ * link or FIFO it plants under `.local/` refuses (that file is skipped, like any other
+ * unreadable one) instead of being followed, and what is created is the mind's.
+ *
  * Throws rather than exiting when the template can't be composed. Both callers
  * run inside the daemon; the pre-checks below turn a missing templates root,
  * template dir, or manifest into a specific error message (rather than
  * composeTemplate/findTemplatesRoot's generic throw) so a broken install
  * degrades to one clear warning.
  */
-export function backfillInitInfrastructure(
+/** Largest `.local/` file the backfill reads back to compare against shipped hashes. */
+const MAX_INIT_BYTES = 1024 * 1024;
+
+/** lstat-based existence: a dangling symlink "doesn't exist" but is not absent. */
+function lexists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function backfillInitInfrastructure(
   homeDir: string,
   template: string,
   mindName: string,
   opts: { honorRemovals?: boolean } = {},
-): { added: string[]; refreshed: string[]; withheld: string[] } {
+): Promise<{ added: string[]; refreshed: string[]; withheld: string[] }> {
   const honorRemovals = opts.honorRemovals ?? true;
   const root = locateTemplatesRoot();
   if (!root) throw new Error("templates root not found on disk");
@@ -483,18 +504,21 @@ export function backfillInitInfrastructure(
     const refreshed: string[] = [];
     const withheld: string[] = [];
 
-    /** Write the template's copy of `rel` to `dest`, rendering {{name}} if declared. */
-    const install = (src: string, dest: string, rel: string) => {
-      mkdirSync(dirname(dest), { recursive: true });
-      if (substitute.has(rel)) {
-        writeFileSync(dest, readFileSync(src, "utf-8").replaceAll("{{name}}", mindName));
-        // cpSync would have carried the source mode across; a substituted file is
-        // written fresh, so restore it (the `volute` shim has to stay executable).
-        chmodSync(dest, statSync(src).mode);
-      } else {
-        cpSync(src, dest);
-      }
-    };
+    const owner = await mindFileOwner(await getBaseName(mindName));
+
+    /**
+     * Write the template's copy of `rel` into home/, rendering {{name}} if declared,
+     * with the source's mode (the `volute` shim has to stay executable).
+     */
+    const install = (src: string, rel: string) =>
+      writeMindFile(
+        homeDir,
+        rel,
+        substitute.has(rel)
+          ? readFileSync(src, "utf-8").replaceAll("{{name}}", mindName)
+          : readFileSync(src),
+        { owner, mode: statSync(src).mode & 0o7777, enforceMode: true },
+      );
 
     for (const file of listFiles(initDir)) {
       const rel = file.split(sep).join("/");
@@ -503,7 +527,8 @@ export function backfillInitInfrastructure(
       const src = resolve(initDir, file);
       const dest = resolve(homeDir, file);
 
-      if (!existsSync(dest)) {
+      // lstat, not exists: a link the mind planted (even a dangling one) is present.
+      if (!lexists(dest)) {
         // Absent, and we have given it to this mind before: the mind removed it.
         // That is authorship, and it outranks our confidence that the machinery
         // is good for it — including when the template ships newer bytes (#811).
@@ -511,7 +536,7 @@ export function backfillInitInfrastructure(
           withheld.push(rel);
           continue;
         }
-        install(src, dest, rel);
+        await install(src, rel);
         added.push(rel);
         given.add(rel);
         continue;
@@ -525,15 +550,18 @@ export function backfillInitInfrastructure(
       // An unreadable path (a directory where a file belongs, a permission the
       // daemon lost) is one mind's one file — it must not throw out of the loop
       // and take the *adds* for every remaining file down with it.
+      // A link, hard link or FIFO the mind put there refuses here too, and is skipped.
       let refreshable: boolean;
       try {
-        refreshable = mayRefreshInfrastructure(readFileSync(dest), readFileSync(src), shipped[rel]);
+        const onDisk = await readMindFileBytes(homeDir, rel, { owner, maxBytes: MAX_INIT_BYTES });
+        if (!onDisk) continue;
+        refreshable = mayRefreshInfrastructure(onDisk, readFileSync(src), shipped[rel]);
       } catch {
         continue;
       }
       if (!refreshable) continue;
 
-      install(src, dest, rel);
+      await install(src, rel);
       refreshed.push(rel);
     }
 

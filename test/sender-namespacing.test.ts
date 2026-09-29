@@ -351,9 +351,11 @@ describe("minds are told when their sender patterns stopped matching", () => {
       resolve(home, "routes.json"),
       JSON.stringify({ rules: [{ sender: "Alice", thread: "a" }, { sender: "discord:*" }] }),
     );
-    writeVoluteConfig(resolve(process.env.VOLUTE_HOME!, "minds", MIND), {
-      sleep: { wakeTriggers: { senders: ["boss@example.test", "admin-*"] } },
-    });
+    await writeVoluteConfig(
+      resolve(process.env.VOLUTE_HOME!, "minds", MIND),
+      { sleep: { wakeTriggers: { senders: ["boss@example.test", "admin-*"] } } },
+      null,
+    );
     clearConfigCache(MIND);
 
     await notifyStaleSenderPatterns();

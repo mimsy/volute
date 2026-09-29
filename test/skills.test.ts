@@ -3,12 +3,14 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
@@ -493,6 +495,43 @@ describe("mind skill operations", () => {
       "utf-8",
     );
     assert.ok(content.includes("Updated Content"));
+  });
+
+  // The skill dir is the mind's, and the daemon may be root (#1167): a link the mind
+  // planted at a skill file must not aim the merge's write at a file elsewhere.
+  it("refuses to update through a symlink planted at a skill file", async () => {
+    const source = createSkillSource("shared-skill", "Version 1");
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "shared-skill");
+    const skillMd = join(mindDir, "home", ".claude", "skills", "shared-skill", "SKILL.md");
+    const outside = join(mindDir, "outside.md");
+    writeFileSync(outside, readFileSync(skillMd, "utf-8"));
+    rmSync(skillMd);
+    symlinkSync(outside, skillMd);
+
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: shared-skill\ndescription: Version 2\n---\n\n# Updated Content\n",
+    );
+    await importSkillFromDir(source, "author");
+    const before = readFileSync(outside, "utf-8");
+    await assert.rejects(() => updateSkill(mindName, mindDir, "shared-skill"));
+    assert.equal(readFileSync(outside, "utf-8"), before, "link target untouched");
+  });
+
+  it("refuses to install into a skills dir linked out of the mind", async () => {
+    const source = createSkillSource("shared-skill");
+    await importSkillFromDir(source, "author");
+    const elsewhere = mkdtempSync(join(tmpdir(), "skills-elsewhere-"));
+    try {
+      const skillsDir = join(mindDir, "home", ".claude", "skills");
+      rmSync(skillsDir, { recursive: true, force: true });
+      symlinkSync(elsewhere, skillsDir);
+      await assert.rejects(() => installSkill(mindName, mindDir, "shared-skill"));
+      assert.deepEqual(readdirSync(elsewhere), []);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
   });
 
   it("returns up-to-date when no new version", async () => {

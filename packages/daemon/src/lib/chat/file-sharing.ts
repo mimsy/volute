@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, normalize, resolve } from "node:path";
-import { stateDir } from "../mind/registry.js";
+import { mindFileOwner } from "../mind/isolation.js";
+import { type MindFileOwner, writeMindFile } from "../mind/mind-file-write.js";
+import { getBaseName, stateDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 
 const flog = log.child("file-sharing");
@@ -117,13 +119,20 @@ export function getPending(receiver: string, id: string): PendingFileMetadata | 
 
 // --- Delivery ---
 
-export function deliverFile(
+/**
+ * Write a delivered file into the receiver's `home/<inbox>/<sender>/`. The receiver owns
+ * that tree and the daemon may be root, so the write goes through {@link writeMindFile}:
+ * a link or FIFO the receiver planted on the way refuses, and what is created is handed
+ * to `owner` (the receiver's user, null without isolation). A same-named file is replaced.
+ */
+export async function deliverFile(
   receiverDir: string,
   sender: string,
   filename: string,
   content: Buffer,
-  inboxPath?: string,
-): string {
+  inboxPath: string | undefined,
+  owner: MindFileOwner | null,
+): Promise<string> {
   const err = validateFilePath(filename);
   if (err) throw new Error(err);
 
@@ -136,23 +145,19 @@ export function deliverFile(
     throw new Error("Invalid sender name");
   }
 
-  const destDir = resolve(receiverDir, "home", inbox, sender);
-  mkdirSync(destDir, { recursive: true });
-
-  const destPath = resolve(destDir, basename(filename));
-  writeFileSync(destPath, content);
-
-  return join(inbox, sender, basename(filename));
+  const rel = join(inbox, sender, basename(filename));
+  await writeMindFile(receiverDir, join("home", rel), content, { owner });
+  return rel;
 }
 
 // --- Accept / Reject ---
 
-export function acceptPending(
+export async function acceptPending(
   receiver: string,
   id: string,
   receiverDir: string,
   dest?: string,
-): { sender: string; filename: string; destPath: string } {
+): Promise<{ sender: string; filename: string; destPath: string }> {
   const meta = getPending(receiver, id);
   if (!meta) throw new Error(`Pending file not found: ${id}`);
 
@@ -160,7 +165,15 @@ export function acceptPending(
   const content = readFileSync(dataPath);
 
   const inboxPath = dest ?? "inbox";
-  const destPath = deliverFile(receiverDir, meta.sender, meta.filename, content, inboxPath);
+  const owner = await mindFileOwner(await getBaseName(receiver));
+  const destPath = await deliverFile(
+    receiverDir,
+    meta.sender,
+    meta.filename,
+    content,
+    inboxPath,
+    owner,
+  );
 
   // Clean up staging
   rmSync(resolve(pendingDir(receiver), id), { recursive: true });

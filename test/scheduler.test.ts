@@ -375,6 +375,25 @@ describe("scheduler", () => {
     assert.deepEqual(removed, ["pending-timer"], "schedule removed — event row is durable");
   });
 
+  // The removal is a read-modify-write of volute.json; until it lands, a loadSchedules
+  // (any schedule edit) re-reads the old file and re-adds the fired one-timer.
+  it("fireAt is gone from volute.json by the time fire resolves", async () => {
+    const scheduler = new TestScheduler();
+    const dir = mkdtempSync(join(tmpdir(), "sched-onetimer-"));
+    mkdirSync(join(dir, "home/.config"), { recursive: true });
+    const timer = {
+      id: "disk-timer",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      message: "timer",
+      enabled: true,
+    };
+    writeFileSync(join(dir, "home/.config/volute.json"), JSON.stringify({ schedules: [timer] }));
+    scheduler.loadSchedules("disk-timer-mind", dir);
+    await (scheduler as any).fire("disk-timer-mind", timer);
+    const onDisk = JSON.parse(readFileSync(join(dir, "home/.config/volute.json"), "utf-8"));
+    assert.equal(onDisk.schedules, undefined);
+  });
+
   it("fireAt is retained when the event row could not be recorded at all", async () => {
     const scheduler = new TestScheduler();
     const removed: string[] = [];

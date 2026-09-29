@@ -1,16 +1,30 @@
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { deliverEvent } from "../packages/daemon/src/lib/chat/system-events.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
+import {
+  clearConfigCache,
+  getRoutingConfig,
+  registerMindDir,
+} from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
   migrateScheduleThreadsToRoutes,
   readRoutesConfig,
+  upsertEventRule,
 } from "../packages/daemon/src/lib/mind/event-routes.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import {
@@ -24,26 +38,26 @@ function mindDirFor(name: string): string {
 }
 
 /** Prepare a mind dir with a volute.json holding the given schedules. */
-function seedVoluteConfig(name: string, schedules: object[]): string {
+async function seedVoluteConfig(name: string, schedules: object[]): Promise<string> {
   const dir = mindDirFor(name);
   mkdirSync(resolve(dir, "home/.config"), { recursive: true });
-  writeVoluteConfig(dir, { schedules } as never);
+  await writeVoluteConfig(dir, { schedules } as never, null);
   return dir;
 }
 
 describe("migrateScheduleThreadsToRoutes", () => {
-  it("moves a schedule.thread into an equivalent routes.json rule and strips the field", () => {
+  it("moves a schedule.thread into an equivalent routes.json rule and strips the field", async () => {
     const name = `mig-${process.pid}-a`;
-    const dir = seedVoluteConfig(name, [
+    const dir = await seedVoluteConfig(name, [
       { id: "dream", cron: "0 3 * * *", message: "dream", enabled: true, thread: "$new" },
       { id: "chore", cron: "0 9 * * *", message: "tidy", enabled: true, thread: "chores" },
       { id: "beat", cron: "0 12 * * *", message: "hi", enabled: true },
     ]);
 
-    const changed = migrateScheduleThreadsToRoutes(dir, name);
+    const changed = await migrateScheduleThreadsToRoutes(dir, name, null);
     assert.equal(changed, true);
 
-    const rules = readRoutesConfig(dir).rules ?? [];
+    const rules = (await readRoutesConfig(dir, null)).rules ?? [];
     const byEvent = (ev: string) => rules.find((r) => r.event === ev);
     assert.deepEqual(byEvent("schedule:dream"), { event: "schedule:dream", thread: "$new" });
     assert.deepEqual(byEvent("schedule:chore"), { event: "schedule:chore", thread: "chores" });
@@ -60,15 +74,15 @@ describe("migrateScheduleThreadsToRoutes", () => {
     clearConfigCache(name);
   });
 
-  it("is idempotent — a second run finds nothing to move and no-ops", () => {
+  it("is idempotent — a second run finds nothing to move and no-ops", async () => {
     const name = `mig-${process.pid}-b`;
-    const dir = seedVoluteConfig(name, [
+    const dir = await seedVoluteConfig(name, [
       { id: "chore", cron: "0 9 * * *", message: "tidy", enabled: true, thread: "chores" },
     ]);
-    assert.equal(migrateScheduleThreadsToRoutes(dir, name), true);
-    assert.equal(migrateScheduleThreadsToRoutes(dir, name), false);
+    assert.equal(await migrateScheduleThreadsToRoutes(dir, name, null), true);
+    assert.equal(await migrateScheduleThreadsToRoutes(dir, name, null), false);
     // The rule is present exactly once.
-    const rules = readRoutesConfig(dir).rules ?? [];
+    const rules = (await readRoutesConfig(dir, null)).rules ?? [];
     assert.equal(rules.filter((r) => r.event === "schedule:chore").length, 1);
     clearConfigCache(name);
   });
@@ -93,12 +107,12 @@ describe("migrateScheduleThreadsToRoutes", () => {
     const port = (server.address() as AddressInfo).port;
     const name = `mig-${process.pid}-c`;
     await addMind(name, port);
-    const dir = seedVoluteConfig(name, [
+    const dir = await seedVoluteConfig(name, [
       { id: "reports", cron: "0 9 * * *", message: "report", enabled: true, thread: "work" },
     ]);
 
     try {
-      migrateScheduleThreadsToRoutes(dir, name);
+      await migrateScheduleThreadsToRoutes(dir, name, null);
       clearConfigCache(name);
       // Fire the schedule the way the scheduler does (no explicit thread — routing owns it).
       await deliverEvent(name, {
@@ -114,5 +128,79 @@ describe("migrateScheduleThreadsToRoutes", () => {
       clearConfigCache(name);
       await removeMind(name);
     }
+  });
+});
+
+// Under user isolation the daemon is root and the mind owns its tree (#1116, #1167): the
+// routes.json the daemon creates must be the mind's, and a link it planted must refuse.
+describe("upsertEventRule", () => {
+  function scratch(): string {
+    return mkdtempSync(resolve(tmpdir(), "upsert-event-rule-"));
+  }
+
+  it("hands a routes.json (and .config/) it creates to the owner", async (t) => {
+    const dir = scratch();
+    mkdirSync(resolve(dir, "home"));
+    const uid = process.getuid?.();
+    // Not the group a new file would get anyway (see mind-file-write.test.ts).
+    const usual = [process.getgid?.(), statSync(resolve(dir, "home")).gid];
+    const other = process.getgroups?.().find((g) => !usual.includes(g));
+    if (uid === undefined || other === undefined) {
+      t.skip("needs a second group to observe the chown");
+      return;
+    }
+    await upsertEventRule(dir, "schedule:x", "$new", { owner: { uid, gid: other } });
+    assert.equal(statSync(resolve(dir, "home/.config/routes.json")).gid, other);
+    assert.equal(statSync(resolve(dir, "home/.config")).gid, other);
+  });
+
+  it("refuses a symlink planted at routes.json, leaving its target alone", async () => {
+    const dir = scratch();
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    const outside = resolve(dir, "outside");
+    writeFileSync(outside, "untouched");
+    symlinkSync(outside, resolve(dir, "home/.config/routes.json"));
+    await assert.rejects(upsertEventRule(dir, "schedule:x", "$new", { owner: null }));
+    assert.equal(readFileSync(outside, "utf-8"), "untouched");
+    await assert.rejects(readRoutesConfig(dir, null));
+  });
+
+  it("removing a rule never creates routes.json", async () => {
+    const dir = scratch();
+    assert.equal(await upsertEventRule(dir, "schedule:x", null, { owner: null }), false);
+    assert.equal(existsSync(resolve(dir, "home")), false);
+  });
+});
+
+// The router reads routes.json synchronously on every delivery. A write that truncated in
+// place and then awaited would let it read "" → {} in between, and with gateUnmatched a
+// message landing then is gated with nothing to release it.
+describe("routes.json writes vs the router's synchronous read", () => {
+  it("the router never sees a half-written routes.json", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "routes-reader-"));
+    const name = `routes-reader-${process.pid}`;
+    registerMindDir(name, dir);
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    const rules = Array.from({ length: 300 }, (_, i) => ({ channel: `c${i}`, thread: `t${i}` }));
+    writeFileSync(resolve(dir, "home/.config/routes.json"), JSON.stringify({ rules }));
+    let done = false;
+    let reads = 0;
+    let empty = 0;
+    const reader = (async () => {
+      while (!done) {
+        clearConfigCache(name, { notify: false });
+        reads++;
+        if (!getRoutingConfig(name).rules?.length) empty++;
+        await new Promise((r) => setImmediate(r));
+      }
+    })();
+    for (let i = 0; i < 40; i++) {
+      await upsertEventRule(dir, `schedule:${i}`, "$new", { owner: null });
+    }
+    done = true;
+    await reader;
+    clearConfigCache(name, { notify: false });
+    assert.ok(reads > 40, `reader ran (${reads})`);
+    assert.equal(empty, 0);
   });
 });

@@ -1,9 +1,10 @@
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { ChannelContext, ParticipantProfile } from "@volute/api";
 import { eq } from "drizzle-orm";
 import { MIND_LEVEL_THREAD, recordNotice } from "../chat/system-events.js";
 import { getDb } from "../db.js";
+import { readMindFileSync } from "../mind/mind-file-write.js";
 import { mindDir, stateDir } from "../mind/registry.js";
 import { users } from "../schema.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
@@ -251,8 +252,15 @@ export function registerMindDir(name: string, dir: string): void {
  * the same file the router loads.
  */
 export function routesConfigPath(mindName: string): string {
-  const dir = dirOverrides.get(mindName) ?? mindDir(mindName);
-  return resolve(dir, "home/.config/routes.json");
+  return resolve(routesMindDir(mindName), ROUTES_JSON);
+}
+
+/** A mind's routes.json, relative to its directory. */
+export const ROUTES_JSON = "home/.config/routes.json";
+
+/** The directory whose routes.json the router reads for a mind (see {@link routesConfigPath}). */
+export function routesMindDir(mindName: string): string {
+  return dirOverrides.get(mindName) ?? mindDir(mindName);
 }
 
 export function getRoutingConfig(mindName: string): RoutingConfig {
@@ -283,7 +291,8 @@ export function getRoutingConfig(mindName: string): RoutingConfig {
   }
 
   try {
-    const config: RoutingConfig = JSON.parse(readFileSync(path, "utf-8"));
+    // The mind owns routes.json: a FIFO planted there must not block every delivery.
+    const config: RoutingConfig = JSON.parse(readMindFileSync(path));
     const changed = cached != null && cached.mtime !== mtime;
     configCache.set(mindName, { config, mtime });
     void reportRoutesConfigProblems(mindName, config);

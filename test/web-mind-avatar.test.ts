@@ -142,7 +142,7 @@ describe("mind profile avatar", () => {
 
     const config = readVoluteConfig(mindDir(testMindName)) ?? {};
     config.profile = { ...(config.profile ?? {}), avatar: "selfie.png" };
-    writeVoluteConfig(mindDir(testMindName), config);
+    await writeVoluteConfig(mindDir(testMindName), config, null);
 
     const serve = await app.request(`/minds/${testMindName}/avatar`, {
       headers: { Cookie: adminCookie },

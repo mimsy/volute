@@ -19,11 +19,13 @@ const CHECKER = "# wake-context-dreams marker\necho dreams\n";
 
 const createdDirs: string[] = [];
 
-function makeMindDir(opts: { skill?: boolean; sdkConfig?: boolean; hook?: boolean } = {}): string {
+async function makeMindDir(
+  opts: { skill?: boolean; sdkConfig?: boolean; hook?: boolean } = {},
+): Promise<string> {
   const dir = mkdtempSync(resolve(tmpdir(), "volute-autonomy-"));
   createdDirs.push(dir);
   mkdirSync(resolve(dir, "home/.config"), { recursive: true });
-  writeVoluteConfig(dir, { schedules: [defaultHeartbeatSchedule()] });
+  await writeVoluteConfig(dir, { schedules: [defaultHeartbeatSchedule()] }, null);
   if (opts.sdkConfig !== false) {
     writeFileSync(resolve(dir, "home/.config/config.json"), "{}\n");
   }
@@ -62,10 +64,10 @@ describe("default autonomy", () => {
     assert.equal(schedule.message, undefined);
   });
 
-  it("setupDefaultDreaming installs schedule, subagent, and wake hook", () => {
-    const dir = makeMindDir();
+  it("setupDefaultDreaming installs schedule, subagent, and wake hook", async () => {
+    const dir = await makeMindDir();
 
-    const result = setupDefaultDreaming(dir);
+    const result = await setupDefaultDreaming(dir, null);
     assert.equal(result.schedulesChanged, true);
     assert.deepEqual(result.warnings, []);
 
@@ -77,7 +79,7 @@ describe("default autonomy", () => {
     // The dream's isolation is now an explicit routes.json rule, not a schedule field (#736).
     assert.equal(dream.thread, undefined);
     assert.deepEqual(
-      readRoutesConfig(dir).rules?.find((r) => r.event === "schedule:dream"),
+      (await readRoutesConfig(dir, null)).rules?.find((r) => r.event === "schedule:dream"),
       {
         event: "schedule:dream",
         thread: "$new",
@@ -97,10 +99,10 @@ describe("default autonomy", () => {
     assert.ok(hook.includes("wake-context-dreams marker"));
   });
 
-  it("setupDefaultDreaming is idempotent", () => {
-    const dir = makeMindDir();
-    assert.equal(setupDefaultDreaming(dir).schedulesChanged, true);
-    assert.equal(setupDefaultDreaming(dir).schedulesChanged, false);
+  it("setupDefaultDreaming is idempotent", async () => {
+    const dir = await makeMindDir();
+    assert.equal((await setupDefaultDreaming(dir, null)).schedulesChanged, true);
+    assert.equal((await setupDefaultDreaming(dir, null)).schedulesChanged, false);
 
     const config = readVoluteConfig(dir);
     assert.equal(config?.schedules?.filter((s) => s.id === "dream").length, 1);
@@ -110,9 +112,9 @@ describe("default autonomy", () => {
     assert.equal(occurrences, 1);
   });
 
-  it("setupDefaultDreaming is a no-op without the dreaming skill", () => {
-    const dir = makeMindDir({ skill: false });
-    assert.equal(setupDefaultDreaming(dir).schedulesChanged, false);
+  it("setupDefaultDreaming is a no-op without the dreaming skill", async () => {
+    const dir = await makeMindDir({ skill: false });
+    assert.equal((await setupDefaultDreaming(dir, null)).schedulesChanged, false);
 
     const config = readVoluteConfig(dir);
     assert.ok(!config?.schedules?.some((s) => s.id === "dream"));
@@ -120,12 +122,12 @@ describe("default autonomy", () => {
     assert.equal(sdkConfig.subagents, undefined);
   });
 
-  it("setupDefaultDreaming preserves an existing dream schedule but still wires the rest", () => {
-    const dir = makeMindDir();
+  it("setupDefaultDreaming preserves an existing dream schedule but still wires the rest", async () => {
+    const dir = await makeMindDir();
     const custom = { ...defaultDreamSchedule(), cron: "0 4 * * *" };
-    writeVoluteConfig(dir, { schedules: [custom] });
+    await writeVoluteConfig(dir, { schedules: [custom] }, null);
 
-    const result = setupDefaultDreaming(dir);
+    const result = await setupDefaultDreaming(dir, null);
     assert.equal(result.schedulesChanged, false);
 
     const config = readVoluteConfig(dir);
@@ -136,12 +138,12 @@ describe("default autonomy", () => {
     assert.ok(sdkConfig.subagents?.dreamer);
   });
 
-  it("setupDefaultDreaming leaves a corrupt volute.json untouched", () => {
-    const dir = makeMindDir();
+  it("setupDefaultDreaming leaves a corrupt volute.json untouched", async () => {
+    const dir = await makeMindDir();
     const voluteJsonPath = resolve(dir, "home/.config/volute.json");
     writeFileSync(voluteJsonPath, "{ not json");
 
-    const result = setupDefaultDreaming(dir);
+    const result = await setupDefaultDreaming(dir, null);
     assert.equal(result.schedulesChanged, false);
     assert.ok(result.warnings.some((w) => w.includes("unparseable")));
     // The corrupt file must not be overwritten with a fresh config
@@ -151,19 +153,19 @@ describe("default autonomy", () => {
     assert.ok(sdkConfig.subagents?.dreamer);
   });
 
-  it("setupDefaultDreaming survives a missing SDK config and hook", () => {
-    const dir = makeMindDir({ sdkConfig: false, hook: false });
-    assert.equal(setupDefaultDreaming(dir).schedulesChanged, true);
+  it("setupDefaultDreaming survives a missing SDK config and hook", async () => {
+    const dir = await makeMindDir({ sdkConfig: false, hook: false });
+    assert.equal((await setupDefaultDreaming(dir, null)).schedulesChanged, true);
     assert.ok(readVoluteConfig(dir)?.schedules?.some((s) => s.id === "dream"));
     assert.ok(!existsSync(resolve(dir, "home/.config/config.json")));
   });
 
-  it("setupDefaultDreaming skips the schedule when subagent wiring fails", () => {
-    const dir = makeMindDir();
+  it("setupDefaultDreaming skips the schedule when subagent wiring fails", async () => {
+    const dir = await makeMindDir();
     // Corrupt SDK config makes JSON.parse throw in the subagent step
     writeFileSync(resolve(dir, "home/.config/config.json"), "{ not json");
 
-    const result = setupDefaultDreaming(dir);
+    const result = await setupDefaultDreaming(dir, null);
     assert.equal(result.schedulesChanged, false);
     assert.ok(result.warnings.length > 0);
     // No dream schedule referencing a subagent that was never wired

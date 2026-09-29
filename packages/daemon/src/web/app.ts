@@ -7,6 +7,7 @@ import { HTTPException } from "hono/http-exception";
 import { ManagerNotReadyError } from "../lib/daemon/manager-not-ready.js";
 import { isShuttingDown } from "../lib/daemon/shutdown-state.js";
 import { normalizeTrailingSlash } from "../lib/extensions.js";
+import { UnparseableConfigError } from "../lib/mind/volute-config.js";
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
 import log from "../lib/util/logger.js";
 import auth from "./api/auth.js";
@@ -61,6 +62,9 @@ app.onError((err, c) => {
     });
     return c.json({ error: "starting" }, 503, { "Retry-After": "1" });
   }
+  // A mind's volute.json that no longer parses is refused rather than overwritten by
+  // whichever route tried to update it — a caller error to fix, not a server fault.
+  if (err instanceof UnparseableConfigError) return c.json({ error: err.message }, 409);
   log.error("unhandled error", {
     path: c.req.path,
     method: c.req.method,

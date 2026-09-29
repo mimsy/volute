@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
@@ -76,13 +86,13 @@ describe("file-sharing", () => {
       assert.equal(pending[0].size, content.length);
     });
 
-    it("acceptPending delivers file and removes staging", () => {
+    it("acceptPending delivers file and removes staging", async () => {
       const name = "stage-accept";
       const dir = setup(name);
       const content = Buffer.from("accepted content");
       const { id } = stageFile(name, "alice", "doc.txt", content, "doc.txt");
 
-      const result = acceptPending(name, id, dir);
+      const result = await acceptPending(name, id, dir);
       assert.equal(result.sender, "alice");
       assert.equal(result.filename, "doc.txt");
       assert.equal(result.destPath, "inbox/alice/doc.txt");
@@ -95,13 +105,13 @@ describe("file-sharing", () => {
       assert.equal(listPending(name).length, 0);
     });
 
-    it("acceptPending with custom dest", () => {
+    it("acceptPending with custom dest", async () => {
       const name = "stage-custom-dest";
       const dir = setup(name);
       const content = Buffer.from("custom dest content");
       const { id } = stageFile(name, "bob", "file.md", content, "file.md");
 
-      const result = acceptPending(name, id, dir, "incoming");
+      const result = await acceptPending(name, id, dir, "incoming");
       assert.equal(result.destPath, "incoming/bob/file.md");
       assert.ok(existsSync(resolve(dir, "home", "incoming", "bob", "file.md")));
     });
@@ -117,10 +127,10 @@ describe("file-sharing", () => {
       assert.equal(listPending(name).length, 0);
     });
 
-    it("acceptPending throws for unknown id", () => {
+    it("acceptPending throws for unknown id", async () => {
       const name = "stage-404";
       const dir = setup(name);
-      assert.throws(() => acceptPending(name, "nonexistent", dir), /not found/i);
+      await assert.rejects(acceptPending(name, "nonexistent", dir), /not found/i);
     });
 
     it("rejectPending throws for unknown id", () => {
@@ -147,10 +157,10 @@ describe("file-sharing", () => {
       );
     });
 
-    it("acceptPending rejects id with path traversal", () => {
+    it("acceptPending rejects id with path traversal", async () => {
       const name = "accept-id-traversal";
       const dir = setup(name);
-      assert.throws(() => acceptPending(name, "../../etc", dir), /invalid pending file id/i);
+      await assert.rejects(acceptPending(name, "../../etc", dir), /invalid pending file id/i);
     });
 
     it("rejectPending rejects id with path traversal", () => {
@@ -161,40 +171,79 @@ describe("file-sharing", () => {
   });
 
   describe("deliverFile", () => {
-    it("delivers file to inbox", () => {
+    it("delivers file to inbox", async () => {
       const dir = setup("deliver-basic");
       const content = Buffer.from("file content");
-      const dest = deliverFile(dir, "alice", "readme.md", content);
+      const dest = await deliverFile(dir, "alice", "readme.md", content, undefined, null);
       assert.equal(dest, "inbox/alice/readme.md");
       assert.ok(existsSync(resolve(dir, "home", "inbox", "alice", "readme.md")));
       assert.deepEqual(readFileSync(resolve(dir, "home", "inbox", "alice", "readme.md")), content);
     });
 
-    it("delivers to custom inbox path", () => {
+    it("delivers to custom inbox path", async () => {
       const dir = setup("deliver-custom");
-      const dest = deliverFile(dir, "bob", "data.csv", Buffer.from("1,2,3"), "received");
+      const dest = await deliverFile(
+        dir,
+        "bob",
+        "data.csv",
+        Buffer.from("1,2,3"),
+        "received",
+        null,
+      );
       assert.equal(dest, "received/bob/data.csv");
     });
 
-    it("rejects path traversal in filename", () => {
+    it("rejects path traversal in filename", async () => {
       const dir = setup("deliver-traversal");
-      assert.throws(() => deliverFile(dir, "alice", "../evil.txt", Buffer.from("x")), /traversal/i);
+      await assert.rejects(
+        deliverFile(dir, "alice", "../evil.txt", Buffer.from("x"), undefined, null),
+        /traversal/i,
+      );
     });
 
-    it("rejects path traversal in inboxPath", () => {
+    it("rejects path traversal in inboxPath", async () => {
       const dir = setup("deliver-inbox-traversal");
-      assert.throws(
-        () => deliverFile(dir, "alice", "readme.md", Buffer.from("x"), "../../etc"),
+      await assert.rejects(
+        deliverFile(dir, "alice", "readme.md", Buffer.from("x"), "../../etc", null),
         /inboxPath/i,
       );
     });
 
-    it("rejects sender with path separators", () => {
+    it("rejects sender with path separators", async () => {
       const dir = setup("deliver-sender-slash");
-      assert.throws(
-        () => deliverFile(dir, "alice/../../etc", "readme.md", Buffer.from("x")),
+      await assert.rejects(
+        deliverFile(dir, "alice/../../etc", "readme.md", Buffer.from("x"), undefined, null),
         /sender/i,
       );
+    });
+
+    // The receiver owns home/ and the daemon may be root (#1167): a link it plants on
+    // the way to its inbox must not aim the daemon's write elsewhere.
+    it("refuses an inbox the receiver linked out of its tree, writing nothing there", async () => {
+      const dir = setup("deliver-linked-inbox");
+      const elsewhere = mkdtempSync(resolve(tmpdir(), "deliver-elsewhere-"));
+      try {
+        mkdirSync(resolve(dir, "home"), { recursive: true });
+        symlinkSync(elsewhere, resolve(dir, "home", "inbox"));
+        await assert.rejects(
+          deliverFile(dir, "alice", "readme.md", Buffer.from("x"), undefined, null),
+        );
+        assert.deepEqual(readdirSync(elsewhere), []);
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses a symlink planted at the delivered file's name", async () => {
+      const dir = setup("deliver-linked-file");
+      const outside = resolve(dir, "outside");
+      writeFileSync(outside, "untouched");
+      mkdirSync(resolve(dir, "home", "inbox", "alice"), { recursive: true });
+      symlinkSync(outside, resolve(dir, "home", "inbox", "alice", "readme.md"));
+      await assert.rejects(
+        deliverFile(dir, "alice", "readme.md", Buffer.from("x"), undefined, null),
+      );
+      assert.equal(readFileSync(outside, "utf-8"), "untouched");
     });
   });
 

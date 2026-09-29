@@ -398,7 +398,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       const config = readVoluteConfig(testMindDir);
       assert.ok(config, "volute.json should exist after mind create");
       config.sleep = { ...config.sleep, enabled: false };
-      writeVoluteConfig(testMindDir, config);
+      await writeVoluteConfig(testMindDir, config, null);
       assert.equal(
         readVoluteConfig(testMindDir)?.sleep?.enabled,
         false,

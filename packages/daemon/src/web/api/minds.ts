@@ -59,7 +59,7 @@ import {
 import { subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
 import type { ExportManifest } from "../../lib/mind/archive.js";
 import { setupDefaultDreaming } from "../../lib/mind/default-autonomy.js";
-import { deleteMindUser as deleteIsolationUser } from "../../lib/mind/isolation.js";
+import { deleteMindUser as deleteIsolationUser, mindFileOwner } from "../../lib/mind/isolation.js";
 import {
   acquireJoinLock,
   describeJoinAge,
@@ -76,6 +76,7 @@ import {
   mergeVariant,
 } from "../../lib/mind/lifecycle.js";
 import { getMemoryDetail, getMemoryStatus } from "../../lib/mind/memory-size.js";
+import { writeMindFile } from "../../lib/mind/mind-file-write.js";
 import {
   findMind,
   findVariants,
@@ -102,9 +103,10 @@ import {
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
 import { validateBranchName } from "../../lib/mind/variants.js";
 import {
-  chownVoluteConfigPaths,
+  type MindProfile,
   readVoluteConfig,
-  writeMindVoluteConfig,
+  updateMindVoluteConfig,
+  type VoluteConfig,
 } from "../../lib/mind/volute-config.js";
 import { PLATFORMS } from "../../lib/platforms.js";
 import { deliveryQueue, mindHistory, summaries, turns } from "../../lib/schema.js";
@@ -961,13 +963,10 @@ const app = new Hono<AuthEnv>()
       const body = c.req.valid("json");
 
       const dir = entry.dir ?? mindDir(name);
-      const config = readVoluteConfig(dir) ?? {};
-      const profile = config.profile ?? {};
 
-      if (body.displayName !== undefined) profile.displayName = body.displayName;
-      if (body.description !== undefined) profile.description = body.description;
       // Store a home-relative path — never persist a value that escapes home/,
       // since it's later used in filesystem operations (avatar serving/deletion).
+      let avatar: string | undefined;
       if (body.avatar !== undefined) {
         const homeDir = resolve(dir, "home");
         const avatarPath = safeResolveWithinBase(homeDir, body.avatar);
@@ -977,11 +976,18 @@ const app = new Hono<AuthEnv>()
         if (!existsSync(avatarPath)) {
           return c.json({ error: `Avatar file not found: ${relative(homeDir, avatarPath)}` }, 400);
         }
-        profile.avatar = relative(homeDir, avatarPath);
+        avatar = relative(homeDir, avatarPath);
       }
 
-      config.profile = profile;
-      await writeMindVoluteConfig(name, dir, config);
+      let profile: MindProfile = {};
+      await updateMindVoluteConfig(name, dir, (config) => {
+        profile = { ...config.profile };
+        if (body.displayName !== undefined) profile.displayName = body.displayName;
+        if (body.description !== undefined) profile.description = body.description;
+        if (avatar !== undefined) profile.avatar = avatar;
+        config.profile = profile;
+        return config;
+      });
 
       // Sync to users table
       const { syncMindProfile } = await import("../../lib/auth.js");
@@ -1218,8 +1224,10 @@ const app = new Hono<AuthEnv>()
     // lands. Fail soft: sprouting must not break over dreaming wiring.
     try {
       const sproutedDir = entry.dir ?? mindDir(name);
-      const dreaming = setupDefaultDreaming(sproutedDir);
-      await chownVoluteConfigPaths(name, dreaming.createdPaths);
+      const dreaming = await setupDefaultDreaming(
+        sproutedDir,
+        await mindFileOwner(await getBaseName(name)),
+      );
       if (dreaming.schedulesChanged) {
         const { getScheduler } = await import("../../lib/daemon/scheduler.js");
         getScheduler().loadSchedules(name, sproutedDir);
@@ -1239,8 +1247,11 @@ const app = new Hono<AuthEnv>()
       if (spiritEntry) {
         const { firstWeekSchedules, spiritDir } = await import("../../lib/mind/spirit.js");
         const sDir = spiritEntry.dir ?? spiritDir();
-        const spiritConfig = readVoluteConfig(sDir);
-        if (spiritConfig) {
+        // An unparseable config is refused by the update (it throws, logged below); a
+        // missing one is left alone.
+        const present = existsSync(resolve(sDir, "home/.config/volute.json"));
+        const wrote = await updateMindVoluteConfig(spiritName, sDir, (spiritConfig) => {
+          if (!present) return null;
           const schedules = (spiritConfig.schedules ?? []).filter(
             (s) => s.id !== `nurture-${name}`,
           );
@@ -1249,7 +1260,9 @@ const app = new Hono<AuthEnv>()
             ...firstWeekSchedules(name, new Date()).filter((s) => !existing.has(s.id)),
           );
           spiritConfig.schedules = schedules;
-          await writeMindVoluteConfig(spiritName, sDir, spiritConfig);
+          return spiritConfig;
+        });
+        if (wrote) {
           // Reload separately: if the write succeeded but the reload throws, the
           // change is on disk and takes effect on the spirit's next restart —
           // that's a different situation from the write itself failing.
@@ -1264,7 +1277,7 @@ const app = new Hono<AuthEnv>()
           }
         } else {
           log.warn(
-            `spirit config at ${sDir} missing or unparseable — first-week arc for ${name} not scheduled, nurture-${name} not removed`,
+            `spirit config at ${sDir} missing — first-week arc for ${name} not scheduled, nurture-${name} not removed`,
           );
         }
       }
@@ -1657,27 +1670,28 @@ const app = new Hono<AuthEnv>()
 
       const body = c.req.valid("json");
 
-      const existing = readVoluteConfig(dir) ?? {};
-
-      if (body.spendCap !== undefined) {
-        if (body.spendCap === null) {
-          delete existing.spendCap;
-        } else {
-          existing.spendCap = body.spendCap;
+      let existing: VoluteConfig = {};
+      await updateMindVoluteConfig(name, dir, (config) => {
+        existing = config;
+        if (body.spendCap !== undefined) {
+          if (body.spendCap === null) {
+            delete existing.spendCap;
+          } else {
+            existing.spendCap = body.spendCap;
+          }
         }
-      }
-      if (body.spendCapPeriodMinutes !== undefined) {
-        if (body.spendCapPeriodMinutes === null) {
-          delete existing.spendCapPeriodMinutes;
-        } else {
-          existing.spendCapPeriodMinutes = body.spendCapPeriodMinutes;
+        if (body.spendCapPeriodMinutes !== undefined) {
+          if (body.spendCapPeriodMinutes === null) {
+            delete existing.spendCapPeriodMinutes;
+          } else {
+            existing.spendCapPeriodMinutes = body.spendCapPeriodMinutes;
+          }
         }
-      }
-      if (body.unescapeNewlines !== undefined) {
-        existing.unescapeNewlines = body.unescapeNewlines;
-      }
-
-      await writeMindVoluteConfig(name, dir, existing);
+        if (body.unescapeNewlines !== undefined) {
+          existing.unescapeNewlines = body.unescapeNewlines;
+        }
+        return existing;
+      });
 
       // Apply the cap to the live budget, so a host who sets one doesn't have to
       // restart the mind before it means anything.
@@ -1715,40 +1729,47 @@ const app = new Hono<AuthEnv>()
         body.compaction !== undefined;
 
       if (needsConfigJson) {
-        const configJsonPath = resolve(dir, "home/.config/config.json");
-        let templateConfig: Record<string, unknown> = {};
-        if (existsSync(configJsonPath)) {
-          try {
-            templateConfig = JSON.parse(readFileSync(configJsonPath, "utf-8"));
-          } catch {
-            // start fresh
-          }
-        }
-
-        if (body.model !== undefined) {
-          templateConfig.model = body.model;
-        }
-
-        // Thinking level maps onto each template's own config shape.
-        if (body.thinkingLevel !== undefined) {
-          applyThinkingLevel(templateConfig, entry.template ?? "claude", body.thinkingLevel);
-        }
-
-        if (body.compaction !== undefined) {
-          if (body.compaction === null) {
-            delete templateConfig.compaction;
-          } else {
-            const comp = (templateConfig.compaction ?? {}) as Record<string, unknown>;
-            if (body.compaction.maxContextTokens === null) {
-              delete comp.maxContextTokens;
-            } else if (body.compaction.maxContextTokens !== undefined) {
-              comp.maxContextTokens = body.compaction.maxContextTokens;
+        // Through writeMindFile: the daemon is root under user isolation and the mind
+        // owns this file, so a link or FIFO planted at it (or at .config/) refuses.
+        const owner = await mindFileOwner(await getBaseName(name));
+        await writeMindFile(
+          dir,
+          "home/.config/config.json",
+          (text) => {
+            let templateConfig: Record<string, unknown> = {};
+            try {
+              if (text.trim()) templateConfig = JSON.parse(text);
+            } catch {
+              // start fresh
             }
-            templateConfig.compaction = comp;
-          }
-        }
 
-        writeFileSync(configJsonPath, `${JSON.stringify(templateConfig, null, 2)}\n`);
+            if (body.model !== undefined) {
+              templateConfig.model = body.model;
+            }
+
+            // Thinking level maps onto each template's own config shape.
+            if (body.thinkingLevel !== undefined) {
+              applyThinkingLevel(templateConfig, entry.template ?? "claude", body.thinkingLevel);
+            }
+
+            if (body.compaction !== undefined) {
+              if (body.compaction === null) {
+                delete templateConfig.compaction;
+              } else {
+                const comp = (templateConfig.compaction ?? {}) as Record<string, unknown>;
+                if (body.compaction.maxContextTokens === null) {
+                  delete comp.maxContextTokens;
+                } else if (body.compaction.maxContextTokens !== undefined) {
+                  comp.maxContextTokens = body.compaction.maxContextTokens;
+                }
+                templateConfig.compaction = comp;
+              }
+            }
+
+            return `${JSON.stringify(templateConfig, null, 2)}\n`;
+          },
+          { owner },
+        );
       }
 
       // Sync spirit model to global config so syncSpiritTemplate() stays consistent

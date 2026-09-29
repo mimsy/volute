@@ -91,7 +91,7 @@ import {
   VariantMergeError,
 } from "./variants.js";
 import { verify } from "./verify.js";
-import { readVoluteConfig, writeMindVoluteConfig, writeVoluteConfig } from "./volute-config.js";
+import { readVoluteConfig, updateMindVoluteConfig, writeVoluteConfig } from "./volute-config.js";
 
 const llog = log.child("lifecycle");
 
@@ -457,7 +457,7 @@ export async function createMind(
     seedInitLedger(name, applyInitFiles(dest));
 
     // Generate Ed25519 keypair for mind identity
-    const { publicKeyPem } = generateIdentity(dest);
+    const { publicKeyPem } = await generateIdentity(dest);
 
     // The model the mind will actually run (request, or default cognition model),
     // provider-qualified — feeds the credential warning below so pi minds created
@@ -488,7 +488,7 @@ export async function createMind(
         if (cog.spendCapPeriodMinutes != null && config.spendCapPeriodMinutes == null)
           config.spendCapPeriodMinutes = cog.spendCapPeriodMinutes;
       }
-      writeVoluteConfig(dest, config);
+      await writeVoluteConfig(dest, config, null);
 
       // Apply model, thinking level and compaction to SDK config.json
       const modelId = requestedModel ?? cog?.model;
@@ -591,7 +591,7 @@ export async function createMind(
     // Default autonomy: minds created directly as full minds get working
     // dreaming out of the box; seeds get it at sprout (#581)
     if (body.stage !== "seed") {
-      skillWarnings.push(...setupDefaultDreaming(dest).warnings);
+      skillWarnings.push(...(await setupDefaultDreaming(dest, null)).warnings);
     }
 
     // Add nurture schedule to spirit if this is a seed
@@ -602,10 +602,10 @@ export async function createMind(
         if (spiritEntry) {
           const { spiritDir } = await import("./spirit.js");
           const sDir = spiritEntry.dir ?? spiritDir();
-          const spiritConfig = readVoluteConfig(sDir) ?? {};
-          const schedules = spiritConfig.schedules ?? [];
           const nurtureId = `nurture-${name}`;
-          if (!schedules.some((s) => s.id === nurtureId)) {
+          const added = await updateMindVoluteConfig(spiritName, sDir, (spiritConfig) => {
+            const schedules = spiritConfig.schedules ?? [];
+            if (schedules.some((s) => s.id === nurtureId)) return null;
             schedules.push({
               id: nurtureId,
               cron: process.env.VOLUTE_NURTURE_CRON ?? "*/5 * * * *",
@@ -614,7 +614,9 @@ export async function createMind(
               whileSleeping: "skip",
             });
             spiritConfig.schedules = schedules;
-            await writeMindVoluteConfig(spiritName, sDir, spiritConfig);
+            return spiritConfig;
+          });
+          if (added) {
             const { getScheduler } = await import("../daemon/scheduler.js");
             getScheduler().loadSchedules(spiritName, sDir);
           }
@@ -790,7 +792,7 @@ async function importFromFullArchive(
 
     // Generate new identity if not included in archive
     if (!manifest.includes.identity) {
-      generateIdentity(dest);
+      await generateIdentity(dest);
     }
 
     // Copy state files (env.json) to centralized state dir
@@ -950,7 +952,7 @@ async function importFromHomeOnlyArchive(
     const identityDir = resolve(dest, ".mind/identity");
     let publicKeyPem: string;
     if (!manifest.includes.identity || !existsSync(resolve(identityDir, "private.pem"))) {
-      ({ publicKeyPem } = generateIdentity(dest));
+      ({ publicKeyPem } = await generateIdentity(dest));
     } else {
       publicKeyPem = readFileSync(resolve(identityDir, "public.pem"), "utf-8");
     }
@@ -1166,7 +1168,7 @@ export async function importOpenClawWorkspace(body: ImportOpenClawInput): Promis
     seedInitLedger(name, applyInitFiles(dest));
 
     // Generate Ed25519 keypair for mind identity
-    const { publicKeyPem: importPublicKey } = generateIdentity(dest);
+    const { publicKeyPem: importPublicKey } = await generateIdentity(dest);
 
     // Write SOUL.md (with IDENTITY.md merged in)
     writeFileSync(resolve(dest, "home/SOUL.md"), mergedSoul);

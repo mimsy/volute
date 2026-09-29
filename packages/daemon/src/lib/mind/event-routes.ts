@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   MIND_LEVEL_THREAD,
@@ -12,27 +11,22 @@ import {
   DEFAULT_BATCH_DEBOUNCE,
   DEFAULT_BATCH_MAX_WAIT,
   forgetReportedRoutesProblems,
+  ROUTES_JSON,
   ROUTES_PROBLEMS_REASON,
   type RoutingConfig,
 } from "../delivery/delivery-router.js";
 import log from "../util/logger.js";
 import { mindFileOwner } from "./isolation.js";
-import { type MindFileOwner, rewriteMindFileInPlace } from "./mind-file-write.js";
+import { type MindFileOwner, readMindFile, replaceMindFile } from "./mind-file-write.js";
 import { getBaseName } from "./registry.js";
-import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
+import { readVoluteConfig, updateVoluteConfig } from "./volute-config.js";
 
 const rlog = log.child("event-routes");
 
-function routesPath(dir: string): string {
-  return resolve(dir, "home/.config/routes.json");
-}
-
-/** Read a mind's routes.json, tolerating a missing or corrupt file (→ `{}`). */
-export function readRoutesConfig(dir: string): RoutingConfig {
-  const path = routesPath(dir);
-  if (!existsSync(path)) return {};
+function parseRoutes(text: string, dir: string): RoutingConfig {
+  if (!text.trim()) return {};
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8"));
+    const parsed = JSON.parse(text);
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch (err) {
     rlog.warn(`unreadable routes.json in ${dir} — treating as empty`, log.errorData(err));
@@ -40,13 +34,16 @@ export function readRoutesConfig(dir: string): RoutingConfig {
   }
 }
 
-function writeRoutesConfig(dir: string, config: RoutingConfig, name?: string): void {
-  const path = routesPath(dir);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
-  // Drop the router's cached copy so new rules take effect immediately. No gated-message
-  // re-evaluation — event rules never affect channel gating.
-  if (name) clearConfigCache(name, { notify: false });
+/**
+ * Read a mind's routes.json, tolerating a missing or corrupt file (→ `{}`). Goes through
+ * {@link readMindFile}, so a link or FIFO the mind planted there refuses (throws).
+ */
+export async function readRoutesConfig(
+  dir: string,
+  owner: MindFileOwner | null,
+): Promise<RoutingConfig> {
+  const file = await readMindFile(dir, ROUTES_JSON, { owner });
+  return file ? parseRoutes(file.text, dir) : {};
 }
 
 /**
@@ -54,28 +51,46 @@ function writeRoutesConfig(dir: string, config: RoutingConfig, name?: string): v
  * existing rule for the exact same `event` key has its thread updated (or the rule removed
  * when `thread` is null); otherwise a new rule is prepended, so a specific event rule wins
  * over any hand-written wildcard. Returns whether the file changed.
+ *
+ * The read-modify-write is one {@link replaceMindFile} call: the daemon is root under user
+ * isolation and the mind owns this tree, so a planted link or FIFO refuses, and a
+ * routes.json (or `.config/`) this creates is handed to `owner` — or the mind could not
+ * edit its own routing (#1116). Replaced whole, so the router's synchronous read never
+ * sees a half-written file. A corrupt file is replaced, as the router already reads it
+ * as `{}`.
  */
-export function upsertEventRule(
+export async function upsertEventRule(
   dir: string,
   event: string,
   thread: string | null,
-  name?: string,
-): boolean {
-  const config = readRoutesConfig(dir);
-  const rules = config.rules ?? [];
-  const idx = rules.findIndex((r) => r && typeof r === "object" && r.event === event);
-  if (thread == null) {
-    if (idx === -1) return false;
-    rules.splice(idx, 1);
-  } else if (idx !== -1) {
-    if (rules[idx].thread === thread) return false;
-    rules[idx].thread = thread;
-  } else {
-    rules.unshift({ event, thread });
-  }
-  config.rules = rules;
-  writeRoutesConfig(dir, config, name);
-  return true;
+  opts: { owner: MindFileOwner | null; name?: string },
+): Promise<boolean> {
+  const wrote = await replaceMindFile(
+    dir,
+    ROUTES_JSON,
+    (text) => {
+      const config = parseRoutes(text, dir);
+      const rules = config.rules ?? [];
+      const idx = rules.findIndex((r) => r && typeof r === "object" && r.event === event);
+      if (thread == null) {
+        if (idx === -1) return null;
+        rules.splice(idx, 1);
+      } else if (idx !== -1) {
+        if (rules[idx].thread === thread) return null;
+        rules[idx].thread = thread;
+      } else {
+        rules.unshift({ event, thread });
+      }
+      config.rules = rules;
+      return `${JSON.stringify(config, null, 2)}\n`;
+    },
+    // Removing a rule never needs to create the file.
+    { owner: opts.owner, create: thread != null },
+  );
+  // Drop the router's cached copy so new rules take effect immediately. No gated-message
+  // re-evaluation — event rules never affect channel gating.
+  if (wrote && opts.name) clearConfigCache(opts.name, { notify: false });
+  return wrote;
 }
 
 /**
@@ -88,21 +103,25 @@ export function upsertEventRule(
  * by a rule keeps that rule (upsert only updates a differing thread). Returns whether
  * anything changed, so a caller can log/reload.
  */
-export function migrateScheduleThreadsToRoutes(dir: string, name?: string): boolean {
-  const vconfig = readVoluteConfig(dir);
-  const threaded = (vconfig?.schedules ?? []).filter(
+export async function migrateScheduleThreadsToRoutes(
+  dir: string,
+  name: string,
+  owner: MindFileOwner | null,
+): Promise<boolean> {
+  const threaded = (readVoluteConfig(dir)?.schedules ?? []).filter(
     (s) => typeof s.thread === "string" && s.thread,
   );
   if (threaded.length === 0) return false;
 
   for (const s of threaded) {
-    upsertEventRule(dir, `schedule:${s.id}`, s.thread as string, name);
-    delete s.thread;
+    await upsertEventRule(dir, `schedule:${s.id}`, s.thread as string, { owner, name });
   }
-  writeVoluteConfig(dir, vconfig as NonNullable<typeof vconfig>);
-  rlog.info(
-    `migrated ${threaded.length} schedule thread(s) to routes.json${name ? ` for ${name}` : ""}`,
-  );
+  const moved = new Set(threaded.map((s) => s.id));
+  await updateVoluteConfig(dir, owner, (config) => {
+    for (const s of config.schedules ?? []) if (moved.has(s.id)) delete s.thread;
+    return config;
+  });
+  rlog.info(`migrated ${threaded.length} schedule thread(s) to routes.json for ${name}`);
   return true;
 }
 
@@ -190,8 +209,8 @@ function renameThreadBatchText(text: string): string {
  * rewrite is surgical (see {@link renameThreadBatchText}); returns what was migrated,
  * empty when there was nothing to do, which also makes a second run a no-op.
  *
- * The write goes through {@link rewriteMindFileInPlace}, which refuses symlinks, hard
- * links, and a `.config/` that resolves outside the mind dir.
+ * The write goes through {@link replaceMindFile}, which refuses symlinks, hard links,
+ * and a `.config/` that resolves outside the mind dir.
  */
 export async function migrateThreadBatchToDelivery(
   dir: string,
@@ -199,7 +218,17 @@ export async function migrateThreadBatchToDelivery(
   owner: MindFileOwner | null = null,
 ): Promise<MigratedThreadBatch[]> {
   let migrated: MigratedThreadBatch[] = [];
-  const wrote = await rewriteMindFileInPlace(dir, routesPath(dir), repair, owner);
+  // Replaced whole rather than rewritten in place: the router reads routes.json
+  // synchronously and must never see it half-written.
+  let wrote = false;
+  try {
+    wrote = await replaceMindFile(dir, ROUTES_JSON, (text) => repair(text), {
+      owner,
+      create: false,
+    });
+  } catch (err) {
+    rlog.warn(`not rewriting ${resolve(dir, ROUTES_JSON)}`, log.errorData(err));
+  }
   function repair(text: string): string | null {
     let parsed: RoutingConfig;
     try {

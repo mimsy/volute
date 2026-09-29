@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { realpath } from "node:fs/promises";
+import { resolve } from "node:path";
 import { isMind } from "@volute/api/user-type";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { MIND_LEVEL_THREAD, type RecordNoticeInput } from "../chat/system-events.js";
@@ -18,6 +18,8 @@ import { getDb } from "../db.js";
 import { getChannelName, getChannelSettings, getParticipants } from "../events/conversations.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
+import { mindFileOwner } from "../mind/isolation.js";
+import { readMindFile, replaceMindFile } from "../mind/mind-file-write.js";
 import { findMind, getBaseName, mindDir, voluteHome } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import { channelGates, channels, deliveryQueue, mindHistory } from "../schema.js";
@@ -39,10 +41,11 @@ import {
   type ResolvedDeliveryMode,
   type ResolvedRoute,
   type ResolvedSessionConfig,
+  ROUTES_JSON,
   type RoutingConfig,
   resolveDeliveryMode,
   resolveRoute,
-  routesConfigPath,
+  routesMindDir,
   routingDefers,
   setRoutesChangeListener,
   shouldGate,
@@ -1777,29 +1780,31 @@ export class DeliveryManager {
     const match = await this.matchChannelName(baseName, channel);
     if (match.suggestions.length > 0) throw new UnknownChannelError(channel, match.suggestions);
 
-    const path = routesConfigPath(baseName);
+    // The mind owns routes.json and the daemon may be root: read and replace it through
+    // the mind-file helpers, so a link or FIFO it planted refuses instead of aiming us.
+    const dir = routesMindDir(baseName);
+    const owner = await mindFileOwner(baseName);
 
-    let config: RoutingConfig;
+    let config: RoutingConfig = {};
     try {
-      const parsed: unknown = JSON.parse(await readFile(path, "utf-8"));
-      // Valid JSON that isn't an object (an array — a shape this codebase has seen on disk
-      // — or null, or a string) would let the rule silently
-      // vanish at stringify time while we reported success. And an array-form config is
-      // exactly a mind with no `rules`, i.e. one gating everything: the case this exists for.
-      if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error(`routes.json for ${baseName} is malformed (not a JSON object)`);
+      // No routes.json yet (null) is fine — accept creates one.
+      const file = await readMindFile(dir, ROUTES_JSON, { owner });
+      if (file) {
+        const parsed: unknown = JSON.parse(file.text);
+        // Valid JSON that isn't an object (an array — a shape this codebase has seen on disk
+        // — or null, or a string) would let the rule silently
+        // vanish at stringify time while we reported success. And an array-form config is
+        // exactly a mind with no `rules`, i.e. one gating everything: the case this exists for.
+        if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error(`routes.json for ${baseName} is malformed (not a JSON object)`);
+        }
+        config = parsed as RoutingConfig;
       }
-      config = parsed as RoutingConfig;
-    } catch (err) {
-      // No routes.json yet is fine — accept creates one. Anything else (malformed JSON,
-      // unreadable file) must NOT be overwritten: it's a mind-owned file and clobbering it
-      // would lose routing the mind wrote by hand.
-      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
-        throw new Error(
-          `routes.json for ${baseName} is unreadable or malformed — not modifying it`,
-        );
-      }
-      config = {};
+    } catch {
+      // A routes.json that is there but malformed or unreadable (a link, a FIFO) must NOT be
+      // overwritten: it's a mind-owned file and clobbering it would lose routing the
+      // mind wrote by hand.
+      throw new Error(`routes.json for ${baseName} is unreadable or malformed — not modifying it`);
     }
 
     const rules = Array.isArray(config.rules) ? config.rules : [];
@@ -1817,13 +1822,11 @@ export class DeliveryManager {
       // and the mind's own rule ordering is preserved.
       rules.push({ channel, thread: targetThread });
       config.rules = rules;
-      await mkdir(dirname(path), { recursive: true });
       // Write-then-rename: truncating in place means a crash mid-write leaves an
       // unparseable routes.json, which getRoutingConfig degrades to `{}` — and with
       // gateUnmatched defaulting on, that is a total delivery blackout for the mind.
-      const tmp = `${path}.${process.pid}.tmp`;
-      await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`);
-      await rename(tmp, path);
+      // A routes.json this creates is handed to the mind, which must own its routing.
+      await replaceMindFile(dir, ROUTES_JSON, `${JSON.stringify(config, null, 2)}\n`, { owner });
     }
 
     // Clear any decline so re-accepting after a decline actually works.

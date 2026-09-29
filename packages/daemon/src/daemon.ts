@@ -186,11 +186,16 @@ export async function startDaemon(opts: {
 
   // Move legacy schedule `thread` fields into routes.json event rules (idempotent, #736)
   try {
-    const { readAllMinds, mindDir } = await import("./lib/mind/registry.js");
+    const { readAllMinds, mindDir, getBaseName } = await import("./lib/mind/registry.js");
     const { migrateScheduleThreadsToRoutes } = await import("./lib/mind/event-routes.js");
+    const { mindFileOwner } = await import("./lib/mind/isolation.js");
     for (const m of await readAllMinds()) {
       try {
-        migrateScheduleThreadsToRoutes(m.dir ?? mindDir(m.name), m.name);
+        await migrateScheduleThreadsToRoutes(
+          m.dir ?? mindDir(m.name),
+          m.name,
+          await mindFileOwner(await getBaseName(m.name)),
+        );
       } catch (err) {
         log.warn(`schedule-thread route migration failed for ${m.name}`, log.errorData(err));
       }

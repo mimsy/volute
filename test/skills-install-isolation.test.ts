@@ -109,8 +109,8 @@ describe("mind skills install chowns to the mind under user isolation", () => {
     await installSkill(testMindName, mindDir(testMindName), "iso-updatable");
     process.env.VOLUTE_ISOLATION = "user";
 
-    // v2 declares a dependency npm cannot install, so the update throws after
-    // the merge has already written files as the daemon.
+    // v2 also declares a dependency npm cannot install; either failure must still
+    // end with the route handing ownership back.
     writeFileSync(
       join(source, "SKILL.md"),
       "---\nname: iso-updatable\ndescription: d\nmetadata:\n  npm-dependencies: /nonexistent/volute-dep\n---\n",
@@ -124,7 +124,10 @@ describe("mind skills install chowns to the mind under user isolation", () => {
     });
     assert.equal(res.status, 400);
     const body = (await res.json()) as { error: string };
-    assert.match(body.error, /npm dependencies/);
+    // The update resolves the mind's owner before writing into its tree (#1167), so
+    // with the mind user absent it fails there, not at the npm step — and the route
+    // still tries to hand ownership back.
+    assert.match(body.error, /chown/i);
     assert.match(body.error, /restoring ownership also failed: .*chown/i);
   });
 });

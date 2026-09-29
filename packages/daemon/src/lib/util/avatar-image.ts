@@ -1,6 +1,8 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { extname, resolve } from "node:path";
-import { mindDir, readAllMinds, voluteHome } from "../mind/registry.js";
+import { extname, relative, resolve } from "node:path";
+import { mindFileOwner } from "../mind/isolation.js";
+import { readMindFileBytes, writeMindFile } from "../mind/mind-file-write.js";
+import { getBaseName, mindDir, readAllMinds, voluteHome } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import log from "./logger.js";
 import { safeResolveWithinBase } from "./paths.js";
@@ -79,26 +81,27 @@ export async function normalizeAvatar(
   }
 }
 
-/** Re-encode a single avatar file in place (same format) if it exceeds AVATAR_DIM. */
-async function downscaleFile(sharp: any, filePath: string): Promise<boolean> {
-  const data = await readFile(filePath);
+/** Downscaled bytes (same format) for an avatar that exceeds AVATAR_DIM, else null. */
+async function downscaled(sharp: any, data: Buffer): Promise<Buffer | null> {
   const image = sharp(data, { animated: true });
   const meta = await image.metadata();
   if (!meta.format || ((meta.width ?? 0) <= AVATAR_DIM && (meta.height ?? 0) <= AVATAR_DIM)) {
-    return false;
+    return null;
   }
-  const out = await image
-    .resize(AVATAR_DIM, AVATAR_DIM, { fit: "cover" })
-    .toFormat(meta.format)
-    .toBuffer();
-  await writeFile(filePath, out);
-  return true;
+  return image.resize(AVATAR_DIM, AVATAR_DIM, { fit: "cover" }).toFormat(meta.format).toBuffer();
 }
+
+/** Largest pre-resize avatar the migration will read back from a mind. */
+const MAX_MIGRATED_AVATAR_BYTES = 16 * 1024 * 1024;
 
 /**
  * One-time daemon-startup migration: downscale oversized avatars uploaded
  * before resize-on-upload existed. Re-encodes in place, preserving format and
  * filename so no DB or volute.json references change. Idempotent.
+ *
+ * A mind's avatar lives in a tree the mind owns, and the daemon may be root: it is
+ * read and rewritten through the mind-file helpers, so a link, hard link or FIFO
+ * planted there refuses instead of aiming the rewrite elsewhere.
  */
 export async function migrateAvatarSizes(): Promise<void> {
   const sharp = await loadSharp();
@@ -111,29 +114,44 @@ export async function migrateAvatarSizes(): Promise<void> {
   } catch {
     // no avatars dir yet
   }
-
-  const mindAvatars: string[] = [];
-  try {
-    for (const mind of await readAllMinds()) {
-      const dir = mind.dir ?? mindDir(mind.name);
-      const avatar = readVoluteConfig(dir)?.profile?.avatar;
-      if (!avatar) continue;
-      const path = safeResolveWithinBase(resolve(dir, "home"), avatar);
-      if (path) mindAvatars.push(path);
-    }
-  } catch (err) {
-    alog.warn("failed to enumerate mind avatars for migration", log.errorData(err));
-  }
-
-  for (const filePath of [...userAvatars, ...mindAvatars]) {
+  for (const filePath of userAvatars) {
     try {
-      if (await downscaleFile(sharp, filePath)) {
+      const out = await downscaled(sharp, await readFile(filePath));
+      if (out) {
+        await writeFile(filePath, out);
         alog.info(`downscaled oversized avatar ${filePath}`);
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         alog.warn(`failed to downscale avatar ${filePath}`, log.errorData(err));
       }
+    }
+  }
+
+  let minds: Awaited<ReturnType<typeof readAllMinds>> = [];
+  try {
+    minds = await readAllMinds();
+  } catch (err) {
+    alog.warn("failed to enumerate mind avatars for migration", log.errorData(err));
+  }
+  for (const mind of minds) {
+    const dir = mind.dir ?? mindDir(mind.name);
+    const avatar = readVoluteConfig(dir)?.profile?.avatar;
+    const avatarPath = avatar && safeResolveWithinBase(resolve(dir, "home"), avatar);
+    if (!avatarPath) continue;
+    const rel = relative(dir, avatarPath);
+    try {
+      const owner = await mindFileOwner(await getBaseName(mind.name));
+      const data = await readMindFileBytes(dir, rel, {
+        owner,
+        maxBytes: MAX_MIGRATED_AVATAR_BYTES,
+      });
+      const out = data && (await downscaled(sharp, data));
+      if (out && (await writeMindFile(dir, rel, out, { owner, create: false }))) {
+        alog.info(`downscaled oversized avatar ${resolve(dir, rel)}`);
+      }
+    } catch (err) {
+      alog.warn(`failed to downscale avatar ${resolve(dir, rel)}`, log.errorData(err));
     }
   }
 }
