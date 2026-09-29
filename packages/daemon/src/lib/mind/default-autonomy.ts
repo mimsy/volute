@@ -1,14 +1,10 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { mindSkillsDir } from "../skills.js";
 import log from "../util/logger.js";
 import { readRoutesConfig, upsertEventRule } from "./event-routes.js";
-import {
-  readVoluteConfig,
-  type Schedule,
-  type VoluteConfig,
-  writeVoluteConfig,
-} from "./volute-config.js";
+import { type MindFileOwner, readMindFile, writeMindFile } from "./mind-file-write.js";
+import { type Schedule, updateVoluteConfig } from "./volute-config.js";
 
 const dlog = log.child("default-autonomy");
 
@@ -74,8 +70,6 @@ export type DreamingSetupResult = {
   schedulesChanged: boolean;
   /** Human-readable warnings for steps that failed (also logged). */
   warnings: string[];
-  /** Paths the volute.json write created — for a live mind, hand them over (#1072). */
-  createdPaths: string[];
 };
 
 /**
@@ -87,10 +81,18 @@ export type DreamingSetupResult = {
  * sprouting — but failures are logged and returned as warnings, and a failed
  * subagent wiring skips the schedule so the mind isn't told nightly to invoke
  * a subagent that doesn't exist.
+ *
+ * Every read and write goes through the mind-file helpers: at sprout the mind is
+ * live and owns this tree, so a link or FIFO it planted must refuse rather than aim
+ * the daemon (root under user isolation), and anything created is handed to `owner`.
+ * `owner` is null at creation, before the tree is handed over.
  */
-export function setupDefaultDreaming(dir: string): DreamingSetupResult {
+export async function setupDefaultDreaming(
+  dir: string,
+  owner: MindFileOwner | null,
+): Promise<DreamingSetupResult> {
   const skillDir = resolve(mindSkillsDir(dir), "dreaming");
-  if (!existsSync(skillDir)) return { schedulesChanged: false, warnings: [], createdPaths: [] };
+  if (!existsSync(skillDir)) return { schedulesChanged: false, warnings: [] };
 
   const warnings: string[] = [];
   const warn = (msg: string, err?: unknown) => {
@@ -101,14 +103,20 @@ export function setupDefaultDreaming(dir: string): DreamingSetupResult {
   // 1. Dreamer subagent in the SDK config
   let subagentBroken = false;
   try {
-    const configPath = resolve(dir, "home/.config/config.json");
-    if (existsSync(configPath)) {
-      const sdkConfig = JSON.parse(readFileSync(configPath, "utf-8"));
-      if (!sdkConfig.subagents?.dreamer) {
-        sdkConfig.subagents ??= {};
-        sdkConfig.subagents.dreamer = DREAMER_SUBAGENT;
-        writeFileSync(configPath, `${JSON.stringify(sdkConfig, null, 2)}\n`);
-      }
+    const configRel = "home/.config/config.json";
+    if (await readMindFile(dir, configRel, { owner })) {
+      await writeMindFile(
+        dir,
+        configRel,
+        (text) => {
+          const sdkConfig = JSON.parse(text);
+          if (sdkConfig.subagents?.dreamer) return null;
+          sdkConfig.subagents ??= {};
+          sdkConfig.subagents.dreamer = DREAMER_SUBAGENT;
+          return `${JSON.stringify(sdkConfig, null, 2)}\n`;
+        },
+        { owner, create: false },
+      );
     } else {
       // No SDK config (some templates) — matches `dream install`, which also
       // warns and proceeds.
@@ -121,18 +129,23 @@ export function setupDefaultDreaming(dir: string): DreamingSetupResult {
 
   // 2. Dream checker appended to the wake-context hook
   try {
-    const hookPath = resolve(dir, "home/.local/hooks/wake-context.sh");
-    const checkerPath = resolve(skillDir, "scripts/wake-context-dreams.sh");
-    if (!existsSync(hookPath) || !existsSync(checkerPath)) {
+    const hookRel = "home/.local/hooks/wake-context.sh";
+    const checkerRel = relative(dir, resolve(skillDir, "scripts/wake-context-dreams.sh"));
+    const checker = await readMindFile(dir, checkerRel, { owner });
+    if (!checker || !(await readMindFile(dir, hookRel, { owner }))) {
       dlog.warn(`wake-context hook or dream checker missing in ${dir} — skipping dream checker`);
     } else {
-      const hookContent = readFileSync(hookPath, "utf-8");
-      if (!hookContent.includes("wake-context-dreams.sh")) {
-        const checker = readFileSync(checkerPath, "utf-8");
+      await writeMindFile(
+        dir,
+        hookRel,
         // The marker line makes this (and the skill's own `dream install`)
         // idempotent — both check for the script name in the hook.
-        writeFileSync(hookPath, `${hookContent.trimEnd()}\n\n# wake-context-dreams.sh\n${checker}`);
-      }
+        (hook) =>
+          hook.includes("wake-context-dreams.sh")
+            ? null
+            : `${hook.trimEnd()}\n\n# wake-context-dreams.sh\n${checker.text}`,
+        { owner, create: false },
+      );
     }
   } catch (err) {
     warn("dreaming setup: failed to add dream checker to wake-context hook", err);
@@ -142,39 +155,33 @@ export function setupDefaultDreaming(dir: string): DreamingSetupResult {
   // mind isn't instructed nightly to use machinery that isn't there.
   if (subagentBroken) {
     warn("dreaming setup: dream schedule not installed because subagent wiring failed");
-    return { schedulesChanged: false, warnings, createdPaths: [] };
+    return { schedulesChanged: false, warnings };
   }
   let schedulesChanged = false;
-  let createdPaths: string[] = [];
   try {
-    const voluteJsonPath = resolve(dir, "home/.config/volute.json");
-    let config: VoluteConfig = {};
-    if (existsSync(voluteJsonPath)) {
-      const parsed = readVoluteConfig(dir);
-      if (!parsed) {
-        // Corrupt config: writing a fresh one back would destroy the mind's
-        // profile/sleep/schedules. Leave it for the host to fix.
-        warn("dreaming setup: volute.json is unparseable — dream schedule not installed");
-        return { schedulesChanged: false, warnings, createdPaths: [] };
-      }
-      config = parsed;
-    }
-    const schedules = config.schedules ?? [];
-    if (!schedules.some((s) => s.id === "dream")) {
+    schedulesChanged = await updateVoluteConfig(dir, owner, (config) => {
+      const schedules = config.schedules ?? [];
+      if (schedules.some((s) => s.id === "dream")) return null;
       schedules.push(defaultDreamSchedule());
       config.schedules = schedules;
-      createdPaths = writeVoluteConfig(dir, config);
-      schedulesChanged = true;
-    }
+      return config;
+    });
+  } catch (err) {
+    // A corrupt config is refused rather than overwritten: writing a fresh one back
+    // would destroy the mind's profile/sleep/schedules. Leave it for the host to fix.
+    warn(`dreaming setup: dream schedule not installed — ${(err as Error).message}`, err);
+    return { schedulesChanged: false, warnings };
+  }
+  try {
     // The dream's session isolation is an explicit, owned routing rule — added only
     // when absent, so a mind that has re-routed its own dream is left untouched (#736).
-    const hasDreamRule = (readRoutesConfig(dir).rules ?? []).some(
+    const hasDreamRule = ((await readRoutesConfig(dir, owner)).rules ?? []).some(
       (r) => r.event === "schedule:dream",
     );
-    if (!hasDreamRule) upsertEventRule(dir, "schedule:dream", "$new");
+    if (!hasDreamRule) await upsertEventRule(dir, "schedule:dream", "$new", { owner });
   } catch (err) {
-    warn("dreaming setup: failed to add default dream schedule", err);
+    warn("dreaming setup: failed to add the dream routing rule", err);
   }
 
-  return { schedulesChanged, warnings, createdPaths };
+  return { schedulesChanged, warnings };
 }

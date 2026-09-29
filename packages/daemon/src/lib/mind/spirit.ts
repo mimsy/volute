@@ -23,15 +23,12 @@ import { hostNpmEnv } from "../util/host-npm-env.js";
 import log from "../util/logger.js";
 import { repairThreadBatchConfig } from "./event-routes.js";
 import { seedInitLedger } from "./init-ledger.js";
+import { mindFileOwner } from "./isolation.js";
 import { repairMechanicsDoc } from "./mechanics-doc.js";
+import type { MindFileOwner } from "./mind-file-write.js";
 import { npmInstallAsMind } from "./npm-install.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
-import {
-  chownVoluteConfigPaths,
-  readVoluteConfig,
-  type Schedule,
-  writeVoluteConfig,
-} from "./volute-config.js";
+import { type Schedule, updateVoluteConfig } from "./volute-config.js";
 
 const slog = log.child("spirit");
 
@@ -64,17 +61,15 @@ const TENDING_SCHEDULE = {
   whileSleeping: "skip" as const,
 };
 
-/**
- * Add the tending schedule to spirit's volute.json if missing. Returns null if it
- * was already there, else the paths the write created (see writeVoluteConfig).
- */
-function ensureTendingSchedule(dir: string): string[] | null {
-  const config = readVoluteConfig(dir) ?? {};
-  const schedules = config.schedules ?? [];
-  if (schedules.some((s) => s.id === "tending")) return null;
-  schedules.push({ ...TENDING_SCHEDULE });
-  config.schedules = schedules;
-  return writeVoluteConfig(dir, config);
+/** Add the tending schedule to spirit's volute.json if missing. Returns whether it added it. */
+function ensureTendingSchedule(dir: string, owner: MindFileOwner | null): Promise<boolean> {
+  return updateVoluteConfig(dir, owner, (config) => {
+    const schedules = config.schedules ?? [];
+    if (schedules.some((s) => s.id === "tending")) return null;
+    schedules.push({ ...TENDING_SCHEDULE });
+    config.schedules = schedules;
+    return config;
+  });
 }
 
 /**
@@ -157,19 +152,21 @@ export function orientationArcSchedules(
 }
 
 /** Add the orientation arc to the spirit's volute.json if not present. */
-export function ensureOrientationArc(
+export async function ensureOrientationArc(
   dir: string,
+  owner: MindFileOwner | null,
   createdAt: Date,
   profile?: { hasAvatar: boolean; hasDescription: boolean },
-): void {
-  const config = readVoluteConfig(dir) ?? {};
-  const schedules = config.schedules ?? [];
-  const fresh = orientationArcSchedules(createdAt, profile).filter(
-    (s) => !schedules.some((existing) => existing.id === s.id),
-  );
-  if (fresh.length === 0) return;
-  config.schedules = [...schedules, ...fresh];
-  writeVoluteConfig(dir, config);
+): Promise<void> {
+  await updateVoluteConfig(dir, owner, (config) => {
+    const schedules = config.schedules ?? [];
+    const fresh = orientationArcSchedules(createdAt, profile).filter(
+      (s) => !schedules.some((existing) => existing.id === s.id),
+    );
+    if (fresh.length === 0) return null;
+    config.schedules = [...schedules, ...fresh];
+    return config;
+  });
 }
 
 /**
@@ -178,10 +175,10 @@ export function ensureOrientationArc(
  * Never throws — a failed avatar falls back to {hasAvatar: false} so the caller
  * schedules the orientation-face invitation (the spirit makes its own face).
  */
-export function applyStashedSpiritProfile(dir: string): {
+export async function applyStashedSpiritProfile(dir: string): Promise<{
   hasAvatar: boolean;
   hasDescription: boolean;
-} {
+}> {
   const config = readGlobalConfig();
   const stashName = config.setup?.spiritAvatar;
   const description = config.setup?.spiritDescription;
@@ -197,13 +194,15 @@ export function applyStashedSpiritProfile(dir: string): {
       hasAvatar = true;
     }
     if (hasAvatar || description) {
-      const vc = readVoluteConfig(dir) ?? {};
-      vc.profile = {
-        ...vc.profile,
-        ...(description ? { description } : {}),
-        ...(hasAvatar && safeName ? { avatar: safeName } : {}),
-      };
-      writeVoluteConfig(dir, vc);
+      // Creation-path only: the tree is not the spirit's yet, so no owner.
+      await updateVoluteConfig(dir, null, (vc) => {
+        vc.profile = {
+          ...vc.profile,
+          ...(description ? { description } : {}),
+          ...(hasAvatar && safeName ? { avatar: safeName } : {}),
+        };
+        return vc;
+      });
     }
     if (hasAvatar && stashPath) rmSync(stashPath, { force: true });
   } catch (err) {
@@ -371,14 +370,14 @@ export async function ensureSpiritProject(): Promise<void> {
 
     // Add default tending schedule
     try {
-      ensureTendingSchedule(dir);
+      await ensureTendingSchedule(dir, null);
     } catch (err) {
       slog.warn("failed to add tending schedule to spirit config", log.errorData(err));
     }
 
     // Apply the host's wizard-stashed avatar/description, if any, before the chown
     // below covers the whole project directory including the copied image.
-    const stashedProfile = applyStashedSpiritProfile(dir);
+    const stashedProfile = await applyStashedSpiritProfile(dir);
 
     // Set up per-mind user isolation (creates mind-volute user, chowns project dir).
     // Must be AFTER all file creation (npm install, git init, skill install) so the
@@ -395,7 +394,7 @@ export async function ensureSpiritProject(): Promise<void> {
     // First waking: orientation context for the spirit's first turn, plus the
     // two-step arc. Creation-path-only, so existing spirits never re-orient (#697).
     try {
-      ensureOrientationArc(dir, new Date(), stashedProfile);
+      await ensureOrientationArc(dir, await mindFileOwner(spiritName), new Date(), stashedProfile);
     } catch (err) {
       slog.warn("failed to add orientation arc to spirit config", log.errorData(err));
     }
@@ -652,9 +651,7 @@ export async function syncSpiritTemplate(): Promise<void> {
 
   // Ensure tending schedule exists (handles upgrades)
   try {
-    const created = ensureTendingSchedule(dir);
-    if (created) {
-      await chownVoluteConfigPaths(spiritName, created);
+    if (await ensureTendingSchedule(dir, await mindFileOwner(spiritName))) {
       slog.info("added tending schedule to spirit");
     }
   } catch (err) {

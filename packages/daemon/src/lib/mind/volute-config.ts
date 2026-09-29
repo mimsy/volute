@@ -1,15 +1,7 @@
-import {
-  closeSync,
-  constants,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, resolve, sep } from "node:path";
-import { chownMindFile } from "./isolation.js";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { mindFileOwner } from "./isolation.js";
+import { type MindFileOwner, readMindFileSync, writeMindFile } from "./mind-file-write.js";
 import { getBaseName } from "./registry.js";
 
 export type Schedule = {
@@ -94,7 +86,7 @@ export type VoluteConfig = CognitionConfig & {
 function readJson(path: string): VoluteConfig | null {
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
+    return JSON.parse(readMindFileSync(path));
   } catch (err) {
     console.error(`[volute-config] failed to parse ${path}: ${err}`);
     return null;
@@ -106,66 +98,59 @@ export function readVoluteConfig(mindDir: string): VoluteConfig | null {
   return readJson(path);
 }
 
-/**
- * Write volute.json in place. Returns the paths this write created (the config
- * dir and/or the file) — a created path is born owned by the daemon, so a caller
- * writing into a live mind's home must hand it over; see writeMindVoluteConfig.
- */
-export function writeVoluteConfig(mindDir: string, config: VoluteConfig): string[] {
-  const path = resolve(mindDir, "home/.config/volute.json");
-  const created: string[] = [];
-  const firstDir = mkdirSync(dirname(path), { recursive: true });
-  // mkdirSync names only the topmost dir it made; chown each one below it too.
-  if (firstDir) {
-    for (let d = dirname(path); d.length >= firstDir.length; d = dirname(d)) created.unshift(d);
-  }
-  // The daemon writes here with its own privileges (root under user isolation), and
-  // the mind owns this tree: refuse a .config/ that a symlink leads out of it, and
-  // never follow a symlink planted at volute.json itself.
-  const realBase = realpathSync(mindDir);
-  if (!realpathSync(dirname(path)).startsWith(realBase + sep)) {
-    throw new Error(`${dirname(path)} resolves outside ${mindDir}`);
-  }
-  const data = `${JSON.stringify(config, null, 2)}\n`;
-  const { O_WRONLY, O_CREAT, O_EXCL, O_TRUNC, O_NOFOLLOW } = constants;
-  let fd: number;
-  try {
-    // Exclusive create: tells us the file is new without a check-then-write race.
-    fd = openSync(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644);
-    created.push(path);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-    // Truncate in place, which keeps the mind's ownership of the existing file.
-    fd = openSync(path, O_WRONLY | O_TRUNC | O_NOFOLLOW);
-  }
-  try {
-    writeFileSync(fd, data);
-  } finally {
-    closeSync(fd);
-  }
-  return created;
-}
+const VOLUTE_JSON = "home/.config/volute.json";
 
 /**
- * writeVoluteConfig for a mind that already exists: whatever the write created is
- * handed to the mind's user, or under user isolation the mind could not edit or
- * delete its own config (#1072). No-op chown when isolation is off.
+ * Write volute.json through {@link writeMindFile}: the daemon is root under user
+ * isolation and the mind owns this tree, so a link or FIFO it plants is refused, and
+ * whatever the write creates (the file, `.config/`) is handed to `owner` — or the mind
+ * could not edit its own config (#1072). `owner` is null for a tree not handed over yet
+ * (creation, before `chownMindDir`) or when isolation is off.
  */
-export async function writeMindVoluteConfig(
-  name: string,
+export async function writeVoluteConfig(
   mindDir: string,
   config: VoluteConfig,
+  owner: MindFileOwner | null,
 ): Promise<void> {
-  await chownVoluteConfigPaths(name, writeVoluteConfig(mindDir, config));
+  await writeMindFile(mindDir, VOLUTE_JSON, `${JSON.stringify(config, null, 2)}\n`, { owner });
 }
 
-/** Hand paths writeVoluteConfig created to the mind (its parent, for a variant). */
-export async function chownVoluteConfigPaths(
+/**
+ * Read-modify-write volute.json under one handle, so concurrent updates can't drop each
+ * other's change. `fn` gets the current config (`{}` when there is none) and returns the
+ * config to write, or null to leave the file alone. An unparseable file is refused rather
+ * than overwritten — it is the mind's, and replacing it would lose its profile and
+ * schedules. Returns whether it wrote.
+ */
+export async function updateVoluteConfig(
+  mindDir: string,
+  owner: MindFileOwner | null,
+  fn: (config: VoluteConfig) => VoluteConfig | null,
+): Promise<boolean> {
+  return writeMindFile(
+    mindDir,
+    VOLUTE_JSON,
+    (text) => {
+      let current: VoluteConfig = {};
+      if (text.trim()) {
+        try {
+          current = JSON.parse(text);
+        } catch {
+          throw new Error(`${VOLUTE_JSON} in ${mindDir} is unparseable — not modifying it`);
+        }
+      }
+      const next = fn(current);
+      return next ? `${JSON.stringify(next, null, 2)}\n` : null;
+    },
+    { owner },
+  );
+}
+
+/** {@link updateVoluteConfig} for a mind that already exists (its parent's owner, for a variant). */
+export async function updateMindVoluteConfig(
   name: string,
-  created: string[],
-  chown: (path: string, name: string) => Promise<void> = chownMindFile,
-): Promise<void> {
-  if (created.length === 0) return;
-  const owner = await getBaseName(name);
-  for (const p of created) await chown(p, owner);
+  mindDir: string,
+  fn: (config: VoluteConfig) => VoluteConfig | null,
+): Promise<boolean> {
+  return updateVoluteConfig(mindDir, await mindFileOwner(await getBaseName(name)), fn);
 }

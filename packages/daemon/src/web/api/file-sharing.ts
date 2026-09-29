@@ -132,7 +132,7 @@ const app = new Hono<AuthEnv>()
 
       let result: { sender: string; filename: string; destPath: string };
       try {
-        result = acceptPending(name, body.id, mindDir(name), body.dest);
+        result = await acceptPending(name, body.id, mindDir(name), body.dest);
       } catch (err) {
         const message = (err as Error).message;
         if (message.includes("not found") || message.includes("Invalid pending")) {

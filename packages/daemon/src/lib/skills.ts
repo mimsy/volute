@@ -8,17 +8,25 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { getDb } from "./db.js";
 import { readInitLedgerFile, writeLedgerFile } from "./mind/init-ledger.js";
-import { chownMindDir } from "./mind/isolation.js";
+import { chownMindDir, mindFileOwner } from "./mind/isolation.js";
+import {
+  ensureMindDir,
+  readMindFile,
+  readMindFileSync,
+  removeMindFile,
+  writeMindFile,
+} from "./mind/mind-file-write.js";
 import { npmInstallAsMind } from "./mind/npm-install.js";
-import { mindDir, readRegistry, stateDir, voluteHome } from "./mind/registry.js";
+import { getBaseName, mindDir, readRegistry, stateDir, voluteHome } from "./mind/registry.js";
 import { sharedSkills } from "./schema.js";
 import { exec, gitExec } from "./util/exec.js";
 import log from "./util/logger.js";
@@ -314,7 +322,8 @@ export function readUpstream(skillDir: string): UpstreamInfo | null {
   const upstreamPath = join(skillDir, ".upstream.json");
   if (!existsSync(upstreamPath)) return null;
   try {
-    const data = JSON.parse(readFileSync(upstreamPath, "utf-8"));
+    // The mind owns this file: no following a link at it, no blocking on a FIFO.
+    const data = JSON.parse(readMindFileSync(upstreamPath));
     if (
       typeof data?.source !== "string" ||
       typeof data?.version !== "number" ||
@@ -347,10 +356,14 @@ export async function installSkill(
   if (!existsSync(sourceDir)) throw new Error(`Shared skill files not found: ${skillId}`);
 
   const destDir = join(mindSkillsDir(dir), skillId);
-  if (existsSync(destDir)) throw new Error(`Skill already installed: ${skillId}`);
+  if (lexists(destDir)) throw new Error(`Skill already installed: ${skillId}`);
 
-  mkdirSync(destDir, { recursive: true });
-  cpSync(sourceDir, destDir, { recursive: true });
+  // The skills dir is the mind's, and the daemon may be root: create the skill's dir
+  // through the mind-file walk (a skills dir linked out of the mind refuses) and copy
+  // into the real path it vouches for, which this call just made and nothing else has.
+  const owner = await mindFileOwner(await getBaseName(mindName));
+  const realDestDir = await ensureMindDir(dir, relative(dir, destDir), owner);
+  cpSync(sourceDir, realDestDir, { recursive: true });
 
   // Parse SKILL.md once for npm dependencies, hooks, and bin
   const npmInstalled: string[] = [];
@@ -409,7 +422,12 @@ export async function installSkill(
     version: shared.version,
     baseCommit: commitHash,
   };
-  writeFileSync(join(destDir, ".upstream.json"), `${JSON.stringify(upstream, null, 2)}\n`);
+  await writeMindFile(
+    dir,
+    relative(dir, join(destDir, ".upstream.json")),
+    `${JSON.stringify(upstream, null, 2)}\n`,
+    { owner },
+  );
   await gitExec(["add", join(relSkillsPath(dir), skillId, ".upstream.json")], {
     cwd: dir,
   });
@@ -489,18 +507,26 @@ export async function updateSkill(
   const tmpBase = join(tmpdir(), `volute-merge-${process.pid}-${Date.now()}`);
   mkdirSync(tmpBase, { recursive: true });
 
+  // The skill dir is the mind's, and the daemon may be root: every read and write in it
+  // goes through the mind-file helpers, so a link or FIFO the mind planted refuses (and
+  // aborts the update) instead of aiming the merge at a file elsewhere.
+  const owner = await mindFileOwner(await getBaseName(mindName));
+  const inSkill = (file: string) => relative(dir, join(skillDir, file));
+  const readCurrent = async (file: string) =>
+    (await readMindFile(dir, inSkill(file), { owner }))?.text ?? null;
+  const writeCurrent = (file: string, content: string | Buffer, mode?: number) =>
+    writeMindFile(dir, inSkill(file), content, { owner, mode });
+
   try {
     for (const file of allFiles) {
       const currentPath = join(skillDir, file);
       const newPath = join(sourceDir, file);
-      const currentExists = existsSync(currentPath);
+      const currentExists = lexists(currentPath);
       const newExists = existsSync(newPath);
 
       if (!currentExists && newExists) {
-        // New file — just copy
-        const destPath = join(skillDir, file);
-        mkdirSync(join(skillDir, ...file.split("/").slice(0, -1)), { recursive: true });
-        cpSync(newPath, destPath);
+        // New file — just copy (keeping its mode: skill scripts may be executable)
+        await writeCurrent(file, readFileSync(newPath), statSync(newPath).mode & 0o777);
         continue;
       }
 
@@ -519,9 +545,8 @@ export async function updateSkill(
           continue;
         }
         // If current === base, the user didn't modify it, safe to delete
-        const currentContent = readFileSync(currentPath, "utf-8");
-        if (currentContent === baseContent) {
-          rmSync(currentPath);
+        if ((await readCurrent(file)) === baseContent) {
+          await removeMindFile(dir, inSkill(file), { owner });
         }
         // If modified locally, keep it (user's version wins over upstream delete)
         continue;
@@ -541,12 +566,12 @@ export async function updateSkill(
         baseContent = "";
       }
 
-      const currentContent = readFileSync(currentPath, "utf-8");
+      const currentContent = (await readCurrent(file)) ?? "";
       const newContent = readFileSync(newPath, "utf-8");
 
       // If current hasn't changed from base, just take the new version
       if (currentContent === baseContent) {
-        writeFileSync(currentPath, newContent);
+        await writeCurrent(file, newContent);
         continue;
       }
 
@@ -567,14 +592,14 @@ export async function updateSkill(
       try {
         await exec("git", ["merge-file", currentTmp, baseTmp, newTmp]);
         // Clean merge — write result
-        writeFileSync(currentPath, readFileSync(currentTmp, "utf-8"));
+        await writeCurrent(file, readFileSync(currentTmp, "utf-8"));
       } catch (e: unknown) {
         // git merge-file exits with 1 for conflicts, >1 for errors
         const exitCode =
           e && typeof e === "object" && "code" in e ? (e as { code: number }).code : null;
         if (exitCode === 1) {
           // Conflict — write result with markers
-          writeFileSync(currentPath, readFileSync(currentTmp, "utf-8"));
+          await writeCurrent(file, readFileSync(currentTmp, "utf-8"));
           conflictFiles.push(file);
         } else {
           throw e;
@@ -627,7 +652,7 @@ export async function updateSkill(
     version: shared.version,
     baseCommit: commitHash,
   };
-  writeFileSync(join(skillDir, ".upstream.json"), `${JSON.stringify(upstreamInfo, null, 2)}\n`);
+  await writeCurrent(".upstream.json", `${JSON.stringify(upstreamInfo, null, 2)}\n`);
   await gitExec(["add", join(relSkillPath, ".upstream.json")], { cwd: dir });
   await gitExec(["commit", "--amend", "--no-edit"], { cwd: dir });
 
@@ -727,11 +752,13 @@ export function installHookShims(
   skillsSubdir: string = mindSkillsSubdir(dir), // e.g. ".claude/skills"
 ): void {
   for (const [event, scriptPath] of Object.entries(hooks)) {
-    const eventDir = join(dir, "home", ".local", "hooks", event);
-    mkdirSync(eventDir, { recursive: true });
-    const shimPath = join(eventDir, hookShimName(skillId));
-    const content = shimContent(skillId, scriptPath, skillsSubdir);
-    writeFileSync(shimPath, content, { mode: 0o755 });
+    const shimPath = join(dir, "home", ".local", "hooks", event, hookShimName(skillId));
+    replaceShim(
+      dir,
+      `home/.local/hooks/${event}`,
+      shimPath,
+      shimContent(skillId, scriptPath, skillsSubdir),
+    );
   }
 }
 
@@ -786,12 +813,22 @@ export function installBinShim(
   scriptPath: string,
   skillsSubdir: string = mindSkillsSubdir(dir),
 ): void {
-  const binDir = join(dir, "home", ".local", "bin");
-  mkdirSync(binDir, { recursive: true });
-  const cmdName = binCommandName(scriptPath);
-  const shimPath = join(binDir, cmdName);
+  const shimPath = join(dir, "home", ".local", "bin", binCommandName(scriptPath));
   assertBinShimAvailable(dir, skillId, scriptPath);
-  writeFileSync(shimPath, binShimContent(skillId, scriptPath, skillsSubdir), { mode: 0o755 });
+  replaceShim(dir, "home/.local/bin", shimPath, binShimContent(skillId, scriptPath, skillsSubdir));
+}
+
+/**
+ * Write a shim over whatever is at `abs`, under the same rules reconciliation keeps (see
+ * below): its dirs must be plain directories, and the old entry is unlinked — a symlink
+ * itself, never its target — before an exclusive create.
+ */
+function replaceShim(dir: string, relDir: string, abs: string, content: string): void {
+  if (!realDirChain(dir, relDir, true)) {
+    throw new Error(`not writing ${abs}: a parent is not a plain directory`);
+  }
+  rmSync(abs, { force: true });
+  writeShim(abs, content);
 }
 
 /**

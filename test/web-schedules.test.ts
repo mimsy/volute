@@ -94,6 +94,19 @@ describe("schedules API rotating messages", () => {
     assert.equal(schedules[0].message, undefined);
   });
 
+  // A mind's parallel tool calls: each add is one read-modify-write of volute.json, so
+  // none can drop another's schedule; a duplicate id still conflicts.
+  it("parallel POSTs all land, and a duplicate id still gets 409", async () => {
+    const results = await Promise.all(
+      ["p1", "p2", "p3", "p4", "p1"].map((id) =>
+        postSchedule({ id, cron: "0 9 * * *", message: id }),
+      ),
+    );
+    assert.deepEqual(results.map((r) => r.status).sort(), [201, 201, 201, 201, 409]);
+    const ids = (await fetchSchedules()).map((s) => s.id);
+    for (const id of ["p1", "p2", "p3", "p4"]) assert.ok(ids.includes(id), id);
+  });
+
   it("POST rejects message + messages together", async () => {
     const res = await postSchedule({
       id: "hb",
@@ -178,8 +191,8 @@ describe("schedules API rotating messages", () => {
     // `--thread` no longer lives on the schedule — it writes a routes.json event rule so
     // schedule-fire routing lives in one place. The schedule row itself carries no thread.
     const dir = resolve(voluteHome(), "minds", mindName);
-    const ruleThread = () =>
-      readRoutesConfig(dir).rules?.find((r) => r.event === "schedule:dream")?.thread;
+    const ruleThread = async () =>
+      (await readRoutesConfig(dir, null)).rules?.find((r) => r.event === "schedule:dream")?.thread;
 
     const res = await postSchedule({
       id: "dream",
@@ -190,19 +203,19 @@ describe("schedules API rotating messages", () => {
     assert.equal(res.status, 201);
     const [sched] = await fetchSchedules();
     assert.equal(sched.thread, undefined);
-    assert.equal(ruleThread(), "$new");
+    assert.equal(await ruleThread(), "$new");
 
     // PUT updates the rule
     assert.equal((await putSchedule("dream", { thread: "dreams" })).status, 200);
-    assert.equal(ruleThread(), "dreams");
+    assert.equal(await ruleThread(), "dreams");
 
     // PUT with an empty string removes the rule
     assert.equal((await putSchedule("dream", { thread: "" })).status, 200);
-    assert.equal(ruleThread(), undefined);
+    assert.equal(await ruleThread(), undefined);
 
     // POST it back, then DELETE the schedule — the rule is cleaned up too.
     assert.equal((await putSchedule("dream", { thread: "dreams" })).status, 200);
-    assert.equal(ruleThread(), "dreams");
+    assert.equal(await ruleThread(), "dreams");
     const app = await getApp();
     assert.equal(
       (
@@ -213,6 +226,6 @@ describe("schedules API rotating messages", () => {
       ).status,
       200,
     );
-    assert.equal(ruleThread(), undefined);
+    assert.equal(await ruleThread(), undefined);
   });
 });

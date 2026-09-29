@@ -1,13 +1,18 @@
 import type { Dirent } from "node:fs";
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { extname, resolve } from "node:path";
+import { extname, join, resolve } from "node:path";
 import { Hono } from "hono";
 import { syncMindProfile } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
-import { chownMindFile } from "../../lib/mind/isolation.js";
+import { mindFileOwner } from "../../lib/mind/isolation.js";
+import { removeMindFile, replaceMindFile } from "../../lib/mind/mind-file-write.js";
 import { findMind, getBaseName, mindDir } from "../../lib/mind/registry.js";
-import { readVoluteConfig, writeMindVoluteConfig } from "../../lib/mind/volute-config.js";
+import {
+  type MindProfile,
+  readVoluteConfig,
+  updateMindVoluteConfig,
+} from "../../lib/mind/volute-config.js";
 import { normalizeAvatar } from "../../lib/util/avatar-image.js";
 import { fileEtag, isNotModified } from "../../lib/util/http-cache.js";
 import {
@@ -76,39 +81,45 @@ const app = new Hono<AuthEnv>()
     }
 
     const dir = entry.dir ?? mindDir(name);
-    // The daemon writes here with its own privileges (root under user isolation),
-    // so resolve home/ through symlinks and refuse one that leads out of the mind.
-    let homeDir: string;
-    try {
-      homeDir = await resolveRealWithinBase(dir, "home");
-    } catch {
+    if (!existsSync(resolve(dir, "home"))) {
       return c.json({ error: "Mind home directory not found" }, 404);
     }
     const filename = `avatar${finalExt}`;
-    const avatarPath = resolve(homeDir, filename);
+    // The daemon writes here with its own privileges (root under user isolation), in a
+    // tree the mind controls: the mind-file helpers refuse a link or FIFO it planted
+    // anywhere on the way, and hand what they create to the mind (#1072).
+    const owner = await mindFileOwner(await getBaseName(name));
 
     // Delete old avatar if different extension. The stored avatar value is
-    // mind-controllable (via volute.json / the profile PATCH), so contain the
-    // deletion to homeDir — never let a traversal value delete arbitrary files.
-    const config = readVoluteConfig(dir) ?? {};
-    const oldAvatar = config.profile?.avatar;
-    if (oldAvatar && oldAvatar !== filename) {
-      const oldAvatarPath = safeResolveWithinBase(homeDir, oldAvatar);
-      if (oldAvatarPath) rmSync(oldAvatarPath, { force: true });
+    // mind-controllable (via volute.json / the profile PATCH), so it is contained
+    // like any other path — never let it delete a file outside the mind's home.
+    const oldAvatar = readVoluteConfig(dir)?.profile?.avatar;
+    if (
+      oldAvatar &&
+      oldAvatar !== filename &&
+      safeResolveWithinBase(resolve(dir, "home"), oldAvatar)
+    ) {
+      await removeMindFile(dir, join("home", oldAvatar), { owner }).catch(() => {});
     }
 
-    // Replace rather than overwrite: rm unlinks a planted symlink (never its
-    // target), and the exclusive create refuses one re-planted in between. The new
-    // file is born owned by the daemon, so hand it to the mind (#1072).
-    rmSync(avatarPath, { force: true });
-    writeFileSync(avatarPath, buffer, { flag: "wx" });
-    await chownMindFile(avatarPath, await getBaseName(name));
+    try {
+      // Replace rather than overwrite: a link the mind planted at the name is swapped
+      // out, never written through.
+      await replaceMindFile(dir, `home/${filename}`, buffer, { owner });
+    } catch (err) {
+      if (err instanceof PathTraversalError) {
+        return c.json({ error: "Mind home directory not found" }, 404);
+      }
+      return c.json({ error: "Failed to write avatar" }, 500);
+    }
 
     // Update volute.json
-    const profile = config.profile ?? {};
-    profile.avatar = filename;
-    config.profile = profile;
-    await writeMindVoluteConfig(name, dir, config);
+    let profile: MindProfile = {};
+    await updateMindVoluteConfig(name, dir, (config) => {
+      profile = { ...config.profile, avatar: filename };
+      config.profile = profile;
+      return config;
+    });
 
     // Sync to users table and broadcast
     await syncMindProfile(name, profile);
@@ -151,6 +162,9 @@ const app = new Hono<AuthEnv>()
       // rather than in the route's own realpath pair — that pair is what this
       // change exists to delete.
       if (!fileStat.isFile()) return c.json({ error: "Invalid avatar path" }, 400);
+      // A hard link inside home/ realpaths inside it too, and would serve (on this
+      // public route) whatever file elsewhere it links to.
+      if (fileStat.nlink !== 1) return c.json({ error: "Invalid avatar path" }, 400);
       if (fileStat.size > MAX_AVATAR_SIZE) return c.json({ error: "Avatar file too large" }, 400);
       const etag = fileEtag(fileStat);
       const headers = {

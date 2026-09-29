@@ -1,5 +1,6 @@
-import { constants } from "node:fs";
-import { type FileHandle, lstat, mkdir, open, realpath, rm } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
+import { type FileHandle, lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import log from "../util/logger.js";
 import { PathTraversalError, resolveWithinBase } from "../util/paths.js";
@@ -139,18 +140,26 @@ async function openVetted(path: string, flags: number, mode: number): Promise<Fi
 }
 
 /** Read at most the cap — by bytes actually read, not a size taken before reading. */
-async function readCapped(handle: FileHandle, path: string): Promise<string> {
-  const buf = Buffer.alloc(MAX_READ_BYTES + 1);
+async function readCappedBytes(
+  handle: FileHandle,
+  path: string,
+  cap = MAX_READ_BYTES,
+): Promise<Buffer> {
+  const buf = Buffer.alloc(cap + 1);
   let len = 0;
   while (len < buf.length) {
     const { bytesRead } = await handle.read(buf, len, buf.length - len, len);
     if (bytesRead === 0) break;
     len += bytesRead;
   }
-  if (len > MAX_READ_BYTES) {
-    throw new Error(`refusing to read ${path}: larger than ${MAX_READ_BYTES} bytes`);
+  if (len > cap) {
+    throw new Error(`refusing to read ${path}: larger than ${cap} bytes`);
   }
-  return buf.toString("utf-8", 0, len);
+  return buf.subarray(0, len);
+}
+
+async function readCapped(handle: FileHandle, path: string): Promise<string> {
+  return (await readCappedBytes(handle, path)).toString("utf-8");
 }
 
 /**
@@ -226,6 +235,45 @@ export async function writeMindFile(
 }
 
 /**
+ * Replace a file in a mind's directory whole: write a fresh temp file beside it (through
+ * the same anchor, walk and vetted exclusive create as {@link writeMindFile}), then rename
+ * it over the name. Unlike {@link writeMindFile} this never leaves a half-written file at
+ * the name — a crash mid-write leaves the old one — and it replaces whatever the mind put
+ * there (a link, a hard link) rather than refusing it, since a rename swaps the name and
+ * never follows it. The inode changes, so use it only where nothing watches the file.
+ */
+export async function replaceMindFile(
+  mindDir: string,
+  relPath: string,
+  content: string | Buffer,
+  opts: { owner: MindFileOwner | null; mode?: number },
+): Promise<void> {
+  const path = await containedPath(mindDir, relPath, opts.owner, true);
+  if (!path) throw new Error(`could not resolve ${relPath} in ${mindDir}`);
+  const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString("hex")}.tmp`);
+  const { O_WRONLY, O_CREAT, O_EXCL } = constants;
+  await serialized(path, async () => {
+    const handle = await openVetted(tmp, O_WRONLY | O_CREAT | O_EXCL, opts.mode ?? 0o644);
+    if (!handle) throw new Error(`refusing ${tmp}: already present`);
+    try {
+      try {
+        if (opts.owner) await handle.chown(opts.owner.uid, opts.owner.gid);
+        const buf = typeof content === "string" ? Buffer.from(content) : content;
+        for (let off = 0; off < buf.length; ) {
+          off += (await handle.write(buf, off, buf.length - off, off)).bytesWritten;
+        }
+      } finally {
+        await handle.close();
+      }
+      await rename(tmp, path);
+    } catch (err) {
+      await rm(tmp, { force: true });
+      throw err;
+    }
+  });
+}
+
+/**
  * Read a file in a mind's directory through the same anchor, walk and vetted open as
  * {@link writeMindFile}. Returns its real path and text, or null when it is absent.
  * Throws on a refusal (a link, a FIFO, a file too large).
@@ -246,6 +294,52 @@ export async function readMindFile(
       await handle.close();
     }
   });
+}
+
+/**
+ * {@link readMindFile} for binary content (an image), with its own size cap. Returns the
+ * bytes, or null when the file is absent.
+ */
+export async function readMindFileBytes(
+  mindDir: string,
+  relPath: string,
+  opts: { owner: MindFileOwner | null; maxBytes: number },
+): Promise<Buffer | null> {
+  const path = await containedPath(mindDir, relPath, opts.owner, false);
+  if (!path) return null;
+  return serialized(path, async () => {
+    const handle = await openVetted(path, constants.O_RDONLY, 0);
+    if (!handle) return null;
+    try {
+      return await readCappedBytes(handle, path, opts.maxBytes);
+    } finally {
+      await handle.close();
+    }
+  });
+}
+
+/**
+ * Synchronous read of a mind's file, for the few readers that cannot await (the router's
+ * routes.json, volute.json). No directory walk — use it for reads only — but the open is
+ * `O_NOFOLLOW` and `O_NONBLOCK` and the handle is fstat'd, so a link planted at the name
+ * doesn't redirect the read and a FIFO can't block the daemon's event loop. Throws
+ * (ENOENT when absent) like `readFileSync`.
+ */
+export function readMindFileSync(path: string): string {
+  const { O_RDONLY, O_NOFOLLOW, O_NONBLOCK } = constants;
+  const fd = openSync(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1) {
+      throw new Error(`refusing ${path}: not a regular file with a single link`);
+    }
+    if (st.size > MAX_READ_BYTES) {
+      throw new Error(`refusing to read ${path}: larger than ${MAX_READ_BYTES} bytes`);
+    }
+    return readFileSync(fd, "utf-8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**

@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
+import {
+  addMind,
+  mindDir,
+  removeMind,
+  voluteHome,
+} from "../packages/daemon/src/lib/mind/registry.js";
 import {
   AVATAR_CONTEXT_DIM,
   AVATAR_DIM,
@@ -135,6 +140,35 @@ describe("migrateAvatarSizes", () => {
     const bigMtime = statSync(bigPath).mtimeMs;
     await migrateAvatarSizes();
     assert.equal(statSync(bigPath).mtimeMs, bigMtime);
+  });
+
+  // A mind's avatar is in a tree the mind owns, and the daemon may be root (#1167): the
+  // rewrite must not reach a file the mind hard-linked in from elsewhere.
+  it("downscales a mind's avatar, but not through a hard link it planted", async () => {
+    const name = `avatar-mig-${Date.now()}`;
+    await addMind(name, 4391);
+    const dir = mindDir(name);
+    try {
+      mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+      const outside = resolve(dir, "outside.png");
+      writeFileSync(outside, await makePng(600));
+      linkSync(outside, resolve(dir, "home/avatar.png"));
+      writeFileSync(
+        resolve(dir, "home/.config/volute.json"),
+        JSON.stringify({ profile: { avatar: "avatar.png" } }),
+      );
+
+      await migrateAvatarSizes();
+      assert.equal((await sharp(outside).metadata()).width, 600, "linked file untouched");
+
+      rmSync(resolve(dir, "home/avatar.png"));
+      writeFileSync(resolve(dir, "home/avatar.png"), await makePng(600));
+      await migrateAvatarSizes();
+      assert.equal((await sharp(resolve(dir, "home/avatar.png")).metadata()).width, AVATAR_DIM);
+    } finally {
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

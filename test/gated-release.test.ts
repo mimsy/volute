@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { promisify } from "node:util";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
@@ -883,6 +895,68 @@ describe("gated-channel release (#537)", () => {
         "rejects rather than clobbering",
       );
       assert.equal(readFileSync(routesPath(name), "utf-8"), broken, "file left untouched");
+    });
+
+    // The mind owns routes.json and the daemon may be root (#1167): a link it planted
+    // there or at .config/ must refuse rather than aim the daemon's read or write.
+    it("refuses a routes.json the mind swapped for a symlink, leaving the target alone", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      manager = makeManager().manager;
+      const outside = resolve(routesPath(name), "../../../outside.json");
+      writeFileSync(outside, '{"rules":[]}');
+      rmSync(routesPath(name));
+      symlinkSync(outside, routesPath(name));
+
+      await assert.rejects(() => manager!.acceptChannel(name, "discord:general"), /unreadable/);
+      assert.equal(readFileSync(outside, "utf-8"), '{"rules":[]}', "target untouched");
+      assert.ok(lstatSync(routesPath(name)).isSymbolicLink(), "link left for the mind");
+    });
+
+    it("refuses a .config/ linked out of the mind, writing nothing there", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      manager = makeManager().manager;
+      const elsewhere = mkdtempSync(resolve(tmpdir(), "routes-elsewhere-"));
+      try {
+        const config = resolve(routesPath(name), "..");
+        rmSync(config, { recursive: true });
+        symlinkSync(elsewhere, config);
+        await assert.rejects(() => manager!.acceptChannel(name, "discord:general"));
+        assert.deepEqual(readdirSync(elsewhere), []);
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses a FIFO at routes.json instead of hanging", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      manager = makeManager().manager;
+      rmSync(routesPath(name));
+      await promisify(execFile)("mkfifo", [routesPath(name)]);
+      const outcome = await Promise.race([
+        manager.acceptChannel(name, "discord:general").then(
+          () => "accepted",
+          () => "refused",
+        ),
+        new Promise((r) => setTimeout(() => r("hung"), 5000).unref()),
+      ]);
+      assert.equal(outcome, "refused");
+    });
+
+    it("creates routes.json by replacing, leaving no temp file behind", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      manager = makeManager().manager;
+      rmSync(routesPath(name));
+      await manager.acceptChannel(name, "discord:general", "discord");
+      const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
+      assert.equal(written.rules?.[0]?.channel, "discord:general");
+      assert.deepEqual(
+        readdirSync(resolve(routesPath(name), "..")).filter((f) => f.endsWith(".tmp")),
+        [],
+      );
     });
   });
 

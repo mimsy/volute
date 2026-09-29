@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { deliverEvent, MIND_LEVEL_THREAD, recordNotice } from "../chat/system-events.js";
 import { mindDir, voluteSystemDir } from "../mind/registry.js";
-import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../mind/volute-config.js";
+import { readVoluteConfig, type Schedule, updateMindVoluteConfig } from "../mind/volute-config.js";
 import { getPrompt } from "../prompts.js";
 import log from "../util/logger.js";
 import { ManagerNotReadyError } from "./manager-not-ready.js";
@@ -648,20 +648,22 @@ export class Scheduler {
       }
     }
 
-    try {
-      const dir = this.mindDirs.get(mindName) ?? mindDir(mindName);
-      const config = readVoluteConfig(dir);
-      if (!config?.schedules) return;
+    const dir = this.mindDirs.get(mindName) ?? mindDir(mindName);
+    updateMindVoluteConfig(mindName, dir, (config) => {
+      if (!config.schedules) return null;
       config.schedules = config.schedules.filter((s) => s.id !== scheduleId);
       if (config.schedules.length === 0) config.schedules = undefined;
-      writeVoluteConfig(dir, config);
-      slog.info(`removed one-time schedule "${scheduleId}" for ${mindName}`);
-    } catch (err) {
-      slog.error(
-        `failed to persist removal of schedule "${scheduleId}" for ${mindName} (removed from memory)`,
-        log.errorData(err),
-      );
-    }
+      return config;
+    }).then(
+      (wrote) => {
+        if (wrote) slog.info(`removed one-time schedule "${scheduleId}" for ${mindName}`);
+      },
+      (err) =>
+        slog.error(
+          `failed to persist removal of schedule "${scheduleId}" for ${mindName} (removed from memory)`,
+          log.errorData(err),
+        ),
+    );
   }
 
   /**

@@ -5,11 +5,12 @@ import { z } from "zod";
 import { getScheduler } from "../../lib/daemon/scheduler.js";
 import { getSleepManagerIfReady } from "../../lib/daemon/sleep-manager.js";
 import { upsertEventRule } from "../../lib/mind/event-routes.js";
-import { findMind, mindDir } from "../../lib/mind/registry.js";
+import { mindFileOwner } from "../../lib/mind/isolation.js";
+import { findMind, getBaseName, mindDir } from "../../lib/mind/registry.js";
 import {
   readVoluteConfig,
   type Schedule,
-  writeMindVoluteConfig,
+  updateMindVoluteConfig,
 } from "../../lib/mind/volute-config.js";
 import log from "../../lib/util/logger.js";
 import { fireWebhook } from "../../lib/webhook.js";
@@ -181,10 +182,24 @@ export function computeClockEvents(
   return { upcoming: withinHorizon, previous };
 }
 
-async function writeSchedules(name: string, dir: string, schedules: Schedule[]): Promise<void> {
-  const config = readVoluteConfig(dir) ?? {};
-  config.schedules = schedules.length > 0 ? schedules : undefined;
-  await writeMindVoluteConfig(name, dir, config);
+/**
+ * Apply `mutate` to the mind's schedules and write them back, under one read-modify-write
+ * of volute.json — a mind's parallel `clock add` calls must not drop each other's
+ * schedule. `mutate` returns null to write nothing; the result is what was written.
+ */
+async function writeSchedules(
+  name: string,
+  dir: string,
+  mutate: (schedules: Schedule[]) => Schedule[] | null,
+): Promise<Schedule[] | null> {
+  let schedules: Schedule[] | null = null;
+  await updateMindVoluteConfig(name, dir, (config) => {
+    schedules = mutate(config.schedules ?? []);
+    if (!schedules) return null;
+    config.schedules = schedules.length > 0 ? schedules : undefined;
+    return config;
+  });
+  if (!schedules) return null;
   getScheduler().loadSchedules(name, dir);
   getSleepManagerIfReady()?.invalidateSleepConfig(name);
   fireWebhook({
@@ -192,6 +207,12 @@ async function writeSchedules(name: string, dir: string, schedules: Schedule[]):
     mind: name,
     data: { schedules },
   });
+  return schedules;
+}
+
+/** The owner a routes.json write for this mind hands new files to. */
+async function routesOwner(name: string) {
+  return mindFileOwner(await getBaseName(name));
 }
 
 const app = new Hono<AuthEnv>()
@@ -247,15 +268,14 @@ const app = new Hono<AuthEnv>()
     }
 
     const dir = entry.dir ?? mindDir(name);
-    const config = readVoluteConfig(dir) ?? {};
-    const sleep = config.sleep ?? {};
-
-    if (body.enabled !== undefined) sleep.enabled = body.enabled;
-    if (body.schedule !== undefined) sleep.schedule = body.schedule;
-    if (body.wakeTriggers !== undefined) sleep.wakeTriggers = body.wakeTriggers;
-
-    config.sleep = sleep;
-    await writeMindVoluteConfig(name, dir, config);
+    await updateMindVoluteConfig(name, dir, (config) => {
+      const sleep = config.sleep ?? {};
+      if (body.enabled !== undefined) sleep.enabled = body.enabled;
+      if (body.schedule !== undefined) sleep.schedule = body.schedule;
+      if (body.wakeTriggers !== undefined) sleep.wakeTriggers = body.wakeTriggers;
+      config.sleep = sleep;
+      return config;
+    });
 
     getSleepManagerIfReady()?.invalidateSleepConfig(name);
 
@@ -307,12 +327,7 @@ const app = new Hono<AuthEnv>()
     }
 
     const dir = entry.dir ?? mindDir(name);
-    const schedules = readSchedules(dir);
     const id = body.id;
-
-    if (schedules.some((s) => s.id === id)) {
-      return c.json({ error: `Schedule "${id}" already exists` }, 409);
-    }
 
     const schedule: Schedule = { id, enabled: body.enabled ?? true };
     if (body.cron) schedule.cron = body.cron;
@@ -321,11 +336,18 @@ const app = new Hono<AuthEnv>()
     if (body.messages?.length) schedule.messages = body.messages;
     if (body.script) schedule.script = body.script;
     if (body.whileSleeping) schedule.whileSleeping = body.whileSleeping;
-    schedules.push(schedule);
-    await writeSchedules(name, dir, schedules);
+    const added = await writeSchedules(name, dir, (schedules) =>
+      schedules.some((s) => s.id === id) ? null : [...schedules, schedule],
+    );
+    if (!added) return c.json({ error: `Schedule "${id}" already exists` }, 409);
     // `--thread` is sugar for a routes.json event rule (#736) — schedule-fire routing
     // lives in routes.json, not on the schedule itself.
-    if (body.thread) upsertEventRule(dir, `schedule:${id}`, body.thread, name);
+    if (body.thread) {
+      await upsertEventRule(dir, `schedule:${id}`, body.thread, {
+        owner: await routesOwner(name),
+        name,
+      });
+    }
     return c.json({ ok: true, id }, 201);
   })
   // Update schedule
@@ -335,10 +357,6 @@ const app = new Hono<AuthEnv>()
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     const dir = entry.dir ?? mindDir(name);
-
-    const schedules = readSchedules(dir);
-    const idx = schedules.findIndex((s) => s.id === id);
-    if (idx === -1) return c.json({ error: "Schedule not found" }, 404);
 
     const body = c.req.valid("json");
     const messagesErr = validateMessages(body.messages);
@@ -352,52 +370,70 @@ const app = new Hono<AuthEnv>()
       } catch {
         return c.json({ error: `Invalid cron expression: ${body.cron}` }, 400);
       }
-      schedules[idx].cron = body.cron;
-      delete schedules[idx].fireAt;
     }
-    if (body.fireAt !== undefined) {
-      if (Number.isNaN(new Date(body.fireAt).getTime())) {
-        return c.json({ error: `Invalid fireAt date: ${body.fireAt}` }, 400);
+    if (body.fireAt !== undefined && Number.isNaN(new Date(body.fireAt).getTime())) {
+      return c.json({ error: `Invalid fireAt date: ${body.fireAt}` }, 400);
+    }
+
+    let refusal: { error: string; status: 400 | 404 } | null = null;
+    const written = await writeSchedules(name, dir, (schedules) => {
+      const idx = schedules.findIndex((s) => s.id === id);
+      if (idx === -1) {
+        refusal = { error: "Schedule not found", status: 404 };
+        return null;
       }
-      schedules[idx].fireAt = body.fireAt;
-      delete schedules[idx].cron;
-    }
-    if (body.message !== undefined) {
-      schedules[idx].message = body.message;
-      delete schedules[idx].script;
-      delete schedules[idx].messages;
-    }
-    if (body.messages !== undefined) {
-      if (body.messages.length > 0) {
-        schedules[idx].messages = body.messages;
-        delete schedules[idx].message;
-        delete schedules[idx].script;
-      } else {
-        delete schedules[idx].messages;
+      const result = { ...schedules[idx] };
+      if (body.cron !== undefined) {
+        result.cron = body.cron;
+        delete result.fireAt;
       }
+      if (body.fireAt !== undefined) {
+        result.fireAt = body.fireAt;
+        delete result.cron;
+      }
+      if (body.message !== undefined) {
+        result.message = body.message;
+        delete result.script;
+        delete result.messages;
+      }
+      if (body.messages !== undefined) {
+        if (body.messages.length > 0) {
+          result.messages = body.messages;
+          delete result.message;
+          delete result.script;
+        } else {
+          delete result.messages;
+        }
+      }
+      if (body.script !== undefined) {
+        result.script = body.script;
+        delete result.message;
+        delete result.messages;
+      }
+      if (body.enabled !== undefined) result.enabled = body.enabled;
+      if (body.whileSleeping !== undefined) result.whileSleeping = body.whileSleeping || undefined;
+
+      // An action-field edit must not strip the schedule down to nothing — an
+      // actionless schedule would silently warn+skip on every fire.
+      const touchedAction =
+        body.message !== undefined || body.messages !== undefined || body.script !== undefined;
+      if (touchedAction && !result.message && !result.messages?.length && !result.script) {
+        refusal = { error: "schedule must keep a message, messages, or script", status: 400 };
+        return null;
+      }
+      return schedules.map((s, i) => (i === idx ? result : s));
+    });
+    if (!written) {
+      const r = refusal as { error: string; status: 400 | 404 } | null;
+      return c.json({ error: r?.error ?? "Schedule not found" }, r?.status ?? 404);
     }
-    if (body.script !== undefined) {
-      schedules[idx].script = body.script;
-      delete schedules[idx].message;
-      delete schedules[idx].messages;
-    }
-    if (body.enabled !== undefined) schedules[idx].enabled = body.enabled;
     // `--thread` writes/updates a routes.json event rule (#736); an empty value clears it.
-    if (body.thread !== undefined)
-      upsertEventRule(dir, `schedule:${id}`, body.thread || null, name);
-    if (body.whileSleeping !== undefined)
-      schedules[idx].whileSleeping = body.whileSleeping || undefined;
-
-    // An action-field edit must not strip the schedule down to nothing — an
-    // actionless schedule would silently warn+skip on every fire.
-    const touchedAction =
-      body.message !== undefined || body.messages !== undefined || body.script !== undefined;
-    const result = schedules[idx];
-    if (touchedAction && !result.message && !result.messages?.length && !result.script) {
-      return c.json({ error: "schedule must keep a message, messages, or script" }, 400);
+    if (body.thread !== undefined) {
+      await upsertEventRule(dir, `schedule:${id}`, body.thread || null, {
+        owner: await routesOwner(name),
+        name,
+      });
     }
-
-    await writeSchedules(name, dir, schedules);
     return c.json({ ok: true });
   })
   // Delete schedule
@@ -408,15 +444,13 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     const dir = entry.dir ?? mindDir(name);
 
-    const schedules = readSchedules(dir);
-    const filtered = schedules.filter((s) => s.id !== id);
-    if (filtered.length === schedules.length) {
-      return c.json({ error: "Schedule not found" }, 404);
-    }
-
-    await writeSchedules(name, dir, filtered);
+    const removed = await writeSchedules(name, dir, (schedules) => {
+      const filtered = schedules.filter((s) => s.id !== id);
+      return filtered.length === schedules.length ? null : filtered;
+    });
+    if (!removed) return c.json({ error: "Schedule not found" }, 404);
     // Drop the schedule's routing rule too, so a deleted schedule leaves nothing behind.
-    upsertEventRule(dir, `schedule:${id}`, null, name);
+    await upsertEventRule(dir, `schedule:${id}`, null, { owner: await routesOwner(name), name });
     return c.json({ ok: true });
   })
   // Webhook endpoint

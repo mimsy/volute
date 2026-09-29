@@ -145,13 +145,13 @@ describe("spirit orientation arc", () => {
     for (const s of arc) assert.equal(s.enabled, true);
   });
 
-  it("ensureOrientationArc writes schedules into volute.json idempotently", () => {
+  it("ensureOrientationArc writes schedules into volute.json idempotently", async () => {
     const dir = mkdtempSync(resolve(tmpdir(), "spirit-arc-"));
     scratch.push(dir);
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     const t0 = new Date("2026-07-17T12:00:00Z");
-    ensureOrientationArc(dir, t0);
-    ensureOrientationArc(dir, t0);
+    await ensureOrientationArc(dir, null, t0);
+    await ensureOrientationArc(dir, null, t0);
     const config = readVoluteConfig(dir);
     const ids = (config?.schedules ?? []).map((s) => s.id);
     assert.deepEqual(ids.filter((i) => i.startsWith("orientation-")).sort(), [
@@ -216,7 +216,7 @@ describe("applyStashedSpiritProfile", () => {
     writeGlobalConfig(config);
   });
 
-  it("moves the stash into the spirit home and volute.json", () => {
+  it("moves the stash into the spirit home and volute.json", async () => {
     const dir = mkdtempSync(resolve(tmpdir(), "spirit-stash-"));
     scratch.push(dir);
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
@@ -229,7 +229,7 @@ describe("applyStashedSpiritProfile", () => {
     writeGlobalConfig(config);
     writeFileSync(resolve(voluteSystemDir(), "spirit-avatar.png"), Buffer.from("fakepng"));
 
-    const result = applyStashedSpiritProfile(dir);
+    const result = await applyStashedSpiritProfile(dir);
     assert.deepEqual(result, { hasAvatar: true, hasDescription: true });
     assert.ok(existsSync(resolve(dir, "home/spirit-avatar.png")));
     const vc = readVoluteConfig(dir);
@@ -238,7 +238,7 @@ describe("applyStashedSpiritProfile", () => {
     assert.ok(!existsSync(resolve(voluteSystemDir(), "spirit-avatar.png")), "stash cleaned up");
   });
 
-  it("is a safe no-op with nothing stashed", () => {
+  it("is a safe no-op with nothing stashed", async () => {
     const dir = mkdtempSync(resolve(tmpdir(), "spirit-stash-empty-"));
     scratch.push(dir);
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
@@ -249,6 +249,9 @@ describe("applyStashedSpiritProfile", () => {
       spiritDescription: undefined,
     };
     writeGlobalConfig(config);
-    assert.deepEqual(applyStashedSpiritProfile(dir), { hasAvatar: false, hasDescription: false });
+    assert.deepEqual(await applyStashedSpiritProfile(dir), {
+      hasAvatar: false,
+      hasDescription: false,
+    });
   });
 });
