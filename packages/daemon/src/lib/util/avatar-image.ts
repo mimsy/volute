@@ -179,7 +179,12 @@ export async function renderAvatarBlock(
   }
 
   return [
-    { type: "text", text: `[Avatar for ${label}]` },
+    // Says what the image is on its own: the Claude CLI follows inlined images with a bare
+    // `[Image: source: <path>]` line, which minds read as an attachment unless this does.
+    {
+      type: "text",
+      text: `[${label}'s profile picture — shown when you first meet them in a thread, not something they sent]`,
+    },
     { type: "image", media_type: mediaType, data: base64 },
   ];
 }

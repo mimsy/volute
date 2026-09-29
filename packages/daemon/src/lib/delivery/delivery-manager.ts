@@ -268,6 +268,28 @@ export function withHeldPreface(payload: DeliveryPayload): WirePayload {
  * `peek` — the latest peek's thread and time — so it isn't met as new and answered twice
  * (#1172). Informational only: nothing is held back.
  */
+/**
+ * Open the content with participants' avatars. Applied after every preface and the since
+ * note, so the avatars sit directly under the mind-side header (which the router puts on the
+ * first text block, beside the Participants list they illustrate) rather than after a wall
+ * of other-thread activity that makes them read as something the sender attached.
+ */
+export function withAvatars<T extends { content?: unknown }>(
+  payload: T,
+  avatars: AvatarBlock[],
+): T {
+  if (avatars.length === 0) return payload;
+  const content = payload.content;
+  const existing = Array.isArray(content)
+    ? content
+    : typeof content === "string"
+      ? [{ type: "text" as const, text: content }]
+      : content == null
+        ? []
+        : [content];
+  return { ...payload, content: [...avatars, ...existing] };
+}
+
 function withPeekedPreface(wire: WirePayload): WirePayload {
   const { peeked, ...rest } = wire;
   if (!peeked) return wire;
@@ -2648,19 +2670,23 @@ export class DeliveryManager {
         onMindEvent(baseName, "delivery", payload.channel);
 
         // Enrich with participant profiles on first encounter per channel
-        const enrichedPayload = withSinceNote(
-          withHeldPreface(await this.enrichWithProfiles(baseName, session, payload)),
-          // A turn this message starts opens with what the mind's other threads did in
-          // between (#939). One that folds into a running turn adds nothing.
-          ownsSlot
-            ? await sinceNoteFor(mindName, {
-                mind: baseName,
-                thread: session,
-                channels: [payload.channel],
-                conversationIds: [payload.conversationId],
-                waited: this.waitFor([queueId]),
-              })
-            : null,
+        const enriched = await this.enrichWithProfiles(baseName, session, payload);
+        const enrichedPayload = withAvatars(
+          withSinceNote(
+            withHeldPreface(enriched.payload),
+            // A turn this message starts opens with what the mind's other threads did in
+            // between (#939). One that folds into a running turn adds nothing.
+            ownsSlot
+              ? await sinceNoteFor(mindName, {
+                  mind: baseName,
+                  thread: session,
+                  channels: [payload.channel],
+                  conversationIds: [payload.conversationId],
+                  waited: this.waitFor([queueId]),
+                })
+              : null,
+          ),
+          enriched.avatars,
         );
 
         const body = JSON.stringify({
@@ -2832,11 +2858,13 @@ export class DeliveryManager {
         isFirstForChannel.push(!firstPerChannel.has(ch));
         firstPerChannel.add(ch);
       }
+      const avatarsByMessage: AvatarBlock[][] = messages.map(() => []);
       const enrichedMessages = await Promise.all(
         messages.map(async (msg, i) => {
           if (!isFirstForChannel[i]) return msg;
-          const enrichedPayload = await this.enrichWithProfiles(baseName, session, msg.payload);
-          return { ...msg, payload: enrichedPayload };
+          const enriched = await this.enrichWithProfiles(baseName, session, msg.payload);
+          avatarsByMessage[i] = enriched.avatars;
+          return { ...msg, payload: enriched.payload };
         }),
       ).then((msgs) => msgs.map((m) => ({ ...m, payload: withHeldPreface(m.payload) })));
       // A turn this batch starts opens with what the mind's other threads did in between
@@ -2853,6 +2881,12 @@ export class DeliveryManager {
         enrichedMessages[0] = {
           ...enrichedMessages[0],
           payload: withSinceNote(enrichedMessages[0].payload, note),
+        };
+      }
+      for (let i = 0; i < enrichedMessages.length; i++) {
+        enrichedMessages[i] = {
+          ...enrichedMessages[i],
+          payload: withAvatars(enrichedMessages[i].payload, avatarsByMessage[i]),
         };
       }
 
@@ -3212,11 +3246,12 @@ export class DeliveryManager {
     mindName: string,
     session: string,
     payload: DeliveryPayload,
-  ): Promise<DeliveryPayload> {
-    if (!payload.conversationId || !payload.channel) return payload;
+  ): Promise<{ payload: DeliveryPayload; avatars: AvatarBlock[] }> {
+    const none = { payload, avatars: [] };
+    if (!payload.conversationId || !payload.channel) return none;
     const mindSessions = this.sessionStates.get(mindName);
     const state = mindSessions?.get(session);
-    if (!state) return payload;
+    if (!state) return none;
 
     const channelKey = payload.channel;
     const profilesSeen = state.seenChannelProfiles.has(channelKey);
@@ -3231,10 +3266,11 @@ export class DeliveryManager {
     const freshChannelInfo =
       ctx && state.announcedChannelInfo.get(channelKey) !== ctx.updatedAt ? ctx : null;
 
-    if (profilesSeen && !freshChannelInfo) return payload;
+    if (profilesSeen && !freshChannelInfo) return none;
 
     try {
       const enriched: DeliveryPayload = { ...payload };
+      let avatars: AvatarBlock[] = [];
 
       if (freshChannelInfo) {
         enriched.channelInfo = freshChannelInfo.info;
@@ -3250,24 +3286,15 @@ export class DeliveryManager {
           description: p.description,
         })) satisfies ParticipantProfile[];
 
-        // Read avatar images and prepend as image blocks
-        const avatarBlocks = await this.loadAvatarBlocks(participants);
-
+        // Avatar images go back separately: the caller prepends them last (withAvatars)
+        avatars = await this.loadAvatarBlocks(participants);
         state.seenChannelProfiles.add(channelKey);
-        if (avatarBlocks.length > 0) {
-          const existing = Array.isArray(payload.content)
-            ? payload.content
-            : typeof payload.content === "string"
-              ? [{ type: "text" as const, text: payload.content }]
-              : [];
-          enriched.content = [...avatarBlocks, ...existing];
-        }
       }
 
-      return enriched;
+      return { payload: enriched, avatars };
     } catch (err) {
       dlog.warn(`failed to fetch participant profiles for ${mindName}`, log.errorData(err));
-      return payload;
+      return none;
     }
   }
 

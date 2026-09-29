@@ -62,7 +62,10 @@ describe("renderAvatarBlock", () => {
     const blocks = await renderAvatarBlock(path, "someone");
     assert.ok(blocks);
     assert.equal(blocks.length, 2);
-    assert.deepEqual(blocks[0], { type: "text", text: "[Avatar for someone]" });
+    assert.deepEqual(blocks[0], {
+      type: "text",
+      text: "[someone's profile picture — shown when you first meet them in a thread, not something they sent]",
+    });
 
     const image = blocks[1];
     assert.ok(image.type === "image");

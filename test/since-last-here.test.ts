@@ -657,6 +657,64 @@ describe("since-last-here: every turn-starting path carries the note (#939)", ()
     await removeMind(name);
   });
 
+  /** Stub the profile lookup so the first delivery carries one avatar. */
+  function withAvatar(m: DeliveryManager): void {
+    (m as any).enrichWithProfiles = async (_mind: string, _session: string, payload: unknown) => ({
+      payload,
+      avatars: [
+        { type: "text", text: "[alice's profile picture]" },
+        { type: "image", media_type: "image/png", data: "AAAA" },
+      ],
+    });
+  }
+
+  /** Block kinds in order: avatar label, image, since note (which the message rides on). */
+  function shape(content: any[]): string[] {
+    return content.map((b) =>
+      b.type === "image"
+        ? "image"
+        : b.text.startsWith("[alice's profile picture]")
+          ? "avatar"
+          : b.text.startsWith("[since this thread's last turn")
+            ? "since"
+            : b.text,
+    );
+  }
+
+  it("an immediate delivery puts avatars before the note, next to the header", async () => {
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+    await withNews(name);
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    withAvatar(manager);
+
+    await manager.routeAndDeliver(name, { channel: "@alice", sender: "alice", content: "hi" });
+    await waitFor(() => srv.received.length === 1);
+    const content = srv.received[0].content;
+    assert.deepEqual(shape(content), ["avatar", "image", "since"]);
+    assert.match(content[2].text, /\n\nhi$/);
+    await removeMind(name);
+  });
+
+  it("a batch delivery puts avatars before the note, next to the header", async () => {
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, BATCH);
+    await withNews(name);
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    withAvatar(manager);
+
+    await manager.routeAndDeliver(name, { channel: "@alice", sender: "alice", content: "hi" });
+    await waitFor(() => srv.received.length === 1);
+    const [first] = Object.values(srv.received[0].batch.channels)[0] as any[];
+    assert.deepEqual(shape(first.content), ["avatar", "image", "since"]);
+    assert.match(first.content[2].text, /\n\nhi$/);
+    await removeMind(name);
+  });
+
   it("not a delivery that folds into a turn already running on the thread", async () => {
     const srv = await startMindServer();
     servers.push(srv.server);
