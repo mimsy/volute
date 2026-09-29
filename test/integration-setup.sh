@@ -88,6 +88,7 @@ echo "  Image: $IMAGE"
 ENV_ARGS=()
 [[ -n "${ANTHROPIC_API_KEY:-}" ]] && ENV_ARGS+=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
 [[ -n "${OPENROUTER_API_KEY:-}" ]] && ENV_ARGS+=(-e "OPENROUTER_API_KEY=$OPENROUTER_API_KEY")
+[[ -n "${OPENAI_API_KEY:-}" ]] && ENV_ARGS+=(-e "OPENAI_API_KEY=$OPENAI_API_KEY")
 
 echo "Starting container on port $HOST_PORT..."
 if ! docker run -d --name "$CONTAINER" \
@@ -213,6 +214,17 @@ if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
     -d "{\"value\":\"$OPENROUTER_API_KEY\"}" \
     "http://localhost:$HOST_PORT/api/v1/env/OPENROUTER_API_KEY" >/dev/null 2>&1 || true
   echo "  OPENROUTER_API_KEY set for minds"
+fi
+
+# Set OPENAI_API_KEY as a global env var if present (codex minds, tested on openai-codex:gpt-6-luna)
+if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+  curl -sf -X PUT \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Origin: http://localhost:$HOST_PORT" \
+    -d "{\"value\":\"$OPENAI_API_KEY\"}" \
+    "http://localhost:$HOST_PORT/api/v1/env/OPENAI_API_KEY" >/dev/null 2>&1 || true
+  echo "  OPENAI_API_KEY set for minds"
 fi
 
 # Save connection info (restricted permissions, quoted values)

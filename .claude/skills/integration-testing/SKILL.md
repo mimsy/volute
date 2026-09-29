@@ -10,7 +10,8 @@ Run end-to-end tests with real minds in Docker containers. Integration tests ver
 ## Core Principles
 
 - **Use the real system.** Set up via `volute setup`, configure providers via API, create minds via API. Do not manually write config files or bypass the system.
-- **Test multiple templates.** Always test with at least 2 minds using different templates (claude + pi). Template differences can hide bugs.
+- **Test multiple templates.** Always test with at least 2 minds using different templates (claude + pi), and add a codex mind whenever the change touches codex or anything template-wide. Template differences can hide bugs.
+- **Codex minds use `openai-codex:gpt-6-luna`.** Don't use another OpenAI model for testing.
 - **Verify each step.** Check logs and API responses after every action. Do not assume success — confirm with evidence.
 - **Let minds act organically.** Do not tell minds what commands to run. Set up the context (plan, skills, #system messages) and observe whether they discover and use features on their own.
 - **Report what actually happened.** Distinguish between "the feature worked" and "I told the mind to use the feature and it did." The former is a real test; the latter is not.
@@ -43,6 +44,13 @@ curl -sf -X PUT -H "Content-Type: application/json" \
   -H "Origin: http://localhost:$HOST_PORT" \
   -d "{\"value\":\"$OPENROUTER_API_KEY\"}" \
   "http://localhost:$HOST_PORT/api/v1/env/OPENROUTER_API_KEY"
+
+# For codex template minds:
+curl -sf -X PUT -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Origin: http://localhost:$HOST_PORT" \
+  -d "{\"value\":\"$OPENAI_API_KEY\"}" \
+  "http://localhost:$HOST_PORT/api/v1/env/OPENAI_API_KEY"
 ```
 
 ### 3. Restart for Spirit Creation
@@ -84,6 +92,12 @@ curl -sf -X POST -H "Content-Type: application/json" \
 curl -sf -X POST -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" -H "Origin: http://localhost:$HOST_PORT" \
   -d '{"name":"atlas","template":"pi","model":"openrouter:anthropic/claude-sonnet-4"}' \
+  "http://localhost:$HOST_PORT/api/v1/minds"
+
+# Codex template (always gpt-6-luna)
+curl -sf -X POST -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" -H "Origin: http://localhost:$HOST_PORT" \
+  -d '{"name":"cx","template":"codex","model":"openai-codex:gpt-6-luna"}' \
   "http://localhost:$HOST_PORT/api/v1/minds"
 ```
 
