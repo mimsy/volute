@@ -27,7 +27,8 @@ import {
   isHomeOnlyArchive,
   overlayArchiveHome,
 } from "../mind/archive.js";
-import { TEMPLATE_BRANCH } from "../mind/upgrade.js";
+import { TEMPLATE_BRANCH } from "../mind/template-branch.js";
+import { establishTemplateBase, templateBranchPaths } from "../mind/upgrade.js";
 import { getMindPromptDefaults, getPrompt, getPromptIfCustom, substitute } from "../prompts.js";
 import { mindHistory } from "../schema.js";
 import { seedSkillBackfillLedger } from "../skill-backfill.js";
@@ -47,7 +48,6 @@ import {
   copyTemplateToDir,
   findTemplatesRoot,
   isInitInfrastructure,
-  listFiles,
   listInfrastructureOnDisk,
   type TemplateManifest,
 } from "../template/template.js";
@@ -119,10 +119,7 @@ export async function initTemplateBranch(
   mindName?: string,
   env?: NodeJS.ProcessEnv,
 ) {
-  const templateFiles = listFiles(composedDir)
-    .filter((f) => !f.startsWith(".init/") && !f.startsWith(".init\\"))
-    .filter((f) => (!f.startsWith("home/") && !f.startsWith("home\\")) || f === "home/VOLUTE.md")
-    .map((f) => manifest.rename[f] ?? f);
+  const templateFiles = templateBranchPaths(composedDir, manifest);
 
   const opts = { cwd: projectRoot, mindName, env };
 
@@ -746,6 +743,16 @@ function canonicalHome(dest: string): string {
   return join(realpathSync(dirname(dest)), basename(dest), "home");
 }
 
+/** Whether the archived mind was built on exactly the template this host has. */
+function archiveOnCurrentTemplate(manifest: ExportManifest): boolean {
+  if (!manifest.templateHash) return false;
+  try {
+    return manifest.templateHash === computeTemplateHash(manifest.template);
+  } catch {
+    return false;
+  }
+}
+
 /** Import a full archive (contains src/, home/, .mind/) — original behavior. */
 async function importFromFullArchive(
   tempDir: string,
@@ -798,12 +805,10 @@ async function importFromFullArchive(
 
     // Assign port and register
     const port = await nextPort();
+    // No template hash is stamped: the archive's src/ is whatever template the
+    // mind was on when it left, and a stamp of this host's would hide that from
+    // the staleness check. Left unset, the hash is measured from disk.
     await addMind(name, port, manifest.stage, manifest.template);
-    try {
-      await setMindTemplateHash(name, computeTemplateHash(manifest.template));
-    } catch (err) {
-      llog.warn(`failed to set template hash for ${name}`, log.errorData(err));
-    }
 
     // Set up per-mind user isolation
     const homeDir = resolve(dest, "home");
@@ -829,6 +834,24 @@ async function importFromFullArchive(
       } catch (err) {
         llog.error(`git setup failed for imported mind ${name}`, log.errorData(err));
         rmSync(resolve(dest, ".git"), { recursive: true, force: true });
+      }
+    }
+
+    // Give the new history a volute/template base, or the first upgrade merges
+    // two unrelated histories and conflicts on every template file (#1244). The
+    // current template is that base only when the archive says the mind was
+    // built on exactly it — then the mind's own edits to its code merge like any
+    // other. Otherwise the mind's own files are the base, which can't be newer
+    // than what it has. Non-fatal: an upgrade establishes one where missing.
+    if (existsSync(resolve(dest, ".git"))) {
+      try {
+        await establishTemplateBase(
+          dest,
+          manifest.template,
+          archiveOnCurrentTemplate(manifest) ? { composedFor: manifest.name } : "head",
+        );
+      } catch (err) {
+        llog.warn(`failed to establish a template base for ${name}`, log.errorData(err));
       }
     }
 

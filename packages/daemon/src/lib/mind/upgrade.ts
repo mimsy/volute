@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { readSystemsConfig } from "../config/systems-config.js";
 import { getMindManager } from "../daemon/mind-manager.js";
@@ -10,6 +11,8 @@ import {
   composeTemplate,
   copyTemplateToDir,
   findTemplatesRoot,
+  listFiles,
+  type TemplateManifest,
 } from "../template/template.js";
 import { computeTemplateHash } from "../template/template-hash.js";
 import { gitExec } from "../util/exec.js";
@@ -21,6 +24,7 @@ import { repairMechanicsDoc } from "./mechanics-doc.js";
 import { type MindFileOwner, writeMindFile } from "./mind-file-write.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import { findMind, mindDir, setMindTemplate, setMindTemplateHash } from "./registry.js";
+import { sharesTemplateBase, TEMPLATE_BRANCH } from "./template-branch.js";
 import { cleanupVariant } from "./variant-cleanup.js";
 import { restoreMergeDeletedHomeFiles } from "./variants.js";
 
@@ -37,9 +41,6 @@ export class UpgradeInProgressError extends Error {
     this.worktreeDir = worktreeDir;
   }
 }
-
-/** The orphan branch tracking the latest composed template files. */
-export const TEMPLATE_BRANCH = "volute/template";
 
 /** The worktree branch used to stage an in-progress upgrade merge. */
 export const UPGRADE_BRANCH = "upgrade";
@@ -193,6 +194,103 @@ async function updateTemplateBranch(projectRoot: string, template: string, mindN
     }
     rmSync(composedDir, { recursive: true, force: true });
   }
+}
+
+/**
+ * The paths volute/template tracks for a composed template: everything but
+ * `.init/` and home/ (save the mechanics-owned VOLUTE.md), under their on-disk
+ * names.
+ */
+export function templateBranchPaths(composedDir: string, manifest: TemplateManifest): string[] {
+  return listFiles(composedDir)
+    .filter((f) => !f.startsWith(".init/") && !f.startsWith(".init\\"))
+    .filter((f) => (!f.startsWith("home/") && !f.startsWith("home\\")) || f === "home/VOLUTE.md")
+    .map((f) => manifest.rename[f] ?? f);
+}
+
+/**
+ * Give a repo whose history shares nothing with volute/template a base it does
+ * share (#1244): a volute/template commit, recorded as a second parent of HEAD
+ * without changing HEAD's tree. The next {@link updateTemplateBranch} commits the
+ * current template on top of it, so the upgrade merges 3-way instead of as two
+ * unrelated histories — which conflicts on every template file that differs, on
+ * every upgrade, since nothing ever joins the two.
+ *
+ * The base has to be what the mind's files actually descend from. One *newer*
+ * than that is the dangerous error: every template change between the two reads
+ * as already applied, and the merge silently keeps the old code. So:
+ *
+ * - `{ composedFor }` — the current template, composed with that name. Only for
+ *   a mind known to descend from exactly this template (an archive whose recorded
+ *   template hash matches this host's), and only with the name its files were
+ *   composed for, so a rename since then arrives as a template change. The
+ *   mind's own edits to template files then merge like any other.
+ * - `"head"` — HEAD's own copy of each current template path, which can't be
+ *   newer than the mind. Where the mind edited a template file, the upgrade hands
+ *   it the template's version and the mind's stays in history. Paths the mind
+ *   added are left out of the base, so the merge keeps them.
+ *
+ * `"head"` is plumbing only — no worktree, no commit hooks — so nothing it does
+ * runs mind-authored code. The caller chowns the repo afterwards.
+ */
+export async function establishTemplateBase(
+  dir: string,
+  template: string,
+  base: "head" | { composedFor: string },
+): Promise<void> {
+  const opts = { cwd: dir };
+  const head = (await gitExec(["rev-parse", "HEAD"], opts)).trim();
+  // A volute/template made by an upgrade that found no base is an orphan of the
+  // current template — the very base this replaces.
+  await gitExec(["branch", "-D", TEMPLATE_BRANCH], opts).catch(() => {});
+
+  if (base === "head") {
+    const { composedDir, manifest } = composeTemplate(findTemplatesRoot(), template);
+    let paths: Set<string>;
+    try {
+      paths = new Set(templateBranchPaths(composedDir, manifest));
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
+    const entries = (await gitExec(["ls-tree", "-r", "-z", head], opts))
+      .split("\0")
+      .filter((e) => e && paths.has(e.slice(e.indexOf("\t") + 1)));
+    const indexDir = mkdtempSync(resolve(tmpdir(), "volute-template-base-"));
+    try {
+      const withIndex = { ...opts, env: { GIT_INDEX_FILE: resolve(indexDir, "index") } };
+      // ls-tree's "<mode> <type> <sha>\t<path>" is one of the forms --index-info reads.
+      await gitExec(["update-index", "-z", "--index-info"], {
+        ...withIndex,
+        stdin: entries.map((e) => `${e}\0`).join(""),
+      });
+      const tree = (await gitExec(["write-tree"], withIndex)).trim();
+      const commit = (await gitExec(["commit-tree", tree, "-m", "template base"], opts)).trim();
+      await gitExec(["update-ref", `refs/heads/${TEMPLATE_BRANCH}`, commit], opts);
+    } finally {
+      rmSync(indexDir, { recursive: true, force: true });
+    }
+  } else {
+    await updateTemplateBranch(dir, template, base.composedFor);
+  }
+
+  const joined = (
+    await gitExec(
+      [
+        "commit-tree",
+        `${head}^{tree}`,
+        "-p",
+        head,
+        "-p",
+        TEMPLATE_BRANCH,
+        "-m",
+        "adopt volute/template as a merge base",
+      ],
+      opts,
+    )
+  ).trim();
+  // Against the HEAD it was built on: a commit landing in between (the mind's
+  // auto-commit) fails this loudly rather than being dropped from the branch.
+  await gitExec(["update-ref", "HEAD", joined, head], opts);
 }
 
 const JSON_CONFLICT = Symbol("json-conflict");
@@ -850,6 +948,18 @@ async function runUpgradeCore(
     await gitExec(["branch", "-D", UPGRADE_BRANCH], { cwd: dir });
   } catch {
     // branch doesn't exist
+  }
+
+  // A mind whose history never joined volute/template (a full-archive import, or
+  // a repo made by the git init above) would merge as unrelated histories and
+  // conflict on every differing template file, every time (#1244).
+  if (!(await sharesTemplateBase(dir))) {
+    log.info(`establishing a volute/template merge base for ${mindName}`);
+    try {
+      await establishTemplateBase(dir, oldTemplate, "head");
+    } finally {
+      await chownMindDir(dir, mindName);
+    }
   }
 
   // Update template branch

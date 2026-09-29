@@ -1,6 +1,10 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { addHistoryToArchive, createExportArchive } from "@volute/daemon/lib/mind/archive.js";
+import {
+  addHistoryToArchive,
+  createExportArchive,
+  trustedTemplateHash,
+} from "@volute/daemon/lib/mind/archive.js";
 import { findMind, mindDir } from "@volute/daemon/lib/mind/registry.js";
 import { command } from "../lib/command.js";
 
@@ -45,6 +49,7 @@ const cmd = command({
       name,
       template: entry.template ?? "claude",
       stage: entry.stage,
+      templateHash: includeSrc ? await trustedTemplateHash(dir, entry.templateHash) : undefined,
       includeSrc,
       includeEnv,
       includeIdentity,
