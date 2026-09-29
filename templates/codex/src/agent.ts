@@ -455,10 +455,9 @@ export function createMind(options: {
       // missing (#1232). With this off, codex runs `<shell> -c` and doesn't replay its
       // login-shell snapshot, so commands see the environment set below.
       allow_login_shell: false,
-      // ZDOTDIR points zsh (which reads .zshenv on every start, login or not) at the
-      // mind's home/.zshenv with its VOLUTE env vars and PATH. That file never names
-      // VOLUTE_SESSION (the daemon rewrites it on every start), so the value set here
-      // survives it.
+      // Commands inherit the mind's environment (VOLUTE_* vars, PATH with home/.local/bin)
+      // whole. ZDOTDIR keeps zsh, which reads .zshenv on every start, on home/ — never the
+      // host's own dotfiles when the mind shares the host's HOME.
       shell_environment_policy: {
         inherit: "all" as const,
         ignore_default_excludes: true,

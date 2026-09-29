@@ -25,7 +25,7 @@ import {
 } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { prepareMindTmp } from "../mind/tmp-reaper.js";
-import { syncMindZshenv } from "../mind/zshenv.js";
+import { syncMindZshenv, wantsDaemonZshenv } from "../mind/zshenv.js";
 import { getPrompt } from "../prompts.js";
 import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
@@ -558,11 +558,14 @@ export class MindManager {
       }
     }
 
-    // Codex minds get home/.zshenv; every other template has a stale one removed.
+    // Codex minds on a login-shell template get home/.zshenv; every other mind has a
+    // stale one removed.
+    let writeZshenv = false;
     try {
-      await syncMindZshenv(dir, baseName, target.template, env);
+      writeZshenv = await wantsDaemonZshenv(dir, baseName, target.template);
+      await syncMindZshenv(dir, baseName, writeZshenv, env);
     } catch (err) {
-      if (target.template !== "codex") {
+      if (!writeZshenv) {
         mlog.warn(`failed to remove stale .zshenv for ${name}`, log.errorData(err));
       } else {
         // Refused (a link or FIFO where .zshenv goes) or failed: how a mind arranges its

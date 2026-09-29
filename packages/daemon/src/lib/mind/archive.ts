@@ -23,6 +23,7 @@ import { safeResolveWithinBase } from "../util/paths.js";
 import { initLedgerPath } from "./init-ledger.js";
 import { mindDir, stateDir } from "./registry.js";
 import { sharesTemplateBase } from "./template-branch.js";
+import { isDaemonZshenv } from "./zshenv.js";
 
 export type ExportManifest = {
   version: 1;
@@ -197,14 +198,14 @@ function isCodexEntry(relPath: string, patterns: RegExp[]): boolean {
 }
 
 /**
- * Secrets the daemon writes into a codex mind only, dropped from its exports.
- *
- * `home/.zshenv` restores the codex sandbox's environment, so the daemon writes
- * the mind's live `VOLUTE_MIND_TOKEN` into it on every start (`syncMindZshenv`).
- * Only for codex: every other template's `.zshenv`, if it has one, is the
- * mind's own.
+ * The daemon's `home/.zshenv` carries the mind's live `VOLUTE_MIND_TOKEN`
+ * (`syncMindZshenv`), so it never travels. Judged by content, not template: a
+ * codex mind past #1232 has no daemon file, and a `.zshenv` it wrote itself is
+ * as much its own as any other mind's.
  */
-const CODEX_EXCLUDED_PATHS = ["home/.zshenv"];
+function isDaemonSecretFile(relPath: string, data: Buffer): boolean {
+  return relPath === join("home", ".zshenv") && isDaemonZshenv(data.toString("utf-8"));
+}
 
 /**
  * SDK runtime state, carried only when the export was asked for sessions.
@@ -607,31 +608,28 @@ export function createExportArchive(options: ExportOptions): AdmZip {
   const state = safeRealpath(stateDir(name));
   const zip = new AdmZip();
   const format = includeSrc ? "full" : "home-only";
-  const templateExcluded = template === "codex" ? CODEX_EXCLUDED_PATHS : [];
 
   if (includeSrc) {
     // Full export: walk entire mind directory (original behavior)
     const files = walkDir(dir, undefined, includeSessions);
     for (const relPath of files) {
-      if (isUnder(relPath, templateExcluded)) continue;
       if (!includeIdentity && relPath.startsWith(join(".mind", "identity"))) continue;
       if (!includeConnectors && relPath.startsWith(join(".mind", "connectors"))) continue;
       const fullPath = resolve(dir, relPath);
       const file = readRegularFile(fullPath, dir);
-      if (!file) continue;
+      if (!file || isDaemonSecretFile(relPath, file.data)) continue;
       zip.addFile(`mind/${relPath}`, file.data);
     }
   } else {
     // Home-only export: listHomeFiles for home/, walkDir for .mind/
     for (const relPath of listHomeFiles(dir, includeSessions)) {
-      if (isUnder(relPath, templateExcluded)) continue;
       const fullPath = resolve(dir, relPath);
       // `git ls-files` reports symlinks — including dangling ones and ones
       // pointing at a directory — so this branch needs the same guard the walks
       // apply, or a mind's `home/memory/x ->` anywhere turns into an EISDIR
       // crash or an archived host file.
       const file = readRegularFile(fullPath, dir);
-      if (!file) continue;
+      if (!file || isDaemonSecretFile(relPath, file.data)) continue;
       // Modes matter here as they do nowhere else in the archive: `.local/bin/`
       // holds the mind's `volute` wrapper and its skill shims, which are only
       // useful executable. adm-zip stamps 0644 on an entry added without one.
