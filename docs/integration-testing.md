@@ -15,6 +15,7 @@ Docker is the canonical path for integration testing. It gives you a clean, isol
 - Docker
 - `ANTHROPIC_API_KEY` environment variable
 - `OPENROUTER_API_KEY` (optional, for pi-template minds using OpenRouter models)
+- `OPENAI_API_KEY` (optional, for codex-template minds, which are always tested on `openai-codex:gpt-6-luna`)
 
 #### Credentials via `.env` (recommended)
 
@@ -24,6 +25,7 @@ Put the keys in a `.env` file at the repo root (it's gitignored):
 # .env
 ANTHROPIC_API_KEY=sk-ant-...
 OPENROUTER_API_KEY=sk-or-...   # optional
+OPENAI_API_KEY=sk-...          # optional, codex minds
 ```
 
 `test/integration-setup.sh` and `test/docker-e2e.sh` auto-source this file, so
@@ -60,7 +62,7 @@ bash test/integration-teardown.sh
 2. Starts a container with a randomized port (or `--port N`)
 3. Waits for the daemon to become healthy
 4. Creates a test user account (`tester`/`tester`, auto-admin)
-5. Sets `OPENROUTER_API_KEY` as a global env var for minds (if present)
+5. Sets `OPENROUTER_API_KEY` and `OPENAI_API_KEY` as global env vars for minds (if present)
 6. Prints connection info and CLI usage examples
 
 Options:
@@ -134,6 +136,7 @@ V="docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY $CONTAINER volute"
 # Seed two minds with different templates
 $V seed create aria --template claude --model claude-sonnet-4-6
 $V seed create kimi --template pi --model "openrouter:moonshotai/kimi-k2.5"
+$V seed create cx --template codex --model "openai-codex:gpt-6-luna"
 
 # Talk to them and see their responses
 docker exec $CONTAINER volute chat send @aria "tell me about yourself" --wait
