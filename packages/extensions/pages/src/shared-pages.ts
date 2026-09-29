@@ -17,6 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { relative, resolve } from "node:path";
+import { chownTree } from "@volute/daemon/lib/util/chown-tree.js";
 import { buildMindBaseEnv } from "@volute/daemon/lib/util/mind-env.js";
 import { isMultiplyLinkedFile } from "./ownership.js";
 
@@ -34,14 +35,16 @@ export function isolationFrom(ctx: {
   return { isIsolationEnabled: ctx.isIsolationEnabled, getMindUser: ctx.getMindUser };
 }
 
-/** Run a command asynchronously. Resolves on success, rejects on error. Output is discarded. */
-function execAsync(cmd: string, args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    execFileCb(cmd, args, (err) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
+/**
+ * `chown -R` / `chgrp -R` for a pages tree, minus any file with a second name: a
+ * mind can hard-link a root-owned file into the tree, and re-owning the link
+ * re-owns the file (#1235). What it leaves alone is logged, not raised.
+ */
+async function chownPagesTree(path: string, owner: { user?: string; group: string }) {
+  const skipped = await chownTree(path, owner);
+  if (skipped.length > 0) {
+    console.warn(`[pages] left hard-linked files under ${path} with their owner: ${skipped}`);
+  }
 }
 
 /**
@@ -161,7 +164,7 @@ export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo
 
   if (isIso) {
     try {
-      await execAsync("chgrp", ["-R", "volute", dir]);
+      await chownPagesTree(dir, { group: "volute" });
     } catch {
       console.warn("[pages] failed to chgrp pages repo to volute group");
     }
@@ -220,7 +223,7 @@ export async function addPagesWorktree(
     const wtGitDir = readWorktreeGitDir(wt);
     for (const target of pagesIsolationChownPaths(mindDir, wtGitDir)) {
       try {
-        await execAsync("chown", ["-R", `${user}:volute`, target]);
+        await chownPagesTree(target, { user, group: "volute" });
       } catch {
         console.warn(`[pages] failed to chown ${target} for ${mindName}`);
       }
@@ -416,7 +419,7 @@ export async function pagesMerge(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        await execAsync("chown", ["-R", `${isolation.getMindUser(mindName)}:volute`, wt]);
+        await chownPagesTree(wt, { user: isolation.getMindUser(mindName), group: "volute" });
       } catch {
         // Non-fatal: mind still functions but may hit permission errors
       }
@@ -471,7 +474,7 @@ export async function pagesPull(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        await execAsync("chown", ["-R", `${isolation.getMindUser(mindName)}:volute`, wt]);
+        await chownPagesTree(wt, { user: isolation.getMindUser(mindName), group: "volute" });
       } catch {
         // best effort
       }
@@ -609,7 +612,7 @@ export async function pagesPullAndMerge(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        await execAsync("chown", ["-R", `${isolation.getMindUser(mindName)}:volute`, wt]);
+        await chownPagesTree(wt, { user: isolation.getMindUser(mindName), group: "volute" });
       } catch {
         // Non-fatal: mind still functions but may hit permission errors
       }

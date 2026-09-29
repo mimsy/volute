@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { constants, existsSync, readdirSync, type Stats, statSync } from "node:fs";
+import { constants, existsSync, type Stats, statSync } from "node:fs";
 import { type FileHandle, lstat, open } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { alertHost } from "../chat/system-events.js";
+import { chownBelow } from "../util/chown-tree.js";
 import { exec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { resolveRealWithinBase } from "../util/paths.js";
@@ -730,31 +731,22 @@ function ownedBy(path: string, uid: number): boolean {
 }
 
 /**
- * Decide which paths `chownMindDir` should recurse. For a full mind project dir,
- * node_modules dominates the tree; when it's already owned by the mind user (a
- * re-run), recursing the whole project needlessly walks tens of thousands of
- * files. "Owned" is judged by the node_modules inode alone — a heuristic, and one
- * a root-run npm defeats: it adds root-owned packages under a mind-owned
- * node_modules (#1231). npm itself runs as the mind, so `npmInstallAsMind`
- * reclaims the tree it is about to change with `reclaimNodeModules` rather than
- * trusting this. In that case we skip node_modules but still recurse every other
- * top-level entry (home/, .mind/, .git/, src/, package.json, …) — root-driven
+ * Whether `chownMindDir` may leave a full mind project's node_modules out of its
+ * walk. node_modules dominates the tree; when it's already owned by the mind user
+ * (a re-run), walking it is tens of thousands of needless stats. "Owned" is judged
+ * by the node_modules inode alone — a heuristic, and one a root-run npm defeats:
+ * it adds root-owned packages under a mind-owned node_modules (#1231). npm itself
+ * runs as the mind, so `npmInstallAsMind` reclaims the tree it is about to change
+ * with `reclaimNodeModules` rather than trusting this. Every other top-level entry
+ * (home/, .mind/, .git/, src/, package.json, …) is still walked — root-driven
  * flows like merge/upgrade write into .git as root, and those paths must be
- * re-chowned or the mind's own auto-commit later hits EACCES. Anything else (a
- * state/tmp/credential dir with no node_modules) is recursed whole.
+ * re-chowned or the mind's own auto-commit later hits EACCES.
  */
-export async function chownTargets(dir: string, user: string): Promise<string[]> {
+export async function skipNodeModules(dir: string, user: string): Promise<boolean> {
   const nodeModules = resolve(dir, "node_modules");
-  const home = resolve(dir, "home");
-  if (existsSync(nodeModules) && existsSync(home)) {
-    const uid = await userUid(user);
-    if (uid !== null && ownedBy(nodeModules, uid)) {
-      return readdirSync(dir)
-        .filter((entry) => entry !== "node_modules")
-        .map((entry) => resolve(dir, entry));
-    }
-  }
-  return [dir];
+  if (!existsSync(nodeModules) || !existsSync(resolve(dir, "home"))) return false;
+  const uid = await userUid(user);
+  return uid !== null && ownedBy(nodeModules, uid);
 }
 
 /**
@@ -768,39 +760,41 @@ export async function chownMindDir(dir: string, name: string): Promise<void> {
   let root: string;
   try {
     // Contained before anything is chowned or listed: callers hand us paths a
-    // mind can redirect (credential-sync passes `home/.claude`).
+    // mind can redirect (credential-sync passes `home/.claude`). That covers the
+    // components above the root; below it is chownBelow's.
     root = await containMindPath(dir, (st) => st.uid === ids.uid);
   } catch (err) {
     throw new Error(
       `Failed to chown ${dir} to ${user}:${group}: ${err instanceof Error ? err.message : err}`,
     );
   }
-  // `chown -R` never follows a symlink it is handed or finds in the tree: -P is
-  // the default under -R for both GNU and BSD chown, which act on the link
-  // itself and leave the inode it points at alone. That covers the final
-  // component and the walk only — links in the components above are
-  // containMindPath's job.
-  for (const target of await chownTargets(root, user)) {
-    try {
-      await exec("chown", ["-R", `${user}:${group}`, target]);
-    } catch (err) {
-      const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
-      throw new Error(
-        `Failed to chown ${target} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`,
-      );
-    }
+  let skipped: string[];
+  try {
+    const prune = (await skipNodeModules(root, user)) ? ["node_modules"] : [];
+    skipped = await chownBelow(root, { user, group }, { prune });
+  } catch (err) {
+    const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
+    throw new Error(`Failed to chown ${root} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`);
   }
-  // The narrowed target list above chowns the root's children, not the root
-  // itself, so set the root inode's owner non-recursively (a no-op when the loop
-  // already recursed it directly). Through a handle, never a path: a bare
-  // `chown` follows a symlinked root — `ln -s /etc home/.claude` would give the
-  // mind /etc.
+  // The root last, through a handle, never a path: the mind may own the root's
+  // parent (credential-sync hands us `home/.claude`) and swap the root for a
+  // symlink, which the handle refuses.
   try {
     await chownNoFollow(root, ids.uid, ids.gid, "dir");
   } catch (err) {
     throw new Error(
       `Failed to chown ${root} to ${user}:${group}: ${err instanceof Error ? err.message : err}`,
     );
+  }
+  // A log line, not an alert: nothing here needs the host to act, and a mind's
+  // own hard links (already its own) never land in this list.
+  if (skipped.length > 0) {
+    ilog.warn("left hard-linked files out of a mind's chown", {
+      mind: name,
+      dir: root,
+      count: skipped.length,
+      paths: skipped.slice(0, 20),
+    });
   }
   await lockPrivateSubtrees(root);
 }
@@ -892,7 +886,7 @@ export async function chownForeignOwned(
  * Skill installs ran npm as root until #1222, which left root-owned packages
  * (libsql and its dependencies) under a node_modules the mind otherwise owns.
  * npm-as-the-mind fails with EACCES on any install that must change them, and
- * `chownMindDir` never reached them — see `chownTargets`. The spirit's sync
+ * `chownMindDir` never reached them — see `skipNodeModules`. The spirit's sync
  * still runs npm as root, so the residue can come back; hence a pass before
  * every install rather than a one-time migration.
  *
@@ -988,8 +982,14 @@ async function withNoFollowHandle(
  * swapping the path for a link can't redirect it. Pair it with
  * `containMindPath` for the components above.
  *
+ * A file with a second name is refused (EMLINK) the same way: a hard link is the
+ * file itself, so re-owning a planted `ln /etc/sudoers x` hands over sudoers
+ * (#1235). The link count comes from the open handle, so the check and the chown
+ * see the same inode.
+ *
  * Throws the raw errno error: ELOOP (a symlink; macOS reports ENOTDIR for a
- * symlink opened as "dir"), ENOTDIR (not a directory), ENOENT (gone).
+ * symlink opened as "dir"), ENOTDIR (not a directory), ENOENT (gone), EMLINK
+ * (a hard-linked file).
  */
 export async function chownNoFollow(
   target: string,
@@ -997,9 +997,15 @@ export async function chownNoFollow(
   gid: number,
   kind: "dir" | "file",
 ): Promise<void> {
-  await withNoFollowHandle(target, kind === "dir" ? constants.O_DIRECTORY : 0, (handle) =>
-    handle.chown(uid, gid),
-  );
+  await withNoFollowHandle(target, kind === "dir" ? constants.O_DIRECTORY : 0, async (handle) => {
+    const st = await handle.stat();
+    if (!st.isDirectory() && st.nlink > 1) {
+      throw Object.assign(new Error(`EMLINK: ${target} has ${st.nlink} links, refusing to chown`), {
+        code: "EMLINK",
+      });
+    }
+    await handle.chown(uid, gid);
+  });
 }
 
 /** True for the errnos that mean "there is no directory of ours here to lock". */

@@ -15,18 +15,19 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { resolve } from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it, type TestContext } from "node:test";
 import {
   chownForeignOwned,
   chownNoFollow,
-  chownTargets,
   containMindPath,
   isIsolationEnabled,
   lockPrivateSubtrees,
   mindUserName,
+  skipNodeModules,
   wrapForIsolation,
 } from "../packages/daemon/src/lib/mind/isolation.js";
 import { addMind, addVariant, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import { chownBelow, chownTree } from "../packages/daemon/src/lib/util/chown-tree.js";
 
 describe("isolation", () => {
   const originalEnv = process.env.VOLUTE_ISOLATION;
@@ -112,31 +113,161 @@ describe("isolation", () => {
     assert.deepEqual(args, ["-u", "volute-bob", "--", "node", "index.js"]);
   });
 
-  it("chownTargets skips only node_modules when it is already owned", async () => {
+  it("skipNodeModules skips node_modules only when it is already owned", async () => {
     const dir = mkdtempSync(resolve(tmpdir(), "chown-narrow-"));
     mkdirSync(resolve(dir, "node_modules"));
     mkdirSync(resolve(dir, "home"));
-    mkdirSync(resolve(dir, ".mind"));
-    mkdirSync(resolve(dir, ".git"));
-    mkdirSync(resolve(dir, "src"));
     // node_modules was just created by this process, so it's owned by us.
-    const targets = await chownTargets(dir, userInfo().username);
-    // Every top-level entry is recursed except the (already-owned) node_modules,
-    // so root-created files (e.g. merge/upgrade git objects under .git) still get
-    // re-chowned.
-    assert.ok(!targets.includes(resolve(dir, "node_modules")), "node_modules should be skipped");
-    assert.ok(targets.includes(resolve(dir, ".git")), ".git must be re-chowned");
-    assert.deepEqual(
-      [...targets].sort(),
-      [
-        resolve(dir, ".git"),
-        resolve(dir, ".mind"),
-        resolve(dir, "home"),
-        resolve(dir, "src"),
-      ].sort(),
-    );
+    assert.equal(await skipNodeModules(dir, userInfo().username), true);
+    assert.equal(await skipNodeModules(dir, "no-such-user-xyz-123"), false);
   });
 
+  it("skipNodeModules walks everything when there is no node_modules", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "chown-plain-"));
+    mkdirSync(resolve(dir, "home"));
+    assert.equal(await skipNodeModules(dir, userInfo().username), false);
+  });
+
+  // #1235: a hard link is the file itself, so re-owning one hands the mind the
+  // file — `ln /private/etc/sudoers ~/home/x` needs no privilege on macOS. Not
+  // root here, so the tree is moved to another group we belong to: the same
+  // find/-execdir/chown pass, driven for real, with the group standing in for
+  // the owner.
+  describe("chownTree", () => {
+    const groups = (): { name: string; gid: number }[] => {
+      const names = execFileSync("id", ["-Gn"], { encoding: "utf-8" }).trim().split(/\s+/);
+      const ids = execFileSync("id", ["-G"], { encoding: "utf-8" }).trim().split(/\s+/);
+      return names.map((name, i) => ({ name, gid: Number(ids[i]) }));
+    };
+    /**
+     * A group we belong to that `path` is not in. With none there is no ownership
+     * change to observe: skipped locally, but a failure on CI, where a silent
+     * skip would mean the #1235 checks never ran at all.
+     */
+    const otherGroup = (t: TestContext, path: string) => {
+      const group = groups().find((g) => g.gid !== statSync(path).gid);
+      if (!group && process.env.CI) assert.fail("CI needs a supplementary group for this test");
+      if (!group) t.skip("no second group to move files to");
+      return group;
+    };
+    const seed = (prefix = "chown-tree-") => {
+      const base = realpathSync(mkdtempSync(resolve(tmpdir(), prefix)));
+      const root = resolve(base, "mind");
+      mkdirSync(resolve(root, "home", "deep"), { recursive: true });
+      writeFileSync(resolve(root, "home", "deep", "plain"), "");
+      // Stands in for /etc/sudoers: outside the tree, linked in by the mind.
+      writeFileSync(resolve(base, "sudoers"), "");
+      linkSync(resolve(base, "sudoers"), resolve(root, "home", "x"));
+      // Two names inside the tree are still one file with two names.
+      writeFileSync(resolve(root, "home", "twin-a"), "");
+      linkSync(resolve(root, "home", "twin-a"), resolve(root, "home", "deep", "twin-b"));
+      writeFileSync(resolve(base, "target"), "");
+      symlinkSync(resolve(base, "target"), resolve(root, "home", "link"));
+      return { base, root };
+    };
+
+    it("re-owns the tree but never a file with a second name", async (t) => {
+      const { base, root } = seed();
+      const group = otherGroup(t, root);
+      if (!group) return;
+      const skipped = await chownTree(root, { group: group.name });
+      for (const p of ["", "/home", "/home/deep", "/home/deep/plain", "/home/link"]) {
+        assert.equal(lstatSync(root + p).gid, group.gid, `${p || "root"} should be re-owned`);
+      }
+      for (const p of ["sudoers", "target"]) {
+        assert.notEqual(statSync(resolve(base, p)).gid, group.gid, `${p} must keep its owner`);
+      }
+      assert.notEqual(statSync(resolve(root, "home", "twin-a")).gid, group.gid);
+      assert.deepEqual(
+        [...skipped].sort(),
+        [
+          resolve(root, "home", "deep", "twin-b"),
+          resolve(root, "home", "twin-a"),
+          resolve(root, "home", "x"),
+        ].sort(),
+      );
+    });
+
+    it("leaves the root to the caller in chownBelow", async (t) => {
+      const { root } = seed();
+      const group = otherGroup(t, root);
+      if (!group) return;
+      await chownBelow(root, { group: group.name });
+      assert.notEqual(statSync(root).gid, group.gid, "chownMindDir re-owns the root by handle");
+      assert.equal(statSync(resolve(root, "home")).gid, group.gid);
+    });
+
+    it("reports a newline-named file as one entry, not two", async (t) => {
+      const { base, root } = seed();
+      const group = otherGroup(t, root);
+      if (!group) return;
+      const named = resolve(root, "home", "y\nz");
+      linkSync(resolve(base, "sudoers"), named);
+      const skipped = await chownBelow(root, { group: group.name });
+      assert.ok(skipped.includes(named), JSON.stringify(skipped));
+      assert.ok(!skipped.includes(resolve(root, "home", "y")), "no forged entry");
+      assert.equal(skipped.length, 4);
+    });
+
+    it("reports nothing in a tree already owned right, hard links and all", async (t) => {
+      const { root } = seed();
+      const gid = statSync(resolve(root, "home", "x")).gid;
+      const group = groups().find((g) => g.gid === gid);
+      // Files take the directory's group on macOS, the creator's on Linux; every
+      // entry must share one group for this tree to count as owned right.
+      if (!group || statSync(root).gid !== gid) return t.skip("tree spans groups");
+      assert.deepEqual(await chownTree(root, { user: userInfo().username, group: group.name }), []);
+    });
+
+    it("leaves a pruned top-level entry alone, even under a glob-shaped path", async (t) => {
+      const { root } = seed("chown-tree-[*]-");
+      mkdirSync(resolve(root, "node_modules", "pkg"), { recursive: true });
+      const group = otherGroup(t, root);
+      if (!group) return;
+      await chownBelow(root, { group: group.name }, { prune: ["node_modules"] });
+      assert.notEqual(statSync(resolve(root, "node_modules")).gid, group.gid);
+      assert.notEqual(statSync(resolve(root, "node_modules", "pkg")).gid, group.gid);
+      assert.equal(statSync(resolve(root, "home", "deep")).gid, group.gid);
+    });
+
+    it("does not descend a symlinked root", async (t) => {
+      const { base, root } = seed();
+      const group = otherGroup(t, root);
+      if (!group) return;
+      symlinkSync(root, resolve(base, "redirect"));
+      await chownTree(resolve(base, "redirect"), { group: group.name });
+      assert.notEqual(statSync(root).gid, group.gid);
+      assert.notEqual(statSync(resolve(root, "home", "deep", "plain")).gid, group.gid);
+    });
+
+    it("runs under a host PATH that GNU find would refuse for -execdir", async (t) => {
+      const { root } = seed();
+      const group = otherGroup(t, root);
+      if (!group) return;
+      const saved = process.env.PATH;
+      process.env.PATH = `:.:${saved}`;
+      try {
+        await chownTree(root, { group: group.name });
+      } finally {
+        process.env.PATH = saved;
+      }
+      assert.equal(statSync(resolve(root, "home", "deep", "plain")).gid, group.gid);
+    });
+
+    it("throws when a batched chown fails, rather than falling back", async () => {
+      const { root } = seed();
+      // A group that exists but we are not in: find selects every entry, and each
+      // batched chown gets EPERM — the failure must surface through find's exit.
+      const mine = new Set(groups().map((g) => g.gid));
+      const foreign = [0, 1, 2, 3, 4, 5].find((gid) => !mine.has(gid));
+      assert.ok(foreign !== undefined, "no low gid outside our groups");
+      await assert.rejects(
+        () => chownBelow(root, { group: String(foreign) }),
+        (err: Error & { stderr?: string }) => /chown/.test(err.stderr ?? ""),
+      );
+      await assert.rejects(() => chownTree(root, { group: String(foreign) }));
+    });
+  });
   // #1231: a root-run npm leaves root-owned packages under a node_modules whose
   // own inode is still the mind's, so the check must look inside, not at the top.
   describe("chownForeignOwned", () => {
@@ -184,21 +315,6 @@ describe("isolation", () => {
         }),
       );
     });
-  });
-
-  it("chownTargets recurses the whole dir when node_modules owner differs", async () => {
-    const dir = mkdtempSync(resolve(tmpdir(), "chown-owner-"));
-    mkdirSync(resolve(dir, "node_modules"));
-    mkdirSync(resolve(dir, "home"));
-    const targets = await chownTargets(dir, "no-such-user-xyz-123");
-    assert.deepEqual(targets, [dir]);
-  });
-
-  it("chownTargets recurses the whole dir when there is no node_modules", async () => {
-    const dir = mkdtempSync(resolve(tmpdir(), "chown-plain-"));
-    mkdirSync(resolve(dir, "home"));
-    const targets = await chownTargets(dir, userInfo().username);
-    assert.deepEqual(targets, [dir]);
   });
 
   // A mind's session transcripts live under home/.claude/projects, created by the
@@ -415,6 +531,17 @@ describe("isolation", () => {
       await chownNoFollow(file, uid, altGid, "file");
       assert.equal(gidOf(dir), altGid);
       assert.equal(gidOf(file), altGid);
+    });
+
+    it("refuses a file with a second name and leaves it alone", async () => {
+      // `ln /private/etc/sudoers home/avatar.png`: the link is sudoers itself.
+      const target = resolve(scratch("chown-hardlink-target-"), "sudoers");
+      writeFileSync(target, "x");
+      const link = resolve(scratch("chown-hardlink-"), "avatar.png");
+      linkSync(target, link);
+      const before = gidOf(target);
+      await assert.rejects(chownNoFollow(link, uid, altGid, "file"), { code: "EMLINK" });
+      assert.equal(gidOf(target), before, "the hard-linked file must be left alone");
     });
 
     it("refuses a file where a directory is expected", async () => {
