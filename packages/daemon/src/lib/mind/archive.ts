@@ -22,6 +22,7 @@ import { isInitInfrastructure } from "../template/template.js";
 import { safeResolveWithinBase } from "../util/paths.js";
 import { initLedgerPath } from "./init-ledger.js";
 import { mindDir, stateDir } from "./registry.js";
+import { sharesTemplateBase } from "./template-branch.js";
 
 export type ExportManifest = {
   version: 1;
@@ -31,6 +32,12 @@ export type ExportManifest = {
   exportedAt: string;
   format?: "home-only" | "full";
   stage?: "seed" | "sprouted";
+  /**
+   * The registry's hash of the template the mind was created or last upgraded
+   * to — what its template files descend from. A full import whose host
+   * composes the same hash uses that template as the mind's merge base (#1244).
+   */
+  templateHash?: string;
   includes: {
     env: boolean;
     identity: boolean;
@@ -44,6 +51,7 @@ export type ExportOptions = {
   name: string;
   template: string;
   stage?: "seed" | "sprouted";
+  templateHash?: string;
   includeSrc?: boolean;
   includeEnv?: boolean;
   includeIdentity?: boolean;
@@ -580,6 +588,7 @@ export function createExportArchive(options: ExportOptions): AdmZip {
     name,
     template,
     stage,
+    templateHash,
     includeSrc = false,
     includeEnv = false,
     includeIdentity = false,
@@ -692,6 +701,7 @@ export function createExportArchive(options: ExportOptions): AdmZip {
     exportedAt: new Date().toISOString(),
     format,
     stage,
+    ...(includeSrc && templateHash ? { templateHash } : {}),
     includes: {
       env: includeEnv,
       identity: includeIdentity,
@@ -703,6 +713,21 @@ export function createExportArchive(options: ExportOptions): AdmZip {
   zip.addFile("manifest.json", Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
 
   return zip;
+}
+
+/**
+ * The registry's template hash, for an export's manifest — but only when the
+ * mind's history joined volute/template. A full import made before #1244 was
+ * stamped with the importing host's hash over whatever src/ it arrived with, so
+ * for a mind with no shared template history the hash says nothing about its
+ * files. Any doubt leaves it out: the importer then bases on the mind's own files.
+ */
+export async function trustedTemplateHash(
+  dir: string,
+  templateHash: string | undefined,
+): Promise<string | undefined> {
+  if (!templateHash) return undefined;
+  return (await sharesTemplateBase(dir).catch(() => false)) ? templateHash : undefined;
 }
 
 /** Add history rows as JSONL to an existing zip. */
