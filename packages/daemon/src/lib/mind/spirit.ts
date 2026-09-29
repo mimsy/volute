@@ -19,6 +19,7 @@ import {
   renderComposedPackageJson,
 } from "../template/template.js";
 import { exec, gitExec } from "../util/exec.js";
+import { hostNpmEnv } from "../util/host-npm-env.js";
 import log from "../util/logger.js";
 import { repairThreadBatchConfig } from "./event-routes.js";
 import { seedInitLedger } from "./init-ledger.js";
@@ -62,13 +63,6 @@ const TENDING_SCHEDULE = {
   enabled: true,
   whileSleeping: "skip" as const,
 };
-
-/** Ensure npm cache dir exists and return env with npm_config_cache set. */
-function npmEnv(): NodeJS.ProcessEnv {
-  const cacheDir = resolve(voluteSystemDir(), ".npm-cache");
-  mkdirSync(cacheDir, { recursive: true });
-  return { npm_config_cache: cacheDir };
-}
 
 /**
  * Add the tending schedule to spirit's volute.json if missing. Returns null if it
@@ -352,7 +346,7 @@ export async function ensureSpiritProject(): Promise<void> {
     if (spiritModel) writeSpiritModel(dir, template, spiritModel);
 
     // npm install — must succeed before DB registration
-    await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
+    await exec("npm", ["install"], { cwd: dir, env: hostNpmEnv() });
 
     // git init (before skill install, which does git add)
     try {
