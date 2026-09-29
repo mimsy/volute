@@ -1,6 +1,7 @@
 <script lang="ts">
 import PageThumbnail from "../components/PageThumbnail.svelte";
 import type { RecentPage, Site } from "../lib/api";
+import { COMMONS } from "../lib/routes";
 
 function formatRelativeTime(iso: string): string {
   const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -17,7 +18,7 @@ function formatRelativeTime(iso: string): string {
 
 function recentSublabel(page: RecentPage): string {
   const time = formatRelativeTime(page.modified);
-  if (page.mind === "_system" && page.author) return `${page.author} · ${time}`;
+  if (page.mind === COMMONS && page.author) return `${page.author} · ${time}`;
   return `${page.mind} · ${time}`;
 }
 
@@ -83,7 +84,7 @@ let {
             url={page.url}
             label={page.file}
             sublabel={page.author ?? undefined}
-            onclick={() => onSelectPage("_system", page.file)}
+            onclick={() => onSelectPage(COMMONS, page.file)}
           />
         {/each}
       </div>
