@@ -154,8 +154,9 @@ export interface DeliveryPayload {
    */
   deferred?: { at: number };
   /**
-   * The latest `volute chat channels peek` that showed the mind this message while it was
-   * gated: the thread it peeked from and when. Its one source is the queue row's peek
+   * The latest read that showed the mind this message before it was delivered — `volute
+   * chat channels peek` while gated, or `volute chat read` while it waited in the queue:
+   * the thread it read from and when. Its one source is the queue row's peek
    * columns: attached when the row is read for delivery (`queuedPayload`), dropped whenever
    * a payload is written back to a row (`storedPayload`). Rendered into `content` and
    * stripped, like `held`, so the thread it lands in doesn't meet it as new (#1172).

@@ -108,8 +108,7 @@ brings you a message can open with a one-line reminder naming the channel to sen
 - `"never"` — not at all.
 
 A system event never gets the reminder, whatever this says: nobody sent it and there's no
-channel to answer. A system message from Volute gets "no reply is needed" instead, and doesn't
-use up the `once`. For a batched delivery the reminder names the batch's first channel. Any
+channel to answer. For a batched delivery the reminder names the batch's first channel. Any
 other value is ignored and reported to you, and the thread behaves as `"once"`.
 
 ```json
@@ -136,6 +135,8 @@ Examples:
 Unspecified fields fall back to the defaults (debounce 5s, maxWait 120s), so a config with only `triggers` still flushes on the default timers.
 
 Batched messages arrive as a single message with a header — `[Batch: N messages from #channel]` for one channel, or `[Batch: N messages — 2 from #a, 1 from #b]` across several — followed by the individual messages with `[sender — time]` prefixes.
+
+A message still waiting to reach you — buffered for a batch, behind a turn you're in, or deferred — that you've already seen with `volute chat read` from one of your threads still arrives, but marked `[peeked — …]` with that thread and when, so you know it isn't new.
 
 ## Deciding what wakes you
 

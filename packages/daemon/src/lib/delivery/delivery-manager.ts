@@ -264,9 +264,9 @@ export function withHeldPreface(payload: DeliveryPayload): WirePayload {
 }
 
 /**
- * Tell the thread a released message lands in that the mind was already shown it by
- * `peek` — the latest peek's thread and time — so it isn't met as new and answered twice
- * (#1172). Informational only: nothing is held back.
+ * Tell the thread a message lands in that the mind was already shown it — by `peek` on a
+ * gated channel, or `chat read` while it waited — the latest peek's thread and time, so it
+ * isn't met as new and answered twice (#1172). Informational only: nothing is held back.
  */
 /**
  * Open the content with participants' avatars. Applied after every preface and the since
@@ -1986,6 +1986,94 @@ export class DeliveryManager {
   }
 
   /**
+   * Note that a mind just read a routed conversation's latest messages with `volute chat
+   * read`, from one of its threads. Its messages from that conversation still waiting to
+   * be delivered — sitting in a batch buffer behind a busy turn, deferred, or held — and
+   * shown in that read (created at or after `since`, the oldest message it returned, and
+   * text only) are stamped like a gated peek, so they arrive prefaced with it rather than
+   * met as new and answered twice. Never throws: a failed stamp costs a label, not the read.
+   */
+  async notePeekedInConversation(
+    reader: { name: string; thread: string },
+    conversationId: string,
+    since: string,
+  ): Promise<void> {
+    try {
+      const baseName = await getBaseName(reader.name);
+      const db = await getDb();
+      const rows = await db
+        .select()
+        .from(deliveryQueue)
+        .where(
+          and(
+            eq(deliveryQueue.mind, baseName),
+            inArray(deliveryQueue.status, ["pending", "deferred", "held"]),
+            sql`${deliveryQueue.created_at} >= ${since}`,
+            sql`json_extract(${deliveryQueue.payload}, '$.conversationId') = ${conversationId}`,
+          ),
+        );
+      const ids = rows
+        .filter((row) => {
+          if ((row.target_mind ?? baseName) !== reader.name) return false;
+          try {
+            return isTextOnly(parseDeliveryPayload(row.payload).content);
+          } catch {
+            return false;
+          }
+        })
+        .map((row) => row.id);
+      if (ids.length === 0) return;
+      await db
+        .update(deliveryQueue)
+        .set({ peeked_at: sql`datetime('now')`, peeked_thread: reader.thread })
+        .where(inArray(deliveryQueue.id, ids));
+    } catch (err) {
+      dlog.warn(
+        `failed to record read of ${conversationId} for ${reader.name}`,
+        log.errorData(err),
+      );
+    }
+  }
+
+  /**
+   * Attach each message's latest peek from its queue row. A buffered message's payload was
+   * built when it arrived, so a peek stamped while it waited lives only on the row.
+   */
+  private async withRowPeeks<T extends { payload: DeliveryPayload; queueId?: number }>(
+    messages: T[],
+  ): Promise<T[]> {
+    const ids = messages.map((m) => m.queueId).filter((id): id is number => id != null);
+    if (ids.length === 0) return messages;
+    try {
+      const db = await getDb();
+      const rows = await db
+        .select({
+          id: deliveryQueue.id,
+          peeked_at: deliveryQueue.peeked_at,
+          peeked_thread: deliveryQueue.peeked_thread,
+        })
+        .from(deliveryQueue)
+        .where(inArray(deliveryQueue.id, ids));
+      const peeks = new Map(
+        rows
+          .filter((r) => r.peeked_at && r.peeked_thread)
+          .map((r) => [
+            r.id,
+            { thread: r.peeked_thread!, at: parseDbTimestamp(r.peeked_at!).getTime() },
+          ]),
+      );
+      if (peeks.size === 0) return messages;
+      return messages.map((m) => {
+        const peeked = m.queueId != null ? peeks.get(m.queueId) : undefined;
+        return peeked ? { ...m, payload: { ...m.payload, peeked } } : m;
+      });
+    } catch (err) {
+      dlog.warn("failed to read peeks for a delivery", log.errorData(err));
+      return messages;
+    }
+  }
+
+  /**
    * Re-evaluate every mind's held messages against its current routes.json. Run at daemon
    * startup: routes.json edits made while the daemon was down would otherwise not be noticed
    * until the next inbound message on that channel — which, for a quiet channel, may be never.
@@ -2670,7 +2758,8 @@ export class DeliveryManager {
         onMindEvent(baseName, "delivery", payload.channel);
 
         // Enrich with participant profiles on first encounter per channel
-        const enriched = await this.enrichWithProfiles(baseName, session, payload);
+        const [peeked] = await this.withRowPeeks([{ payload, queueId }]);
+        const enriched = await this.enrichWithProfiles(baseName, session, peeked.payload);
         const enrichedPayload = withAvatars(
           withSinceNote(
             withHeldPreface(enriched.payload),
@@ -2860,7 +2949,7 @@ export class DeliveryManager {
       }
       const avatarsByMessage: AvatarBlock[][] = messages.map(() => []);
       const enrichedMessages = await Promise.all(
-        messages.map(async (msg, i) => {
+        (await this.withRowPeeks(messages)).map(async (msg, i) => {
           if (!isFirstForChannel[i]) return msg;
           const enriched = await this.enrichWithProfiles(baseName, session, msg.payload);
           avatarsByMessage[i] = enriched.avatars;

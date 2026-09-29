@@ -271,15 +271,16 @@ describe("codex template: reply instructions vs system events", () => {
       assert.equal(turnContextFor(bob, session, prompts as never), null);
     });
 
-    it("a system message's note doesn't spend the one firing", () => {
-      const session = newSession();
-      const system = turnContextFor(
-        { channel: "@volute", sender: "volute" } as never,
-        session,
+    it("a message from the spirit is answered like anyone's", () => {
+      // The spirit is a mind; its name ("volute" on a default install) says nothing about
+      // whether a reply is owed. Automated notices are system events, not messages.
+      const ctx = turnContextFor(
+        { channel: "#system", sender: "volute" } as never,
+        newSession(),
         prompts as never,
       );
-      assert.match(system?.content ?? "", /no reply is needed/);
-      assert.ok(turnContextFor(bob, session, prompts as never)?.content.includes("@bob"));
+      assert.equal(ctx?.source, "reply-instructions");
+      assert.ok(ctx?.content.includes("#system"));
     });
   });
 
@@ -440,13 +441,9 @@ for (const [template, harness] of Object.entries(modeHarnesses)) {
       assert.match((await fire([batch])) ?? "", /#garden/);
     });
 
-    it("a system message's note doesn't spend the once firing", async () => {
+    it("a message from the spirit is answered like anyone's", async () => {
       const fire = newSession();
-      assert.match(
-        (await fire([{ channel: "@volute", sender: "volute" }])) ?? "",
-        /no reply is needed/,
-      );
-      assert.match((await fire([alice()])) ?? "", /@alice/);
+      assert.match((await fire([{ channel: "#system", sender: "volute" }])) ?? "", /#system/);
     });
   });
 }

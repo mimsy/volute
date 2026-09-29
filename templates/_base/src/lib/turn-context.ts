@@ -38,8 +38,7 @@ export type TurnEntry = Pick<
  * Reply instructions follow the thread's routes.json `replyInstructions`, which the daemon
  * resolves and sends with each delivery: `once` (the default) gives them on the session's
  * first message — not once per channel — `always` on every turn with someone to answer, and
- * `never` not at all. A system message's "no reply is needed" doesn't spend the `once`
- * firing, so the first real message still gets told how to answer.
+ * `never` not at all.
  */
 export function turnContextFor(
   turnEntries: TurnEntry[],
@@ -61,12 +60,6 @@ export function turnContextFor(
   const mode = entry.replyInstructions ?? "once";
   if (mode === "never") return null;
   if (mode === "once" && session.replyInstructionsFired) return null;
-  if (entry.sender === "volute") {
-    return {
-      content: "This is a system message — no reply is needed.",
-      source: "reply-instructions",
-    };
-  }
   session.replyInstructionsFired = true;
   return {
     content: prompts.reply_instructions.replace(/\$\{channel\}/g, entry.channel),
