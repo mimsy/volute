@@ -121,10 +121,23 @@ describe("an export never carries the host's credentials (#1191)", () => {
             assert.ok(entries.includes(`mind/${keep}`), `the rest still travels: ${keep}`);
           }
           for (const rel of hostSecrets) assert.ok(!entries.includes(`mind/${rel}`), rel);
-          // A codex mind's `.zshenv` is the daemon's, carrying the mind's live
-          // token; any other mind's is its own.
-          assert.equal(entries.includes("mind/home/.zshenv"), template !== "codex", ".zshenv");
+          // A `.zshenv` exporting the token is the daemon's, whatever the template.
+          assert.ok(!entries.includes("mind/home/.zshenv"), ".zshenv");
         }
+      });
+    }
+  }
+});
+
+describe("a .zshenv a mind wrote itself travels (#1237)", () => {
+  for (const includeSrc of [false, true]) {
+    for (const template of ["claude", "codex"]) {
+      it(`${includeSrc ? "a full" : "a home-only"} export of a ${template} mind keeps it`, () => {
+        const name = `own-zshenv-${template}-${includeSrc ? "full" : "home"}`;
+        const dir = freshMind(name);
+        put(dir, "home/.zshenv", "export EDITOR=vim\n");
+        const entries = entriesOf(name, template, { includeSrc });
+        assert.ok(entries.includes("mind/home/.zshenv"));
       });
     }
   }
