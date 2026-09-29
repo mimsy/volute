@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { generateSystemUnit } from "../packages/daemon/src/lib/config/service-install.js";
 import {
   _resetConfigCache,
   type GlobalConfig,
@@ -13,7 +14,6 @@ import {
   writeGlobalConfig,
 } from "../packages/daemon/src/lib/config/setup.js";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
-import { generateSystemUnit } from "../src/commands/setup.js";
 
 function configPath() {
   return resolve(voluteSystemDir(), "config.json");

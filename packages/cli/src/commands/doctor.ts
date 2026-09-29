@@ -14,6 +14,10 @@ import { arch, homedir, platform, release, tmpdir, type } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { sharedEnvPath } from "@volute/daemon/lib/config/env.js";
 import {
+  installedSystemServiceFile,
+  planServiceFile,
+} from "@volute/daemon/lib/config/service-install.js";
+import {
   daemonLogSource,
   getDaemonUrl,
   getServiceMode,
@@ -236,6 +240,34 @@ async function runDiagnostics(): Promise<Diagnostics> {
 
   // --- Install type ---
   checks.push({ label: "Install type", state: "pass", detail: modeLabel(getServiceMode()) });
+
+  // --- System service file drift (#874) ---
+  const serviceFile = installedSystemServiceFile();
+  if (serviceFile) {
+    const label = "Service file";
+    if ("unreadable" in serviceFile) {
+      checks.push({ label, state: "warn", detail: `could not read: ${serviceFile.unreadable}` });
+    } else {
+      const plan = planServiceFile(serviceFile.kind, serviceFile.text);
+      checks.push(
+        plan.status === "unrecognised"
+          ? { label, state: "warn", detail: "not written by `volute setup --system`; left as is" }
+          : plan.rewrite
+            ? {
+                label,
+                state: "warn",
+                detail: "carries lines this version removed — run `sudo volute service reconcile`",
+              }
+            : plan.customised
+              ? {
+                  label,
+                  state: "warn",
+                  detail: "differs from what setup writes — `volute service reconcile` lists how",
+                }
+              : { label, state: "pass", detail: "matches this version" },
+      );
+    }
+  }
 
   // --- Isolation mode ---
   const isolation = config.setup?.isolation;

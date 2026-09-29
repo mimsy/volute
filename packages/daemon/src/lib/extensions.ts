@@ -41,6 +41,7 @@ import {
   removeSharedSkill,
   sharedSkillsDir,
 } from "./skills.js";
+import { hostNpmEnv } from "./util/host-npm-env.js";
 import log from "./util/logger.js";
 import { sanitizeSvgIcon } from "./util/sanitize-svg.js";
 
@@ -946,7 +947,7 @@ export async function installNpmExtension(pkg: string): Promise<void> {
   try {
     // --ignore-scripts: extensions install as the daemon user (root on system
     // installs), so never run untrusted package lifecycle scripts.
-    await exec("npm", ["install", "--ignore-scripts", pkg], { cwd: dir });
+    await exec("npm", ["install", "--ignore-scripts", pkg], { cwd: dir, env: hostNpmEnv() });
   } catch (err) {
     log.error(`npm install failed for "${pkg}"`, log.errorData(err));
     throw new Error(`Failed to install "${pkg}". Check daemon logs for details.`);
@@ -972,7 +973,10 @@ export async function uninstallNpmExtension(pkg: string): Promise<void> {
 
   try {
     const { exec } = await import("./util/exec.js");
-    await exec("npm", ["uninstall", "--ignore-scripts", pkg], { cwd: extensionsNpmDir() });
+    await exec("npm", ["uninstall", "--ignore-scripts", pkg], {
+      cwd: extensionsNpmDir(),
+      env: hostNpmEnv(),
+    });
   } catch (err) {
     log.warn(
       `npm uninstall failed for "${pkg}" (may have been manually removed)`,

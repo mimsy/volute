@@ -1,6 +1,10 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { command } from "@volute/cli/lib/command.js";
+import {
+  installedSystemServiceFile,
+  planServiceFile,
+} from "@volute/daemon/lib/config/service-install.js";
 import {
   getServiceMode,
   modeLabel,
@@ -35,6 +39,22 @@ function buildInstall(
     return { cmd: existsSync(ownNpm) ? ownNpm : npmFallback, args };
   }
   return { cmd: npmFallback, args };
+}
+
+/**
+ * Whether this user can write the prefix the install goes into. A system service's
+ * volute can still live in a prefix the host owns (Homebrew on macOS, nvm under a
+ * home dir); installing there as root would leave root-owned files in it, so sudo is
+ * only for a prefix this user cannot write.
+ */
+export function prefixWritable(install: VoluteInstall | null): boolean {
+  if (!install?.prefix) return false;
+  try {
+    accessSync(resolve(install.prefix, "lib", "node_modules"), constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -73,6 +93,18 @@ const cmd = command({
 
     if (!result.updateAvailable) {
       console.log("\nAlready up to date.");
+      // No restart here to carry a rewrite, but a stale service file is still worth
+      // saying: this binary is current, so its view of the file is the right one.
+      const installed = installedSystemServiceFile();
+      const plan =
+        installed && "text" in installed ? planServiceFile(installed.kind, installed.text) : null;
+      if (installed && plan?.status === "reviewed" && plan.rewrite) {
+        console.log(
+          `\n${installed.path} carries lines this version of volute no longer writes.\n` +
+            "To see them: volute service reconcile\n" +
+            "To remove them and restart: sudo volute service reconcile && volute restart",
+        );
+      }
       return;
     }
 
@@ -91,8 +123,9 @@ const cmd = command({
 
     const mode = getServiceMode();
 
-    if (mode === "system") {
-      // System service: use the owning prefix's npm (fall back to /usr/bin/npm, then PATH) with sudo
+    if (mode === "system" || mode === "system-launchd") {
+      // System service: use the owning prefix's npm (fall back to /usr/bin/npm, then PATH),
+      // with sudo unless the prefix is this user's own
       let npmFallback = "/usr/bin/npm";
       if (!existsSync(npmFallback)) {
         try {
@@ -104,18 +137,31 @@ const cmd = command({
       }
       const { cmd: npmCmd, args: npmArgs } = buildInstall(install, result.latest, npmFallback);
       try {
-        await execInherit("sudo", [npmCmd, ...npmArgs]);
+        if (prefixWritable(install)) await execInherit(npmCmd, npmArgs);
+        else await execInherit("sudo", [npmCmd, ...npmArgs]);
       } catch (err) {
         console.error(`\nUpdate failed: ${(err as Error).message}`);
         process.exit(1);
       }
       if (!(await verifyInstalled(install, result.latest))) process.exit(1);
+      // Setup is the only writer of the service file, so this is where fixes to it
+      // reach an existing install (#874). It runs as the *new* binary — this process
+      // is still the old version, whose generator is the stale one — and it lands
+      // before the restart below, so the minds are interrupted once, not twice.
+      try {
+        await execInherit("sudo", [install?.binPath ?? resolveVoluteBin(), "service", "reconcile"]);
+      } catch {
+        console.error(
+          "Warning: could not bring the service file up to date; the update continues.\n" +
+            "  To retry: sudo volute service reconcile && volute restart",
+        );
+      }
       console.log("Restarting service...");
       try {
         await restartService(mode);
       } catch (err) {
         console.error(`Failed to restart: ${err instanceof Error ? err.message : err}`);
-        console.error("Try: sudo systemctl restart volute");
+        console.error("Try: volute restart");
         process.exit(1);
       }
       {

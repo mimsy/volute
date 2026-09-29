@@ -4,7 +4,13 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { command } from "@volute/cli/lib/command.js";
 import { promptLine } from "@volute/cli/lib/prompt.js";
-import { installUserService } from "@volute/daemon/lib/config/service-install.js";
+import {
+  SYSTEM_DATA_DIR as DATA_DIR,
+  generateSystemPlist,
+  generateSystemUnit,
+  installUserService,
+  SYSTEM_MINDS_DIR as MINDS_DIR,
+} from "@volute/daemon/lib/config/service-install.js";
 import {
   LAUNCHD_PLIST_LABEL,
   SYSTEM_LAUNCHD_PLIST_PATH,
@@ -29,127 +35,8 @@ function validateHost(host: string): void {
   }
 }
 
-function escapeXml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-// --- System service installation helpers (require root) ---
-
-function buildServicePath(voluteBin: string): string {
-  const binDir = dirname(voluteBin);
-  const standardPaths = [
-    "/usr/local/sbin",
-    "/usr/local/bin",
-    "/usr/sbin",
-    "/usr/bin",
-    "/sbin",
-    "/bin",
-  ];
-  const parts = standardPaths.includes(binDir) ? standardPaths : [binDir, ...standardPaths];
-  return parts.join(":");
-}
-
-function generateSystemPlist(voluteBin: string, opts?: { port?: number; host?: string }): string {
-  const args = ["up", "--foreground"];
-  if (opts?.port != null) args.push("--port", String(opts.port));
-  if (opts?.host) args.push("--host", opts.host);
-
-  const logPath = "/var/lib/volute/system/daemon.log";
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${LAUNCHD_PLIST_LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-    ${[voluteBin, ...args].map((a) => `<string>${escapeXml(a)}</string>`).join("\n    ")}
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>${escapeXml(buildServicePath(voluteBin))}</string>
-    <key>VOLUTE_HOME</key>
-    <string>/var/lib/volute</string>
-    <key>VOLUTE_MINDS_DIR</key>
-    <string>${MINDS_DIR}</string>
-    <key>VOLUTE_ISOLATION</key>
-    <string>user</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>${logPath}</string>
-  <key>StandardErrorPath</key>
-  <string>${logPath}</string>
-</dict>
-</plist>`;
-}
-
-/**
- * The systemd unit for a `--system` install.
- *
- * Deliberately does *not* set `RestrictSUIDSGID=yes`. A system install always runs
- * per-mind user isolation, and the shared pages repo is created `--shared=group` so
- * several mind users can work in it. Git then calls `adjust_shared_perm()`, which
- * chmods the setgid bit onto directories and index/object temp files — exactly the
- * syscall that directive blocks, for root included. With it set, `_system` worktrees
- * never provision and publishing fails with "unable to create temporary file:
- * Operation not permitted" (#832). systemd has no per-path carve-out for it.
- *
- * This is the second feature to hit it, not a one-off: #75 (714cb31d) removed the
- * directive in Feb 2026 because the then-shared CLAUDE_CONFIG_DIR needed the same sgid
- * chmods, and #77 (d4e56003) restored it on a stated precondition — "the sgid chmod
- * that required its removal is no longer needed". Shared pages made that precondition
- * false again.
- *
- * So the bar for restoring it is that precondition, not a judgement call: remove the
- * setgid dependency first (nothing in the system may need a setgid chmod), and only
- * then put the directive back. Restoring it while shared pages still uses
- * `--shared=group` silently re-breaks publishing on every system install, which is
- * exactly how this shipped broken. `test/setup.test.ts` pins its absence.
- */
-export function generateSystemUnit(voluteBin: string, port?: number, host?: string): string {
-  const args = ["up", "--foreground"];
-  if (port != null) args.push("--port", String(port));
-  if (host) args.push("--host", host);
-
-  const home = homedir();
-  const binUnderHome = voluteBin.startsWith(`${home}/`);
-  const lines = [
-    "[Unit]",
-    "Description=Volute Mind Manager",
-    "After=network.target",
-    "",
-    "[Service]",
-    "Type=exec",
-    `ExecStart=${voluteBin} ${args.join(" ")}`,
-    `Environment=PATH=${buildServicePath(voluteBin)}`,
-    "Environment=VOLUTE_HOME=/var/lib/volute",
-    "Environment=VOLUTE_MINDS_DIR=/minds",
-    "Environment=VOLUTE_ISOLATION=user",
-    "Restart=on-failure",
-    "RestartSec=5",
-    "ProtectSystem=true",
-    "ReadWritePaths=/var/lib/volute /minds",
-    "PrivateTmp=yes",
-  ];
-
-  if (!binUnderHome) {
-    lines.push("ProtectHome=yes");
-  }
-
-  lines.push("", "[Install]", "WantedBy=multi-user.target", "");
-  return lines.join("\n");
-}
-
 // --- Setup steps ---
 
-const DATA_DIR = "/var/lib/volute";
-const MINDS_DIR = process.platform === "darwin" ? "/var/lib/volute/minds" : "/minds";
 const PROFILE_PATH = "/etc/profile.d/volute.sh";
 const WRAPPER_PATH = "/usr/local/bin/volute";
 
