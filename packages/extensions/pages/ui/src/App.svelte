@@ -2,6 +2,7 @@
 import { onMount } from "svelte";
 import PageThread from "./components/PageThread.svelte";
 import { fetchCurrentUser, fetchPagesData, type Site } from "./lib/api";
+import { pageRoute, siteRoute } from "./lib/routes";
 import PagesDashboard from "./pages/PagesDashboard.svelte";
 import SiteView from "./pages/SiteView.svelte";
 
@@ -89,11 +90,7 @@ function syncBreadcrumbFromPath(path: string) {
   if (!match) return;
   const [, mind, file] = match;
   if (route.view === "page" && mind === route.name && file === route.path) return;
-  if (mind === "_system") {
-    navigateParent(`/pages/_system/${file}`);
-  } else {
-    navigateParent(`/minds/${mind}/pages/${file}`);
-  }
+  navigateParent(pageRoute(mind, file));
 }
 
 // Sandboxed pages can't have their location read cross-origin, so they report it
@@ -107,19 +104,11 @@ function handlePageMessage(e: MessageEvent) {
 }
 
 function handleSelectPage(mind: string, path: string) {
-  if (mind === "_system") {
-    navigateParent(`/pages/_system/${path}`);
-  } else {
-    navigateParent(`/minds/${mind}/pages/${path}`);
-  }
+  navigateParent(pageRoute(mind, path));
 }
 
 function handleSelectSite(name: string) {
-  if (name === "_system") {
-    navigateParent(`/pages/_system`);
-  } else {
-    navigateParent(`/minds/${name}/pages`);
-  }
+  navigateParent(siteRoute(name));
 }
 
 // Moving to a different page closes the drawer and clears the badge; the freshly
