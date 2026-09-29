@@ -431,7 +431,8 @@ export function mayRefreshInfrastructure(
  * `test/template-init-classification.test.ts` pins that so it can't start
  * quietly.
  *
- * Returns the `home/`-relative paths in each bucket.
+ * Returns the `home/`-relative paths in each bucket, plus `unreadable`: present files
+ * whose bytes couldn't be read, so whether to refresh them was never decided.
  *
  * These paths live under `home/.local/`, which the template `.gitignore` does
  * not allowlist, so this writes untracked files and cannot interact with the
@@ -466,7 +467,12 @@ export async function backfillInitInfrastructure(
   template: string,
   mindName: string,
   opts: { honorRemovals?: boolean } = {},
-): Promise<{ added: string[]; refreshed: string[]; withheld: string[] }> {
+): Promise<{
+  added: string[];
+  refreshed: string[];
+  withheld: string[];
+  unreadable: string[];
+}> {
   const honorRemovals = opts.honorRemovals ?? true;
   const root = locateTemplatesRoot();
   if (!root) throw new Error("templates root not found on disk");
@@ -483,7 +489,7 @@ export async function backfillInitInfrastructure(
   const { composedDir, manifest } = composeTemplate(root, template);
   try {
     const initDir = resolve(composedDir, ".init");
-    if (!existsSync(initDir)) return { added: [], refreshed: [], withheld: [] };
+    if (!existsSync(initDir)) return { added: [], refreshed: [], withheld: [], unreadable: [] };
 
     // manifest.substitute paths are relative to the composed layout (".init/..."),
     // while listFiles() below yields paths relative to .init/ itself.
@@ -503,6 +509,7 @@ export async function backfillInitInfrastructure(
     const added: string[] = [];
     const refreshed: string[] = [];
     const withheld: string[] = [];
+    const unreadable: string[] = [];
 
     const owner = await mindFileOwner(await getBaseName(mindName));
 
@@ -557,6 +564,7 @@ export async function backfillInitInfrastructure(
         if (!onDisk) continue;
         refreshable = mayRefreshInfrastructure(onDisk, readFileSync(src), shipped[rel]);
       } catch {
+        unreadable.push(rel);
         continue;
       }
       if (!refreshable) continue;
@@ -572,7 +580,7 @@ export async function backfillInitInfrastructure(
     // unrecorded installs are simply observed as present on the next run.
     if (given.size !== ledger.size) writeInitLedger(mindName, given);
 
-    return { added, refreshed, withheld };
+    return { added, refreshed, withheld, unreadable };
   } finally {
     rmSync(composedDir, { recursive: true, force: true });
   }
