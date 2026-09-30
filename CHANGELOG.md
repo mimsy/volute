@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.66.1](https://github.com/mimsy/volute/compare/volute-v0.66.0...volute-v0.66.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* a full-archive import shares history with volute/template, so it can upgrade ([#1255](https://github.com/mimsy/volute/issues/1255)) ([f3239c5](https://github.com/mimsy/volute/commit/f3239c50a53e857bb39b8c37ba8a5a1a3e9476b6))
+* a message a mind already read arrives marked, and the spirit's messages aren't system messages ([#1251](https://github.com/mimsy/volute/issues/1251)) ([69be1f1](https://github.com/mimsy/volute/commit/69be1f13dfbcd6061eddf601c2e541068468ccc2))
+* **codex:** stop writing the mind's token into home/.zshenv once it runs non-login shells ([#1256](https://github.com/mimsy/volute/issues/1256)) ([dd1fe07](https://github.com/mimsy/volute/commit/dd1fe0785569d27cc9be07ccafd742cf513fa011))
+* deliver hook-only template changes to existing minds via an infrastructure hash ([#1265](https://github.com/mimsy/volute/issues/1265)) ([fe46215](https://github.com/mimsy/volute/commit/fe46215261544b9580ba13e77c7d9f4d69ccf320))
+* **deps:** update npm dependencies ([#1259](https://github.com/mimsy/volute/issues/1259)) ([134564c](https://github.com/mimsy/volute/commit/134564c667797a9f5b291be95681863aa92f870d))
+* **pages:** route commons pages under /pages/_commons, not as a mind ([#1246](https://github.com/mimsy/volute/issues/1246)) ([ab39637](https://github.com/mimsy/volute/commit/ab39637f1b6cd5190e337d71226598c9e6f4c85e))
+* present avatars as profile pictures, right under the participants header ([#1245](https://github.com/mimsy/volute/issues/1245)) ([f14f962](https://github.com/mimsy/volute/commit/f14f96209ee8e70d7a2333d8d6c11237726b802f))
+* route the spirit's package sync and variant split through npmInstallAsMind ([#1252](https://github.com/mimsy/volute/issues/1252)) ([be7ef25](https://github.com/mimsy/volute/commit/be7ef2569a95aa42412e83dc2e588cd36dcd9e8b))
+* **security:** never re-own a hard-linked file in a recursive chown of a mind's tree ([#1254](https://github.com/mimsy/volute/issues/1254)) ([088ca9e](https://github.com/mimsy/volute/commit/088ca9eebff21dd03663b3ba37eb09b9ff366246))
+* **security:** route the remaining daemon reads/writes in mind trees through the mind-file helpers ([#1260](https://github.com/mimsy/volute/issues/1260)) ([c37d59d](https://github.com/mimsy/volute/commit/c37d59da8ef9d03afd4d3d6a4499ccd2cc35cacb))
+* volute update brings the installed service unit up to date ([#1253](https://github.com/mimsy/volute/issues/1253)) ([9c3ce65](https://github.com/mimsy/volute/commit/9c3ce656e3c95a277940c797fbfaf0082c5cfdb0))
+
 ## [0.66.0](https://github.com/mimsy/volute/compare/volute-v0.65.0...volute-v0.66.0) (2026-09-28)
 
 
