@@ -523,11 +523,15 @@ export async function startDaemon(opts: {
     const { backfillTemplateHashes, notifyVersionUpdate, warnStaleTemplates } = await import(
       "./lib/version-notify.js"
     );
-    // Notify first — a mind opted into auto-upgrade is told "it will be applied
-    // automatically in a few minutes", so that notice must go out before the pass
-    // below actually runs it, not after. Then backfill on-disk hashes, warn about
-    // stale minds, then run the serialized auto-upgrade pass over eligible ones.
-    upgradePass = notifyVersionUpdate()
+    const { syncAllMindInfrastructure } = await import("./lib/mind/infrastructure-sync.js");
+    // Hooks first (#960): the version notice below triggers a turn, and that turn's
+    // pre-prompt hooks should be this release's. Then notify — a mind opted into
+    // auto-upgrade is told "it will be applied automatically in a few minutes", so
+    // that notice must go out before the pass below actually runs it, not after.
+    // Then backfill on-disk hashes, warn about stale minds, then run the serialized
+    // auto-upgrade pass over eligible ones.
+    upgradePass = syncAllMindInfrastructure(() => shuttingDown)
+      .then(() => notifyVersionUpdate())
       .catch((err) => {
         log.warn("failed to send version update notifications", log.errorData(err));
       })
