@@ -66,6 +66,10 @@ describe("isolation", () => {
     assert.equal(mindUserName("my-mind_1"), "mind-my-mind_1");
   });
 
+  // macOS sudo resets the environment unless told otherwise; runuser keeps it.
+  const wrapPrefix = (user: string) =>
+    process.platform === "darwin" ? ["-E", "-u", user, "--"] : ["-u", user, "--"];
+
   it("wrapForIsolation returns original cmd when isolation disabled", async () => {
     delete process.env.VOLUTE_ISOLATION;
     const [cmd, args] = await wrapForIsolation("/usr/bin/tsx", ["src/server.ts"], "alice");
@@ -83,9 +87,7 @@ describe("isolation", () => {
     const expectedCmd = process.platform === "darwin" ? "sudo" : "runuser";
     assert.equal(cmd, expectedCmd);
     assert.deepEqual(args, [
-      "-u",
-      "mind-alice",
-      "--",
+      ...wrapPrefix("mind-alice"),
       "/usr/bin/tsx",
       "src/server.ts",
       "--port",
@@ -100,7 +102,7 @@ describe("isolation", () => {
     const [cmd, args] = await wrapForIsolation("node", ["index.js"], "alice-experiment");
     const expectedCmd = process.platform === "darwin" ? "sudo" : "runuser";
     assert.equal(cmd, expectedCmd);
-    assert.deepEqual(args, ["-u", "mind-alice", "--", "node", "index.js"]);
+    assert.deepEqual(args, [...wrapPrefix("mind-alice"), "node", "index.js"]);
     await removeMind("alice");
   });
 
@@ -110,7 +112,7 @@ describe("isolation", () => {
     const [cmd, args] = await wrapForIsolation("node", ["index.js"], "bob");
     const expectedCmd = process.platform === "darwin" ? "sudo" : "runuser";
     assert.equal(cmd, expectedCmd);
-    assert.deepEqual(args, ["-u", "volute-bob", "--", "node", "index.js"]);
+    assert.deepEqual(args, [...wrapPrefix("volute-bob"), "node", "index.js"]);
   });
 
   it("skipNodeModules skips node_modules only when it is already owned", async () => {
