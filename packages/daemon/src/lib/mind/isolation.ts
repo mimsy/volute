@@ -605,8 +605,12 @@ async function repairMindUser(baseName: string, user: string): Promise<void> {
 
 /**
  * Wrap a command with user isolation if enabled.
- * macOS: `sudo -u <user> --`
+ * macOS: `sudo -E -u <user> --`
  * Linux: `runuser -u <user> --`
+ * `-E` is load-bearing: sudo's default `env_reset` would otherwise drop the env the
+ * caller built (VOLUTE_HOME, VOLUTE_MIND_TOKEN, credentials, …), and the mind's CLI
+ * then reports "Volute is not set up". runuser keeps the environment on its own.
+ * Root's `ALL` sudoers entry implies SETENV, so `-E` is permitted.
  * Resolves the base mind name from a potentially composite "name@variant" key.
  */
 export async function wrapForIsolation(
@@ -619,7 +623,7 @@ export async function wrapForIsolation(
   await ensureUserForBaseMind(baseName);
   const user = mindUserName(baseName);
   if (process.platform === "darwin") {
-    return ["sudo", ["-u", user, "--", cmd, ...args]];
+    return ["sudo", ["-E", "-u", user, "--", cmd, ...args]];
   }
   return ["runuser", ["-u", user, "--", cmd, ...args]];
 }
