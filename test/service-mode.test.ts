@@ -37,7 +37,13 @@ describe("service-mode constants", () => {
 describe("getServiceMode", () => {
   it("returns a valid ServiceMode value", () => {
     const mode = getServiceMode();
-    const validModes: ServiceMode[] = ["manual", "system", "user-systemd", "user-launchd"];
+    const validModes: ServiceMode[] = [
+      "manual",
+      "system",
+      "system-launchd",
+      "user-systemd",
+      "user-launchd",
+    ];
     assert.ok(validModes.includes(mode), `got unexpected mode: ${mode}`);
   });
 });
