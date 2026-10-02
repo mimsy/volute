@@ -155,6 +155,8 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
           return "Routing config";
         case "hook_failed":
           return "Hook failed";
+        case "skill_conflict":
+          return s("reason") ? `Skill update conflict: ${s("reason")}` : "Skill update conflict";
         default:
           return "Notice";
       }
@@ -176,6 +178,7 @@ export const NOTICE_KINDS = [
   "infrastructure",
   "routes",
   "hook_failed",
+  "skill_conflict",
 ] as const;
 
 export type NoticeKind = (typeof NOTICE_KINDS)[number];

@@ -26,7 +26,7 @@ import {
   stateDir,
   voluteHome,
 } from "../packages/daemon/src/lib/mind/registry.js";
-import { minds, sharedSkills } from "../packages/daemon/src/lib/schema.js";
+import { minds, sharedSkills, systemEvents } from "../packages/daemon/src/lib/schema.js";
 import {
   autoUpdateMindSkills,
   copySkillTree,
@@ -779,6 +779,86 @@ describe("mind skill operations", () => {
     assert.ok(result.conflictFiles.includes("SKILL.md"));
   });
 
+  // git merge-file exits with the number of conflicts, not 1 (#1267): two conflicting
+  // hunks exit 2, which used to read as an error and freeze the skill for good.
+  async function conflictTwoHunks() {
+    const lines = (a: string, z: string) =>
+      `---\nname: shared-skill\ndescription: Two\n---\n\n${a}\n\none\ntwo\nthree\nfour\nfive\n\n${z}\n`;
+    await (await getDb()).delete(systemEvents).where(eq(systemEvents.mind, mindName));
+    const source = createSkillSource("shared-skill");
+    writeFileSync(join(source, "SKILL.md"), lines("top", "bottom"));
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "shared-skill");
+    const localPath = join(mindDir, "home", ".claude", "skills", "shared-skill", "SKILL.md");
+    writeFileSync(localPath, lines("my top", "my bottom"));
+    await exec("git", ["commit", "-am", "local edit"], { cwd: mindDir });
+    writeFileSync(join(source, "SKILL.md"), lines("their top", "their bottom"));
+    await importSkillFromDir(source, "author");
+    return localPath;
+  }
+  const markers = (text: string) => text.split("\n").filter((l) => l.startsWith("<<<<<<<")).length;
+
+  it("treats several conflicting hunks as a conflict, not an error", async () => {
+    const localPath = await conflictTwoHunks();
+    const result = await updateSkill(mindName, mindDir, "shared-skill");
+    assert.equal(result.status, "conflict");
+    assert.deepEqual(result.status === "conflict" && result.conflictFiles, ["SKILL.md"]);
+    assert.equal(markers(readFileSync(localPath, "utf-8")), 2);
+  });
+
+  it("tells the mind its skill update conflicted", async () => {
+    await conflictTwoHunks();
+    await updateSkill(mindName, mindDir, "shared-skill");
+    const db = await getDb();
+    const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, mindName));
+    const notice = rows.find((r) => JSON.parse(r.meta ?? "{}").subtype === "skill_conflict");
+    assert.ok(notice, "a skill_conflict notice was recorded");
+    assert.match(notice.body ?? "", /\.claude\/skills\/shared-skill\/SKILL\.md/);
+  });
+
+  it("does not merge again over a conflict the mind has not resolved yet", async () => {
+    const localPath = await conflictTwoHunks();
+    await updateSkill(mindName, mindDir, "shared-skill");
+    const once = readFileSync(localPath, "utf-8");
+    assert.equal((await updateSkill(mindName, mindDir, "shared-skill")).status, "up-to-date");
+    assert.equal(readFileSync(localPath, "utf-8"), once, "markers not nested");
+  });
+
+  it("waits on unresolved markers when the next version ships, and says so once", async () => {
+    const localPath = await conflictTwoHunks();
+    await updateSkill(mindName, mindDir, "shared-skill");
+    const marked = readFileSync(localPath, "utf-8");
+
+    const source = join(voluteHome(), "tmp-skill-source", "shared-skill");
+    writeFileSync(join(source, "extra.md"), "v3\n");
+    await importSkillFromDir(source, "author");
+    for (let i = 0; i < 2; i++) {
+      const result = await updateSkill(mindName, mindDir, "shared-skill");
+      assert.equal(result.status, "conflict");
+      assert.equal(readFileSync(localPath, "utf-8"), marked, "markers not merged over");
+    }
+    const db = await getDb();
+    const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, mindName));
+    const notices = rows.filter((r) => JSON.parse(r.meta ?? "{}").subtype === "skill_conflict");
+    assert.equal(notices.length, 2, "one for the conflict, one for v3 waiting");
+    assert.match(notices[1].body, /v3 is waiting/);
+  });
+
+  // (JS's multiline `$` matches before a CR too — pinned, since it reads like it wouldn't.)
+  it("recognizes its markers in a CRLF file", async () => {
+    const source = createSkillSource("shared-skill");
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "shared-skill");
+    const notes = join(mindDir, "home", ".claude", "skills", "shared-skill", "notes.md");
+    const marked = "<<<<<<< yours\r\nmine\r\n=======\r\ntheirs\r\n>>>>>>> upstream v2\r\n";
+    writeFileSync(notes, marked);
+    writeFileSync(join(source, "notes.md"), "v3\r\n");
+    await importSkillFromDir(source, "author");
+    const result = await updateSkill(mindName, mindDir, "shared-skill");
+    assert.deepEqual(result.status === "conflict" && result.conflictFiles, ["notes.md"]);
+    assert.equal(readFileSync(notes, "utf-8"), marked);
+  });
+
   it("throws when installing already-installed skill", async () => {
     const source = createSkillSource("shared-skill");
     await importSkillFromDir(source, "author");
@@ -1051,22 +1131,156 @@ describe("mind skill operations", () => {
     assert.ok(manifest.dependencies["fake-dep"], "dependency recorded and committed");
   });
 
-  it("update installs no npm dependencies when the merge conflicts", async () => {
+  // A conflict leaves the markers for the mind, but the new version's dependencies and
+  // shims are wired up now, from upstream's SKILL.md: .upstream.json moves to the new
+  // version, so nothing would ever install them later.
+  it("update installs the new version's npm dependencies and shims even when it conflicts", async () => {
     const pkg = join(voluteHome(), "tmp-skill-source", "fake-dep");
     mkdirSync(pkg, { recursive: true });
     writeFileSync(join(pkg, "package.json"), '{"name":"fake-dep","version":"1.0.0"}\n');
+    const source = writeWiredSkill("wired", ["  bin: scripts/old.ts"], ["old.ts", "wire.ts"]);
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+    // The mind's edit and upstream's new metadata collide inside the frontmatter, so the
+    // mind's SKILL.md comes out of the merge with both sides' metadata between markers.
+    const local = join(mindDir, "home", ".claude", "skills", "wired", "SKILL.md");
+    writeFileSync(local, readFileSync(local, "utf-8").replace("scripts/old.ts", "scripts/mine.ts"));
+
+    writeWiredSkill(
+      "wired",
+      [`  npm-dependencies: ${pkg}`, "  bin: scripts/wire.ts"],
+      ["old.ts", "wire.ts"],
+    );
+    await importSkillFromDir(source, "author");
+    assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "conflict");
+    assert.ok(existsSync(join(mindDir, "node_modules", "fake-dep", "package.json")));
+    assert.ok(existsSync(join(binDir(), "wire")), "bin shim from upstream's SKILL.md");
+  });
+
+  // #1277: the merge base is what upstream shipped, never the mind's merged result —
+  // against that, an idle mind's edits read as upstream's and the next bump reverted them.
+  it("a mind's edits survive more than one upstream update", async () => {
+    const body = (top: string, bottom: string) =>
+      `---\nname: wired\ndescription: d\n---\n\n${top}\n\n1\n2\n3\n4\n5\n\n${bottom}\n`;
+    const source = writeWiredSkill("wired", [], []);
+    writeFileSync(join(source, "SKILL.md"), body("top", "bottom"));
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+    const local = join(mindDir, "home", ".claude", "skills", "wired", "SKILL.md");
+    writeFileSync(local, body("MINE", "bottom"));
+    await exec("git", ["commit", "-qam", "edit"], { cwd: mindDir });
+    for (const v of ["v2", "v3"]) {
+      writeFileSync(join(source, "SKILL.md"), body("top", `bottom ${v}`));
+      await importSkillFromDir(source, "author");
+      assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "updated", v);
+      assert.equal(readFileSync(local, "utf-8"), body("MINE", `bottom ${v}`), v);
+    }
+  });
+
+  // A mind updated before the base was recorded has its merged result as its base; its
+  // first update since must still keep its edits.
+  it("keeps a mind's edits when its recorded base is an old merged result", async () => {
+    const body = (top: string, bottom: string, middle = "3") =>
+      `---\nname: wired\ndescription: d\n---\n\n${top}\n\n1\n${middle}\n5\n6\n7\n8\n9\n\n${bottom}\n`;
+    const source = writeWiredSkill("wired", [], []);
+    writeFileSync(join(source, "SKILL.md"), body("top", "bottom"));
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+    const local = join(mindDir, "home", ".claude", "skills", "wired", "SKILL.md");
+    writeFileSync(local, body("MINE", "bottom"));
+    await exec("git", ["commit", "-qam", "edit"], { cwd: mindDir });
+    writeFileSync(join(source, "SKILL.md"), body("top", "bottom v2"));
+    await importSkillFromDir(source, "author");
+    assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "updated");
+
+    // What an older daemon left: no recorded base, .upstream.json at the merged commit.
+    await exec("git", ["update-ref", "-d", "refs/volute/skill-base/wired"], { cwd: mindDir });
+    const upstreamPath = join(dirname(local), ".upstream.json");
+    const head = (await exec("git", ["rev-parse", "HEAD"], { cwd: mindDir })).trim();
+    const legacy = { ...JSON.parse(readFileSync(upstreamPath, "utf-8")), baseCommit: head };
+    writeFileSync(upstreamPath, `${JSON.stringify(legacy, null, 2)}\n`);
+    await exec("git", ["commit", "-qam", "legacy base"], { cwd: mindDir });
+
+    // (A change on a line v2 also changed would conflict against the install's older base
+    // — told to the mind, never lost.)
+    writeFileSync(join(source, "SKILL.md"), body("top", "bottom v2", "three"));
+    await importSkillFromDir(source, "author");
+    assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "updated");
+    assert.equal(readFileSync(local, "utf-8"), body("MINE", "bottom v2", "three"));
+  });
+
+  it("with an old merged base, a file the mind never touched takes upstream's change", async () => {
+    const source = writeWiredSkill("wired", [], []);
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+    // v2 adds two files after the install, so the install commit (the fallback base) has
+    // neither: without a better base, v3 changing one would conflict on a whole-file add,
+    // and deleting the other would read as the mind's to keep.
+    writeFileSync(join(source, "notes.md"), "v2 notes\n");
+    writeFileSync(join(source, "old.md"), "v2 old\n");
+    await importSkillFromDir(source, "author");
+    assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "updated");
+
+    const skill = join(mindDir, "home", ".claude", "skills", "wired");
+    await exec("git", ["update-ref", "-d", "refs/volute/skill-base/wired"], { cwd: mindDir });
+    const head = (await exec("git", ["rev-parse", "HEAD"], { cwd: mindDir })).trim();
+    const upstreamPath = join(skill, ".upstream.json");
+    const legacy = { ...JSON.parse(readFileSync(upstreamPath, "utf-8")), baseCommit: head };
+    writeFileSync(upstreamPath, `${JSON.stringify(legacy, null, 2)}\n`);
+    await exec("git", ["commit", "-qam", "legacy base"], { cwd: mindDir });
+
+    writeFileSync(join(source, "notes.md"), "v3 notes\n");
+    rmSync(join(source, "old.md"));
+    await importSkillFromDir(source, "author");
+    assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "updated");
+    assert.equal(readFileSync(join(skill, "notes.md"), "utf-8"), "v3 notes\n");
+    assert.ok(!existsSync(join(skill, "old.md")), "deleted upstream, untouched by the mind");
+  });
+
+  it("a conflict still moves to the new version and tells the mind when its wiring fails", async () => {
     const source = writeWiredSkill("wired", [], []);
     writeFileSync(join(source, "notes.md"), "base\n");
     await importSkillFromDir(source, "author");
     await installSkill(mindName, mindDir, "wired");
-    const local = join(mindDir, "home", ".claude", "skills", "wired", "notes.md");
-    writeFileSync(local, "mine\n");
+    writeFileSync(join(mindDir, "home", ".claude", "skills", "wired", "notes.md"), "mine\n");
+    await (await getDb()).delete(systemEvents).where(eq(systemEvents.mind, mindName));
 
-    writeWiredSkill("wired", [`  npm-dependencies: ${pkg}`], []);
+    const missing = join(voluteHome(), "tmp-skill-source", "no-such-package");
+    writeWiredSkill("wired", [`  npm-dependencies: ${missing}`], []);
     writeFileSync(join(source, "notes.md"), "theirs\n");
     await importSkillFromDir(source, "author");
     assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "conflict");
-    assert.ok(!existsSync(join(mindDir, "node_modules", "fake-dep")));
+    const wired = (await listMindSkills(mindDir)).find((sk) => sk.id === "wired");
+    assert.equal(wired?.upstream?.version, 2);
+    const rows = await (await getDb())
+      .select()
+      .from(systemEvents)
+      .where(eq(systemEvents.mind, mindName));
+    assert.equal(rows.length, 1);
+    assert.match(rows[0].body, /also failed/);
+  });
+
+  it("a resolved conflict doesn't come back on the next update", async () => {
+    const body = (top: string, bottom: string) =>
+      `---\nname: wired\ndescription: d\n---\n\n${top}\n\n1\n2\n3\n4\n5\n\n${bottom}\n`;
+    const source = writeWiredSkill("wired", [], []);
+    writeFileSync(join(source, "SKILL.md"), body("top", "bottom"));
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+    const local = join(mindDir, "home", ".claude", "skills", "wired", "SKILL.md");
+    writeFileSync(local, body("MINE", "bottom"));
+    await exec("git", ["commit", "-qam", "edit"], { cwd: mindDir });
+
+    writeFileSync(join(source, "SKILL.md"), body("THEIRS", "bottom"));
+    await importSkillFromDir(source, "author");
+    assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "conflict");
+    writeFileSync(local, body("MINE and THEIRS", "bottom"));
+    await exec("git", ["commit", "-qam", "resolve"], { cwd: mindDir });
+
+    writeFileSync(join(source, "SKILL.md"), body("THEIRS", "bottom v3"));
+    await importSkillFromDir(source, "author");
+    assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "updated");
+    assert.equal(readFileSync(local, "utf-8"), body("MINE and THEIRS", "bottom v3"));
   });
 
   it("update leaves .upstream.json at the old version when the commit fails", async () => {
@@ -1085,6 +1299,13 @@ describe("mind skill operations", () => {
     const wired = skills.find((sk) => sk.id === "wired");
     assert.equal(wired?.upstream?.version, 1);
     assert.equal(wired?.updateAvailable, true, "a retry still sees the update");
+    // ...and the recorded base didn't move ahead of it, or the retry would merge against
+    // the fallback instead.
+    await assert.rejects(() =>
+      exec("git", ["rev-parse", "--verify", "-q", "refs/volute/skill-base/wired"], {
+        cwd: mindDir,
+      }),
+    );
   });
 });
 

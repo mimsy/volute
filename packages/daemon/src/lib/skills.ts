@@ -20,6 +20,7 @@ import { rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
+import { MIND_LEVEL_THREAD, recordNotice } from "./chat/system-events.js";
 import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { getDb } from "./db.js";
 import { readInitLedgerFile, writeLedgerFile } from "./mind/init-ledger.js";
@@ -342,8 +343,123 @@ function relSkillsPath(dir: string): string {
 type UpstreamInfo = {
   source: string;
   version: number;
+  /** A commit holding the skill exactly as upstream shipped `version` — the merge base. */
   baseCommit: string;
+  /** The newer version the mind was last told is waiting on its unresolved markers. */
+  conflictNotified?: number;
 };
+
+/**
+ * Record the pool's copy of a skill as a commit in the mind's repo, at the skill's path,
+ * and return it: the base for the next 3-way merge has to be what upstream shipped, not the
+ * mind's merged result — against that, the mind's own edits read as changes upstream "made"
+ * and the next update takes the new version over them (#1277). Built in a scratch index so
+ * HEAD and the working tree are untouched, and kept reachable under refs/volute/ so gc
+ * doesn't prune it.
+ */
+async function recordUpstreamBase(
+  dir: string,
+  relSkillPath: string,
+  sourceDir: string,
+  skillId: string,
+  version: number,
+): Promise<string> {
+  const files = listFilesRecursive(sourceDir).filter((f) => f !== ".upstream.json");
+  // hash-object reads by path: a link a mind got into the pool before publishes were
+  // vetted would hand its target to the mind's repo.
+  for (const f of files) assertPlainEntry(join(sourceDir, f));
+  const shas = (
+    await gitExec([...PLUMBING, "hash-object", "-w", "--no-filters", "--stdin-paths"], {
+      cwd: dir,
+      stdin: `${files.map((f) => join(sourceDir, f)).join("\n")}\n`,
+    })
+  )
+    .trim()
+    .split("\n");
+  const indexInfo = files
+    .map((f, i) => {
+      const mode = lstatSync(join(sourceDir, f)).mode & 0o111 ? "100755" : "100644";
+      return `${mode} ${shas[i]}\t${join(relSkillPath, f)}\n`;
+    })
+    .join("");
+  const index = join(tmpdir(), `volute-skill-base-${process.pid}-${Date.now()}.index`);
+  try {
+    const env = { GIT_INDEX_FILE: index };
+    await gitExec([...PLUMBING, "update-index", "--add", "--index-info"], {
+      cwd: dir,
+      env,
+      stdin: indexInfo,
+    });
+    const tree = (await gitExec([...PLUMBING, "write-tree"], { cwd: dir, env })).trim();
+    const commit = (
+      await gitExec(
+        [
+          ...PLUMBING,
+          "commit-tree",
+          "--no-gpg-sign",
+          tree,
+          "-m",
+          `Upstream skill: ${skillId} (v${version})`,
+        ],
+        {
+          cwd: dir,
+        },
+      )
+    ).trim();
+    await gitExec([...PLUMBING, "update-ref", `refs/volute/skill-base/${skillId}`, commit], {
+      cwd: dir,
+    });
+    return commit;
+  } finally {
+    rmSync(index, { force: true });
+  }
+}
+
+/**
+ * Run as the daemon in the mind's repo, git plumbing has no reason to run anything the
+ * mind configured: no fsmonitor command, no hooks (update-ref's reference-transaction).
+ */
+const PLUMBING = [
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "core.hooksPath=/dev/null",
+  "-c",
+  "log.showSignature=false",
+];
+
+/**
+ * The base to merge against. One recorded by {@link recordUpstreamBase} (still what its
+ * ref points at) is upstream's own copy. Before that existed, an update recorded the mind's
+ * merged result instead, against which the mind's edits read as upstream's (#1277). For
+ * such a `legacy` base, a file only Volute ever committed, still as it was there, is pure
+ * upstream and that base is right for it; for any other, the commit that installed the
+ * skill is a pure upstream copy — older, so the merge may conflict, but it never reverts
+ * the mind's edits.
+ */
+async function mergeBaseFor(
+  dir: string,
+  skillId: string,
+  recorded: string,
+): Promise<{ base: string; legacy: string | null }> {
+  const ref = `refs/volute/skill-base/${skillId}`;
+  const recordedBase = await gitExec([...PLUMBING, "rev-parse", "--verify", "-q", ref], {
+    cwd: dir,
+  }).catch(() => "");
+  if (recordedBase.trim() === recorded) return { base: recorded, legacy: null };
+  const installed = (
+    await gitExec(
+      [...PLUMBING, "log", "-1", "--format=%H", `--grep=^Install shared skill: ${skillId}$`],
+      { cwd: dir },
+    ).catch(() => "")
+  ).trim();
+  return installed && installed !== recorded
+    ? { base: installed, legacy: recorded }
+    : { base: recorded, legacy: null };
+}
+
+/** Markers this code wrote (`yours`), or an older daemon's (named after its temp dir). */
+const MERGE_MARKER = /^<<<<<<< (?:yours$|.*volute-merge-)/m;
 
 export function readUpstream(skillDir: string): UpstreamInfo | null {
   const upstreamPath = join(skillDir, ".upstream.json");
@@ -632,10 +748,6 @@ export async function updateSkill(
   const newFiles = listFilesRecursive(sourceDir).filter((f) => f !== ".upstream.json");
   const allFiles = [...new Set([...currentFiles, ...newFiles])];
 
-  const conflictFiles: string[] = [];
-  const tmpBase = join(tmpdir(), `volute-merge-${process.pid}-${Date.now()}`);
-  mkdirSync(tmpBase, { recursive: true });
-
   // The skill dir is the mind's, and the daemon may be root: every read and write in it
   // goes through the mind-file helpers, so a link or FIFO the mind planted refuses (and
   // aborts the update) instead of aiming the merge at a file elsewhere.
@@ -656,6 +768,64 @@ export async function updateSkill(
     return md ? parseSkillMd(md.text) : null;
   };
   await readMindSkillMd();
+  const writeUpstream = (info: UpstreamInfo) =>
+    writeCurrent(".upstream.json", `${JSON.stringify(info, null, 2)}\n`);
+  const skillPaths = (files: string[]) =>
+    files.map((f) => join(mindSkillsSubdir(dir), skillId, f)).join(", ");
+
+  // Markers from an earlier conflict still unresolved: merging over them would nest them.
+  // Wait for the mind, and tell it — once per version that is waiting — that one is.
+  const unresolved: string[] = [];
+  for (const file of currentFiles) {
+    if (MERGE_MARKER.test((await readCurrent(file)) ?? "")) unresolved.push(file);
+  }
+  if (unresolved.length > 0) {
+    if (upstream.conflictNotified !== shared.version) {
+      await writeUpstream({ ...upstream, conflictNotified: shared.version });
+      await notifySkillConflict(
+        mindName,
+        skillId,
+        `Your ${skillId} skill still has unresolved conflict markers in ${skillPaths(unresolved)}, so v${shared.version} is waiting. Choose what to keep, remove the markers and commit; v${shared.version} merges on the next update (\`volute skill update ${skillId}\`, or the next daemon start).`,
+      );
+    }
+    return { status: "conflict", conflictFiles: unresolved };
+  }
+
+  const merge = await mergeBaseFor(dir, skillId, upstream.baseCommit);
+  const showAt = (commit: string, file: string) =>
+    gitExec([...PLUMBING, "show", `${commit}:${join(relSkillPath, file)}`], { cwd: dir }).catch(
+      () => null,
+    );
+  // Whether every commit that touched a file up to the legacy base is Volute's own install
+  // or update — then the file there is exactly what upstream shipped, never the mind's.
+  const onlyVoluteWrote = async (file: string) => {
+    const subjects = await gitExec(
+      [...PLUMBING, "log", "--format=%s", merge.legacy!, "--", join(relSkillPath, file)],
+      { cwd: dir },
+    ).catch(() => null);
+    const ours = new RegExp(
+      `^(Install shared skill: ${skillId}|Update skill: ${skillId} \\(v\\d+\\))$`,
+    );
+    return (
+      subjects
+        ?.trim()
+        .split("\n")
+        .every((l) => ours.test(l)) ?? false
+    );
+  };
+  /** A file's base content, or null if the base has no such file. */
+  const baseOf = async (file: string, current: string | null) => {
+    if (merge.legacy) {
+      const atLegacy = await showAt(merge.legacy, file);
+      if (atLegacy !== null && atLegacy === current && (await onlyVoluteWrote(file))) {
+        return atLegacy;
+      }
+    }
+    return showAt(merge.base, file);
+  };
+  const conflictFiles: string[] = [];
+  const tmpBase = join(tmpdir(), `volute-merge-${process.pid}-${Date.now()}`);
+  mkdirSync(tmpBase, { recursive: true });
 
   try {
     for (const file of allFiles) {
@@ -671,42 +841,18 @@ export async function updateSkill(
       }
 
       if (currentExists && !newExists) {
-        // File deleted upstream — try to get base version
-        let baseContent: string | null = null;
-        try {
-          baseContent = await gitExec(
-            ["show", `${upstream.baseCommit}:${join(relSkillPath, file)}`],
-            {
-              cwd: dir,
-            },
-          );
-        } catch {
-          // File didn't exist in base — it was added locally, keep it
-          continue;
-        }
-        // If current === base, the user didn't modify it, safe to delete
-        if ((await readCurrent(file)) === baseContent) {
+        // File deleted upstream. Not in the base: added locally, keep it. Unmodified from
+        // the base: safe to delete. Modified locally: the mind's version wins.
+        const current = await readCurrent(file);
+        if (current === (await baseOf(file, current))) {
           await removeMindFile(dir, inSkill(file), { owner });
         }
-        // If modified locally, keep it (user's version wins over upstream delete)
         continue;
       }
 
-      // Both exist — 3-way merge
-      let baseContent: string;
-      try {
-        baseContent = await gitExec(
-          ["show", `${upstream.baseCommit}:${join(relSkillPath, file)}`],
-          {
-            cwd: dir,
-          },
-        );
-      } catch {
-        // File didn't exist at base commit — treat as empty
-        baseContent = "";
-      }
-
+      // Both exist — 3-way merge (a file the base lacks merges against empty)
       const currentContent = (await readCurrent(file)) ?? "";
+      const baseContent = (await baseOf(file, currentContent)) ?? "";
       const newContent = readPoolFile(newPath).toString();
 
       // If current hasn't changed from base, just take the new version
@@ -730,14 +876,26 @@ export async function updateSkill(
       writeFileSync(newTmp, newContent);
 
       try {
-        await exec("git", ["merge-file", currentTmp, baseTmp, newTmp]);
+        await exec("git", [
+          "merge-file",
+          "-L",
+          "yours",
+          "-L",
+          "base",
+          "-L",
+          `upstream v${shared.version}`,
+          currentTmp,
+          baseTmp,
+          newTmp,
+        ]);
         // Clean merge — write result
         await writeCurrent(file, readFileSync(currentTmp, "utf-8"));
       } catch (e: unknown) {
-        // git merge-file exits with 1 for conflicts, >1 for errors
+        // git merge-file exits with the number of conflicts (capped at 127); an error is
+        // negative, which arrives as 128-255.
         const exitCode =
-          e && typeof e === "object" && "code" in e ? (e as { code: number }).code : null;
-        if (exitCode === 1) {
+          e && typeof e === "object" && "code" in e ? (e as { code: unknown }).code : null;
+        if (typeof exitCode === "number" && exitCode >= 1 && exitCode <= 127) {
           // Conflict — write result with markers
           await writeCurrent(file, readFileSync(currentTmp, "utf-8"));
           conflictFiles.push(file);
@@ -750,25 +908,35 @@ export async function updateSkill(
     rmSync(tmpBase, { recursive: true, force: true });
   }
 
+  // Recorded only just before .upstream.json points at it: a ref moved ahead of a failed
+  // update would leave the two disagreeing, and the retry merging against the fallback.
+  const upstreamInfo = async (): Promise<UpstreamInfo> => ({
+    source: upstream.source,
+    version: shared.version,
+    baseCommit: await recordUpstreamBase(dir, relSkillPath, sourceDir, skillId, shared.version),
+  });
+
   if (conflictFiles.length > 0) {
-    // Don't commit — leave conflicts for the user to resolve
+    // Don't commit — leave the markers for the mind to resolve. .upstream.json moves to the
+    // new version first, so the next update starts from it and doesn't merge over them,
+    // and the mind hears about them whatever the wiring below does.
+    await writeUpstream(await upstreamInfo());
+    // The new version's deps and shims must not wait on the mind: from upstream's
+    // SKILL.md, since the mind's may have markers in it.
+    const wiringFailure = await wireSkill(mindName, dir, skillId, readSkillMd(sourceDir)).then(
+      () => "",
+      (e) =>
+        ` Setting up v${shared.version}'s dependencies or commands also failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    await notifySkillConflict(
+      mindName,
+      skillId,
+      `Your ${skillId} skill was updated to v${shared.version}, but upstream changed the same parts you had edited, so it could not be merged on its own. Conflict markers (<<<<<<< yours / >>>>>>> upstream v${shared.version}) are in place in ${skillPaths(conflictFiles)} — choose what to keep, remove the markers, and commit.${wiringFailure}`,
+    );
     return { status: "conflict", conflictFiles };
   }
 
-  // Wire the merged skill up the way installSkill does — otherwise a mind that
-  // installed it before hooks (#228) or bins (#231) existed keeps the files but
-  // none of the npm deps or shims they rely on.
-  const merged = await readMindSkillMd();
-  const npmDependencies = merged?.npmDependencies ?? [];
-  if (npmDependencies.length > 0) {
-    try {
-      await npmInstallAsMind(dir, mindName, npmDependencies);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new Error(`Failed to install npm dependencies (${npmDependencies.join(", ")}): ${msg}`);
-    }
-  }
-  reconcileSkillShims(mindName, dir, skillId, merged ?? { hooks: {}, bin: null });
+  const npmDependencies = await wireSkill(mindName, dir, skillId, await readMindSkillMd());
 
   // .upstream.json only moves to the new version once the merge is committed:
   // written first, a failed commit would leave the skill reading as up to date.
@@ -785,18 +953,47 @@ export async function updateSkill(
       cwd: dir,
     },
   );
-  const commitHash = (await gitExec(["rev-parse", "HEAD"], { cwd: dir })).trim();
-
-  const upstreamInfo: UpstreamInfo = {
-    source: upstream.source,
-    version: shared.version,
-    baseCommit: commitHash,
-  };
-  await writeCurrent(".upstream.json", `${JSON.stringify(upstreamInfo, null, 2)}\n`);
+  await writeUpstream(await upstreamInfo());
   await gitExec(["add", join(relSkillPath, ".upstream.json")], { cwd: dir });
   await gitExec(["commit", "--amend", "--no-edit"], { cwd: dir });
 
   return { status: "updated" };
+}
+
+/**
+ * Wire a skill up the way installSkill does — otherwise a mind that installed it before
+ * hooks (#228) or bins (#231) existed keeps the files but none of the npm deps or shims
+ * they rely on. Returns the npm dependencies it installed.
+ */
+async function wireSkill(
+  mindName: string,
+  dir: string,
+  skillId: string,
+  declared: ReturnType<typeof parseSkillMd> | null,
+): Promise<string[]> {
+  const npmDependencies = declared?.npmDependencies ?? [];
+  if (npmDependencies.length > 0) {
+    try {
+      await npmInstallAsMind(dir, mindName, npmDependencies);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`Failed to install npm dependencies (${npmDependencies.join(", ")}): ${msg}`);
+    }
+  }
+  reconcileSkillShims(mindName, dir, skillId, declared ?? { hooks: {}, bin: null });
+  return npmDependencies;
+}
+
+async function notifySkillConflict(mindName: string, skillId: string, detail: string) {
+  await recordNotice({
+    mind: mindName,
+    thread: MIND_LEVEL_THREAD,
+    kind: "skill_conflict",
+    reason: skillId,
+    detail,
+  }).catch((err) =>
+    log.warn(`failed to notify ${mindName} of a skill conflict`, log.errorData(err)),
+  );
 }
 
 export type MindSkillInfo = {
