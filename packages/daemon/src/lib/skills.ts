@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   cpSync,
   existsSync,
+  fchmodSync,
+  constants as fsConstants,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -932,6 +937,27 @@ function lexists(abs: string): boolean {
   }
 }
 
+/**
+ * Make an exact generated shim executable again if it has lost the bit — an import
+ * that dropped modes left them 0644 and off PATH (#1274). Through a no-follow handle,
+ * so a link swapped in after {@link readShim} is refused rather than chmodded.
+ * Returns whether it changed the mode.
+ */
+function restoreShimExecBit(abs: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(abs, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.nlink > 1 || (st.mode & 0o111) !== 0) return false;
+    fchmodSync(fd, 0o755);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 /** Create a shim; `wx` refuses to follow or clobber anything already at the path. */
 function writeShim(abs: string, content: string): void {
   writeFileSync(abs, content, { mode: 0o755, flag: "wx" });
@@ -1025,6 +1051,8 @@ export function reconcileSkillShims(
       if (current !== content && isGeneratedShim(current, skillId)) {
         rmSync(abs);
         writeShim(abs, content);
+        changed = true;
+      } else if (current === content && restoreShimExecBit(abs)) {
         changed = true;
       }
     } else if (restoreDeleted || !given.has(rel)) {

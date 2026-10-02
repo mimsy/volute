@@ -21,6 +21,7 @@ import {
   extractArchive,
   trustedTemplateHash,
 } from "../packages/daemon/src/lib/mind/archive.js";
+import { readAppliedInfrastructureHash } from "../packages/daemon/src/lib/mind/infrastructure-sync.js";
 import { importMindFromArchive } from "../packages/daemon/src/lib/mind/lifecycle.js";
 import {
   addMind,
@@ -39,7 +40,10 @@ import {
   copyTemplateToDir,
   findTemplatesRoot,
 } from "../packages/daemon/src/lib/template/template.js";
-import { computeTemplateHash } from "../packages/daemon/src/lib/template/template-hash.js";
+import {
+  computeInfrastructureHash,
+  computeTemplateHash,
+} from "../packages/daemon/src/lib/template/template-hash.js";
 
 /**
  * A full-archive import carries no git history, so its fresh repo shared none
@@ -137,6 +141,8 @@ describe("an upgrade repairs a mind whose history never joined volute/template",
     assert.equal(readFileSync(resolve(dir, MINE), "utf-8"), "export const mine = true;\n");
     assert.ok(git(dir, "ls-files", MINE).trim(), "the mind's own file stays tracked");
     assert.ok(hasMergeBase(dir), "later upgrades merge 3-way");
+    // The upgrade's own backfill counts, so the next daemon start doesn't redo it (#1266).
+    assert.equal(readAppliedInfrastructureHash(name), computeInfrastructureHash("claude"));
   });
 
   it("replaces the orphan volute/template a failed upgrade left behind", async () => {

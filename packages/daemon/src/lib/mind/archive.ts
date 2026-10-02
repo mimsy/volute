@@ -618,7 +618,9 @@ export function createExportArchive(options: ExportOptions): AdmZip {
       const fullPath = resolve(dir, relPath);
       const file = readRegularFile(fullPath, dir);
       if (!file || isDaemonSecretFile(relPath, file.data)) continue;
-      zip.addFile(`mind/${relPath}`, file.data);
+      // With its mode, as in the home-only branch below: without one adm-zip stamps
+      // 0644, and the `.local/bin/` shims arrive unexecutable (#1274).
+      zip.addFile(`mind/${relPath}`, file.data, "", file.mode);
     }
   } else {
     // Home-only export: listHomeFiles for home/, walkDir for .mind/
@@ -630,9 +632,9 @@ export function createExportArchive(options: ExportOptions): AdmZip {
       // crash or an archived host file.
       const file = readRegularFile(fullPath, dir);
       if (!file || isDaemonSecretFile(relPath, file.data)) continue;
-      // Modes matter here as they do nowhere else in the archive: `.local/bin/`
-      // holds the mind's `volute` wrapper and its skill shims, which are only
-      // useful executable. adm-zip stamps 0644 on an entry added without one.
+      // Modes matter for `.local/bin/`: it holds the mind's `volute` wrapper and
+      // its skill shims, which are only useful executable. adm-zip stamps 0644 on
+      // an entry added without one.
       zip.addFile(`mind/${relPath}`, file.data, "", file.mode);
     }
 

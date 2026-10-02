@@ -265,3 +265,26 @@ describe("home-only archives carry home/.local/", () => {
     );
   });
 });
+
+describe("full archives keep home/.local/bin executable (#1274)", () => {
+  it("restores the exec bit on the volute wrapper and skill shims", () => {
+    const name = "full-archive-mode";
+    mindNames.push(name);
+    const sourceHome = composedMind(mindDir(name), name);
+    // A generated skill shim, as reconcileSkillShims writes one.
+    writeFileSync(resolve(sourceHome, ".local/bin/dream"), "#!/bin/bash\n", { mode: 0o755 });
+
+    const zip = createExportArchive({ name, template: "claude", includeSrc: true });
+    const archivePath = resolve(scratch(), `${name}.volute`);
+    zip.writeZip(archivePath);
+    const { mindDir: archived } = extractArchive(archivePath, scratch());
+
+    for (const shim of [SHIM, ".local/bin/dream"]) {
+      assert.equal(
+        statSync(resolve(archived, "home", shim)).mode & 0o111,
+        0o111,
+        `${shim} must arrive executable, or the command does not resolve on PATH`,
+      );
+    }
+  });
+});
