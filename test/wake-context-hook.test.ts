@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -9,9 +17,13 @@ import {
   resolveScriptToken,
   revokeMindToken,
 } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
-import { SleepManager, type SleepState } from "../packages/daemon/src/lib/daemon/sleep-manager.js";
+import {
+  SleepManager,
+  type SleepState,
+  wakeHookFailureMessage,
+} from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 import { mindDir, voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
-import { exec } from "../packages/daemon/src/lib/util/exec.js";
+import { type ExecError, exec } from "../packages/daemon/src/lib/util/exec.js";
 
 /** Reach the private hook runner the way the other sleep tests reach privates. */
 function runHook(sm: SleepManager, name: string, sleepingSince: string, duration: string) {
@@ -299,5 +311,56 @@ describe("wake-context hook", () => {
     assert.equal(sm.stateOf(name)?.wakeFailures, 0, "backoff count untouched");
     assert.equal(sm.stateOf(name)?.nextWakeAttemptAt, null, "no retry scheduled");
     assert.equal(sm.stateOf(name)?.sleeping, true, "the wake itself is unaffected");
+  });
+});
+
+// Whose fault a failure is decides whether the mind is told to go look at its hook.
+// Telling it so for a host-side failure sends it hunting for a bug it doesn't have.
+describe("wake-context failure notice wording", () => {
+  const OWN = /yours to look into/;
+  const fail = (props: Partial<ExecError>, message = "Command failed") =>
+    Object.assign(new Error(message), props) as ExecError;
+
+  it("a hook that exits non-zero is the mind's to look into", () => {
+    const msg = wakeHookFailureMessage(fail({ code: 3 }), "oops");
+    assert.match(msg, /exited with code 3/);
+    assert.match(msg, OWN);
+    assert.match(msg, /It said:\noops/);
+  });
+
+  it("a hook that floods its output ran and caused that itself", () => {
+    // execTimed's overflow carries no code or signal; execFile's carries a string code.
+    for (const err of [
+      fail({}, "stdout maxBuffer length exceeded"),
+      fail({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }, "stdout maxBuffer length exceeded"),
+    ]) {
+      const msg = wakeHookFailureMessage(err, undefined);
+      assert.match(msg, /more output than a wake can take/);
+      assert.match(msg, OWN);
+    }
+  });
+
+  it("an isolation front-end failure is not blamed on the mind", () => {
+    for (const stderr of [
+      "runuser: user mind-ash does not exist or the user entry does not contain all the required fields",
+      "sudo: unknown user mind-ash",
+    ]) {
+      const msg = wakeHookFailureMessage(fail({ code: 1 }), stderr);
+      assert.match(msg, /couldn't be run as you/);
+      assert.doesNotMatch(msg, OWN);
+      assert.match(msg, /host's side/);
+    }
+  });
+
+  it("speaks with the same voice as the mind-side hook loader", () => {
+    // The two can't share code across the template/daemon boundary; this keeps the
+    // ownership line one sentence, not two that drift apart under "[Your hooks]".
+    const loader = readFileSync(
+      resolve(import.meta.dirname, "../templates/_base/src/lib/hook-loader.ts"),
+      "utf-8",
+    );
+    const line = "It's part of your own machinery — yours to look into.";
+    assert.ok(loader.includes(line), "hook-loader's ownership line changed");
+    assert.ok(wakeHookFailureMessage(fail({ code: 1 }), undefined).includes(line));
   });
 });
