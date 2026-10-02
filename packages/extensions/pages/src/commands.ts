@@ -955,16 +955,10 @@ export function createCommands(): Record<string, ExtensionCommand> {
         limit: { type: "number", description: "Max number of entries to show (default: 20)" },
       },
       handler: async ({ flags }, ctx) => {
-        const mindName = ctx.mindName;
-        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
-
-        const mindDir = await ctx.getMindDir(mindName);
-        if (!mindDir) return { error: `Mind not found: ${mindName}` };
-
         const limit = (flags.limit as number | undefined) ?? 20;
 
         try {
-          const output = await pagesLog(mindName, mindDir, limit, isolationFrom(ctx));
+          const output = await pagesLog(ctx.dataDir, limit, isolationFrom(ctx));
           return { output };
         } catch (err) {
           return { error: `Failed to read shared log: ${(err as Error).message}` };

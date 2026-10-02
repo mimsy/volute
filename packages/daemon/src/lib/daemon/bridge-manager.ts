@@ -7,6 +7,7 @@ import { readEnv, sharedEnvPath } from "../config/env.js";
 import { daemonLoopback, voluteSystemDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 import { resolveWithinBase } from "../util/paths.js";
+import { type ProcessIdentity, processIdentity } from "../util/process-identity.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { voluteRoot } from "../util/volute-root.js";
 import { ManagerNotReadyError } from "./manager-not-ready.js";
@@ -23,6 +24,12 @@ export function resolveBuiltinBridge(
   const script = resolve(root, "dist", "connectors", `${platform}-bridge.js`);
   return existsSync(script) ? script : null;
 }
+
+/**
+ * What a bridge's PID file records: its pid, and when it started, in which boot. A file
+ * from before #1360 holds a bare pid, and so neither.
+ */
+type BridgePidRecord = { pid: number; start: string | null; boot: string | null };
 
 type TrackedBridge = {
   child: ChildProcess;
@@ -139,7 +146,7 @@ export class BridgeManager {
     if (existing) await this.terminate(platform, existing.child, this.replaceGraceMs);
 
     // Kill orphan from previous daemon session
-    this.killOrphanBridge(platform);
+    await this.killOrphanBridge(platform);
 
     // Resolve bridge script (built-in only for now)
     const builtinBridge = this.resolveBuiltinBridge(platform);
@@ -191,7 +198,8 @@ export class BridgeManager {
       lastStderr = chunk.toString().trim();
     });
 
-    this.saveBridgePid(platform, child.pid);
+    // The pid now, so a crash before its identity is read still leaves a handle on it.
+    this.writeBridgePid(platform, { pid: child.pid, start: null, boot: null });
     this.live.set(child, platform);
     this.bridges.set(platform, { child, platform });
     // Clear the crash budget only once this spawn has proved it can stay up —
@@ -220,7 +228,9 @@ export class BridgeManager {
         this.restartTracker.cancelHealthyReset(platform);
         this.bridges.delete(platform);
       }
-      if (child.pid && this.readBridgePid(platform) === child.pid) this.removeBridgePid(platform);
+      if (child.pid && this.readBridgePid(platform)?.pid === child.pid) {
+        this.removeBridgePid(platform);
+      }
 
       // Only the tracked child can crash: one we killed or replaced was untracked first.
       if (!current || this.shuttingDown) return;
@@ -240,6 +250,7 @@ export class BridgeManager {
       this.scheduleRestart(platform, daemonPort, delay);
     });
 
+    await this.saveBridgeIdentity(platform, child);
     blog.info(`started bridge ${platform}`);
   }
 
@@ -256,7 +267,7 @@ export class BridgeManager {
     this.restartTracker.reset(platform);
     // Off means off for a bridge an earlier daemon left running, too. (Our own children's
     // PID files are their exit handlers' to remove; this leaves those alone.)
-    this.killOrphanBridge(platform);
+    await this.killOrphanBridge(platform);
     if (children.length > 0 || cancelled) blog.info(`stopped bridge ${platform}`);
   }
 
@@ -372,18 +383,48 @@ export class BridgeManager {
     return getBridgeDef(platform) !== null;
   }
 
-  private saveBridgePid(platform: string, pid: number): void {
-    const pidPath = this.bridgePidPath(platform);
-    mkdirSync(dirname(pidPath), { recursive: true });
-    writeFileSync(pidPath, String(pid));
+  /** Instance seam over {@link processIdentity}, so tests can stand in for the OS. */
+  private processIdentity(pid: number): Promise<ProcessIdentity | null> {
+    return processIdentity(pid);
   }
 
-  private readBridgePid(platform: string): number | null {
+  private writeBridgePid(platform: string, record: BridgePidRecord): void {
+    const pidPath = this.bridgePidPath(platform);
+    mkdirSync(dirname(pidPath), { recursive: true });
+    writeFileSync(pidPath, JSON.stringify(record));
+  }
+
+  /**
+   * Add `child`'s start time and boot to its PID file. Skipped if it has already
+   * exited: its exit handler has run, and nothing would remove the file.
+   */
+  private async saveBridgeIdentity(platform: string, child: ChildProcess): Promise<void> {
+    const id = await this.processIdentity(child.pid!);
+    if (!id || !this.live.has(child)) return;
+    this.writeBridgePid(platform, { pid: child.pid!, start: id.start, boot: id.boot });
+  }
+
+  private readBridgePid(platform: string): BridgePidRecord | null {
+    const str = (v: unknown) => (typeof v === "string" ? v : null);
     try {
-      return parseInt(readFileSync(this.bridgePidPath(platform), "utf-8").trim(), 10);
+      const text = readFileSync(this.bridgePidPath(platform), "utf-8").trim();
+      if (!text.startsWith("{")) return { pid: parseInt(text, 10), start: null, boot: null };
+      const { pid, start, boot } = JSON.parse(text);
+      return { pid: Number(pid), start: str(start), boot: str(boot) };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Whether the process `id` describes is this platform's bridge: its command line runs
+   * our bridge script, and the start time and boot, where recorded, are the ones it had.
+   */
+  private isOurBridge(platform: string, record: BridgePidRecord, id: ProcessIdentity): boolean {
+    const script = this.resolveBuiltinBridge(platform);
+    if (!script || (id.args !== script && !id.args.endsWith(` ${script}`))) return false;
+    if (record.start !== null && record.start !== id.start) return false;
+    return record.boot === null || record.boot === id.boot;
   }
 
   private removeBridgePid(platform: string): void {
@@ -396,16 +437,30 @@ export class BridgeManager {
     }
   }
 
-  private killOrphanBridge(platform: string): void {
+  /**
+   * Signal a bridge an earlier daemon left running, if the PID file still names it. The
+   * daemon is root on system installs, and a pid freed by a crash can be reused by any
+   * process, so it's signalled only if it is still our bridge (`isOurBridge`); otherwise
+   * the file is removed and nothing is signalled (#1360). A leader already gone isn't
+   * signalled at all, so neither is anything left in its group.
+   */
+  private async killOrphanBridge(platform: string): Promise<void> {
     const pidPath = this.bridgePidPath(platform);
     if (!existsSync(pidPath)) return;
     try {
-      const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+      const record = this.readBridgePid(platform);
+      const pid = record?.pid ?? Number.NaN;
       // A child we replaced that is still in its kill grace is ours, not an orphan; its
       // exit handler cleans up after it.
       if (this.ownsPid(pid)) return;
-      // Never 1: `kill(-1)` signals every process we're allowed to.
-      if (pid > 1) {
+      // Never 1: `kill(-1)` signals every process we're allowed to. No identity means
+      // the process is gone: nothing to signal, as with ESRCH below.
+      const id = pid > 1 ? await this.processIdentity(pid) : null;
+      if (id && !this.isOurBridge(platform, record!, id)) {
+        blog.warn(
+          `not signalling pid ${pid} from bridge ${platform}'s PID file: it can't be confirmed as that bridge`,
+        );
+      } else if (id) {
         // Only ESRCH means it's gone; anything else (EPERM) means it may still be up.
         let failure: NodeJS.ErrnoException | undefined;
         for (const target of [-pid, pid]) {
