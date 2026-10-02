@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -134,13 +135,13 @@ describe("exec env scrub (#966)", () => {
     assert.equal(out, "token=[]");
   });
 
-  it("the pages extension's shared-repo commits cannot see the daemon token", async () => {
+  it("a filter planted in the pages repo config runs nowhere after the daemon starts", async () => {
     const dataDir = join(base, "data");
     const mindDir = join(base, "alpha");
     mkdirSync(dataDir, { recursive: true });
     await ensurePagesRepo(dataDir);
-    // Pages git runs with hooks off (#1285), but config the repo carries still runs
-    // programs: a clean filter, which `git add` runs on the page being committed.
+    // What a mind could write while the config was group-writable (#1285): a clean
+    // filter, which `git add` and the squash merge would run on a page.
     const outFile = join(base, "seen.txt");
     const filter = join(base, "probe-filter");
     writeFileSync(
@@ -148,27 +149,21 @@ describe("exec env scrub (#966)", () => {
       `#!/bin/sh\nprintf 'token=[%s]\\nhost=[%s]' "$VOLUTE_DAEMON_TOKEN" "$HOST_ONLY_SECRET" > "${outFile}"\ncat\n`,
     );
     chmodSync(filter, 0o755);
-    await gitExec(["config", "filter.probe.clean", filter], { cwd: join(dataDir, "repo") });
-    await addPagesWorktree("alpha", mindDir, dataDir);
+    const repo = join(dataDir, "repo");
+    await gitExec(["config", "filter.probe.clean", filter], { cwd: repo });
+    await gitExec(["config", "filter.probe.smudge", filter], { cwd: repo });
+    writeFileSync(join(repo, ".git/info/attributes"), "*.md filter=probe\n");
 
-    writeFileSync(join(mindDir, "home/pages/_system/.gitattributes"), "*.md filter=probe\n");
+    await ensurePagesRepo(dataDir); // the next daemon start
+    await addPagesWorktree("alpha", mindDir, dataDir);
     writeFileSync(join(mindDir, "home/pages/_system/lore.md"), "# Lore\n");
     const r = await pagesPullAndMerge("alpha", mindDir, dataDir, "start lore");
     assert.equal(r.ok, true, JSON.stringify(r));
 
-    assert.equal(readHookOutput(outFile), "token=[]\nhost=[]");
+    assert.equal(existsSync(outFile), false, "the planted filter ran");
   });
 });
 
-/**
- * The runtime tests above prove the wrapper scrubs. This one guards the other
- * direction: a child spawned *around* the wrapper, with the daemon environment
- * spread into it by hand. That is how #966 existed in the first place — five
- * `{ ...process.env, HOME }` spreads that each looked locally reasonable — and
- * the module-local `git()` helper that used to make upgrade.ts greppable is gone
- * now that the scrub is the default. So the grep lives here instead, where a new
- * spread fails CI rather than waiting to be noticed in review.
- */
 describe("no stray daemon-env spreads (#966)", () => {
   const repoRoot = resolve(import.meta.dirname, "..");
 

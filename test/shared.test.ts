@@ -627,7 +627,7 @@ describe("pages collaborative repo", () => {
    * stand-in for the uid switch: a test can't change uid, so `wrapForIsolation` notes
    * which git calls would have run as the mind.
    */
-  function containingIsolation() {
+  function containingIsolation(gitConfig: string[] = [], env: string[] = []) {
     const asMind: { mind: string; args: string[] }[] = [];
     const isolation: IsolationInfo = {
       isIsolationEnabled: () => true,
@@ -641,7 +641,7 @@ describe("pages collaborative repo", () => {
       },
       wrapForIsolation: async (cmd, args, mind) => {
         asMind.push({ mind, args });
-        return ["env", [`PAGES_GIT_AS=${mind}`, cmd, ...args]];
+        return ["env", [`PAGES_GIT_AS=${mind}`, ...env, cmd, ...gitConfig, ...args]];
       },
     };
     return { asMind, isolation };
@@ -742,6 +742,29 @@ describe("pages collaborative repo", () => {
     assert.ok(existsSync(resolve(b, "home", "pages", "_system", ".git")));
   });
 
+  it("rebases as the mind onto a main that moved, with no identity of its own", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const [nameA, nameB] = ["test-pages-rebase-id-a", "test-pages-rebase-id-b"];
+    const a = await createFakeMind(nameA);
+    const b = await createFakeMind(nameB);
+    await addPagesWorktree(nameA, a, dataDir);
+    await addPagesWorktree(nameB, b, dataDir);
+    writeFileSync(resolve(b, "home", "pages", "_system", "b.md"), "# B\n");
+    assert.ok((await pagesPullAndMerge(nameB, b, dataDir, "b")).ok);
+
+    // A's work is committed on its branch, so the rebase has a commit to replay. A
+    // mind's HOME carries no git identity, and a container's hostname has no domain
+    // to guess an email from: no guessing at all stands in for both.
+    writeFileSync(resolve(a, "home", "pages", "_system", "a.md"), "# A\n");
+    const { isolation } = containingIsolation(
+      ["-c", "user.useConfigOnly=true"],
+      ["XDG_CONFIG_HOME=/nonexistent", "GIT_CONFIG_NOSYSTEM=1"],
+    );
+    const result = await pagesPullAndMerge(nameA, a, dataDir, "a", isolation);
+    assert.ok(result.ok, JSON.stringify(result));
+  });
+
   it("runs a filter from a redirected commondir as the mind, never as the daemon", async (t) => {
     t.mock.method(console, "warn", () => {});
     t.mock.method(console, "error", () => {});
@@ -808,6 +831,37 @@ describe("pages collaborative repo", () => {
     assert.equal(mode(resolve(gitDir, "info", "attributes")), 0o644);
     assert.equal(existsSync(resolve(gitDir, "hooks", "post-merge")), false);
     assert.equal(git(repo, "rev-parse", "main"), head, "a repair, not a re-init");
+  });
+
+  it("a filter one mind planted in the shared config doesn't run as another", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const repo = pagesRepoDir(dataDir);
+    // Mind A, while the config was still group-writable: a filter for every page.
+    const marker = resolve(voluteHome(), "test-pages-cross-mind-ran");
+    rmSync(marker, { force: true });
+    const filter = resolve(voluteHome(), "test-pages-cross-mind-filter");
+    writeFileSync(filter, `#!/bin/sh\necho "as=[$PAGES_GIT_AS]" >> "${marker}"\ncat\n`, {
+      mode: 0o755,
+    });
+    git(repo, "config", "filter.probe.clean", filter);
+    git(repo, "config", "include.path", resolve(voluteHome(), "test-pages-cross-mind-include"));
+    writeFileSync(resolve(repo, ".git", "info", "attributes"), "*.md filter=probe\n");
+    // Pointing at itself, so the repo stays valid and is repaired, not re-initialized.
+    writeFileSync(resolve(repo, ".git", "commondir"), ".");
+
+    await ensurePagesRepo(dataDir); // the next daemon start
+    assert.doesNotMatch(readFileSync(resolve(repo, ".git", "config"), "utf-8"), /filter|include/);
+    assert.equal(existsSync(resolve(repo, ".git", "commondir")), false);
+
+    const nameB = "test-pages-cross-mind-b";
+    const b = await createFakeMind(nameB);
+    const { isolation } = containingIsolation();
+    await addPagesWorktree(nameB, b, dataDir, isolation);
+    writeFileSync(resolve(b, "home", "pages", "_system", "b.md"), "# B\n");
+    const result = await pagesPullAndMerge(nameB, b, dataDir, "b", isolation);
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.equal(existsSync(marker), false, "A's filter ran");
   });
 
   it("re-initializes a repo whose config was swapped for a link", async (t) => {

@@ -83,12 +83,21 @@ const IDENTITY_ARGS = ["-c", "user.name=volute", "-c", "user.email=volute@localh
 type GitOpts = { cwd: string; asMind?: { name: string; home: string } };
 
 /**
- * Run a git command. Adds safe.directory when isolation is enabled, and a
- * committer identity for `commit` so commits never depend on host git config.
+ * How long one git command may run. A mind owns its gitdir under `.git/worktrees/`,
+ * and root's `worktree prune`, `branch -D` and checked-out-branch checks read every
+ * gitdir there: a FIFO planted in one would otherwise hang the command, and the
+ * pages lock it holds, forever.
+ */
+const GIT_TIMEOUT_MS = 120_000;
+
+/**
+ * Run a git command. Adds safe.directory when isolation is enabled, and a committer
+ * identity so commits, and the commits a rebase replays, never depend on host or
+ * mind git config.
  *
- * Hooks and fsmonitor are off for every call. The repo is group-writable by every
- * mind (`init --shared=group`), hooks directory included, and these commands run as
- * root (#1285).
+ * Hooks and fsmonitor are off for every call, so no git here runs a program it found
+ * on disk that way. Git run as a mind doesn't auto-gc either: that would write
+ * `.git/gc.pid` and `packed-refs`, which only root may write (`hardenPagesRepo`).
  *
  * The env is the daemon's mind allowlist, not `process.env`: the commit, merge and
  * rebase here run in worktrees minds write to, and a program a mind gets git to run
@@ -96,17 +105,18 @@ type GitOpts = { cwd: string; asMind?: { name: string; home: string } };
  */
 async function gitExec(args: string[], opts: GitOpts, isolation?: IsolationInfo): Promise<string> {
   const isIso = isolation?.isIsolationEnabled() ?? false;
-  const prefix = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+  const prefix = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...IDENTITY_ARGS];
   if (isIso) prefix.push("-c", "safe.directory=*");
-  if (args[0] === "commit") prefix.push(...IDENTITY_ARGS);
   const env = buildMindBaseEnv();
   let [cmd, argv] = ["git", [...prefix, ...args]];
   if (isIso && opts.asMind) {
+    argv = [...prefix, "-c", "gc.auto=0", "-c", "maintenance.auto=false", ...args];
     [cmd, argv] = await isolation!.wrapForIsolation(cmd, argv, opts.asMind.name);
     env.HOME = opts.asMind.home;
   }
   return new Promise((resolve, reject) => {
-    execFileCb(cmd, argv, { cwd: opts.cwd, env }, (err, stdout, stderr) => {
+    const execOpts = { cwd: opts.cwd, env, timeout: GIT_TIMEOUT_MS };
+    execFileCb(cmd, argv, execOpts, (err, stdout, stderr) => {
       if (err) {
         const e = err as Error & { stderr?: string; stdout?: string };
         e.stderr = stderr;
@@ -179,7 +189,8 @@ function worktreePath(mindDir: string): string {
  * symlink into another mind's pages (#1285). Git then runs as the mind, not as root.
  * The worktree's gitdir is the mind's (`addPagesWorktree` hands it over), and its
  * `commondir` file decides which repo's config git reads. So root git here would run
- * any filter driver or hook the mind configured. Throws if containment refuses.
+ * any filter driver or other program that config names. Throws if containment
+ * refuses, or if the worktree isn't there.
  */
 async function mindWorktree(
   mindName: string,
@@ -197,6 +208,15 @@ async function mindWorktree(
 /** What a mind is told when its worktree can't be contained. */
 function refusedWorktree(mindName: string, err: unknown): { ok: false; message: string } {
   console.warn(`[pages] refused ${mindName}'s worktree: ${(err as Error).message}`);
+  if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    // Never provisioned, or removed (#795).
+    return {
+      ok: false,
+      message:
+        "Nothing was done: pages/_system doesn't exist yet. It's set up when you start, " +
+        "so restart and try again.",
+    };
+  }
   return {
     ok: false,
     message:
@@ -239,21 +259,47 @@ function setDaemonMode(path: string, mode: number, dir: boolean): void {
 }
 
 /**
+ * The repo config keys `git init` writes. Anything else in the config was put there
+ * by someone else, when the config was still group-writable.
+ */
+const REPO_CONFIG_KEYS = new Set([
+  "core.repositoryformatversion",
+  "core.filemode",
+  "core.bare",
+  "core.logallrefupdates",
+  "core.sharedrepository",
+  "core.ignorecase",
+  "core.precomposeunicode",
+  "core.symlinks",
+  "extensions.objectformat",
+  "extensions.refstorage",
+  "extensions.relativeworktrees",
+]);
+
+/**
  * Keep the repo's own config, hooks and attributes the daemon's alone (#1285).
  *
  * `init --shared=group` makes all of `.git` writable by the `volute` group, and every
- * mind is in it. Root runs merge and commit here, so a filter driver or hook a mind
- * wrote into `.git/config` or `.git/hooks` would run as root. Minds need only
- * `objects/` and `refs/` (and their own gitdir under `worktrees/`) to commit in
- * their worktrees. So the work tree, `.git` itself (or a mind could rename `config`
- * away and write its own), `hooks/`, `info/` and `worktrees/` go to 2755, and
- * `config` and `HEAD` to 0644. An entry in `hooks/` or `info/` the daemon doesn't own
- * is removed, and the rest lose group write.
+ * mind is in it. Root runs merge and commit here, and minds run git in their
+ * worktrees, all reading this config. So a filter or merge driver, `include.path` or
+ * `gpg.program` one mind wrote into it would run as root, or as every other mind.
+ * Minds need only `objects/` and `refs/` (and their own gitdir under `worktrees/`)
+ * to commit in their worktrees, so:
  *
- * Throws if `.git`, one of those directories, `config` or `HEAD` is not the
- * daemon's own: then the repo can't be trusted and the caller re-initializes it.
+ * - the work tree, `.git`, `hooks/`, `info/` and `worktrees/` go to 2755. They are
+ *   not group-writable at all, so no sticky bit is needed for a mind to be unable
+ *   to rename `config` away or replace another mind's gitdir;
+ * - `config` and `HEAD` go to 0644, and `config` keeps only the keys `git init` writes;
+ * - an entry in `hooks/` or `info/` the daemon doesn't own is removed, and the rest
+ *   lose group write;
+ * - `commondir`, `gitdir` and `config.worktree` in `.git` are removed: a main repo
+ *   never has them, and each would change where git reads config from.
+ *
+ * Runs at every daemon start, so it also repairs installs from before it existed.
+ * Throws if `.git`, one of those directories, `config` or `HEAD` is not the daemon's
+ * own: the repo can't be trusted, and the caller re-initializes it.
  */
-export function hardenPagesRepo(dir: string): void {
+export async function hardenPagesRepo(dir: string): Promise<void> {
   const gitDir = resolve(dir, ".git");
   setDaemonMode(dir, 0o2755, true);
   setDaemonMode(gitDir, 0o2755, true);
@@ -263,6 +309,9 @@ export function hardenPagesRepo(dir: string): void {
     setDaemonMode(path, 0o2755, true);
   }
   for (const file of ["config", "HEAD"]) setDaemonMode(resolve(gitDir, file), 0o644, false);
+  for (const name of ["commondir", "gitdir", "config.worktree"]) {
+    rmSync(resolve(gitDir, name), { recursive: true, force: true });
+  }
   for (const sub of ["hooks", "info"]) {
     for (const name of readdirSync(resolve(gitDir, sub))) {
       const path = resolve(gitDir, sub, name);
@@ -270,6 +319,18 @@ export function hardenPagesRepo(dir: string): void {
       if (st.isFile() && st.uid === process.getuid?.()) chmodSync(path, st.mode & 0o755);
       else rmSync(path, { recursive: true, force: true });
     }
+  }
+
+  // Read and edited as a plain file, never as a repo's config: no include followed.
+  const config = resolve(gitDir, "config");
+  const keys = await gitExec(
+    ["config", "--file", config, "--no-includes", "--name-only", "--list"],
+    { cwd: dirname(dir) },
+  );
+  for (const key of new Set(keys.split("\n").filter(Boolean))) {
+    if (REPO_CONFIG_KEYS.has(key.toLowerCase())) continue;
+    console.warn(`[pages] removing ${key} from the pages repo config`);
+    await gitExec(["config", "--file", config, "--unset-all", key], { cwd: dirname(dir) });
   }
 }
 
@@ -281,7 +342,7 @@ export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo
   if (existsSync(resolve(dir, ".git"))) {
     let trusted = true;
     try {
-      hardenPagesRepo(dir);
+      await hardenPagesRepo(dir);
     } catch (err) {
       console.warn(`[pages] repo tampered with: ${(err as Error).message}`);
       trusted = false;
@@ -311,7 +372,7 @@ export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo
       console.warn("[pages] failed to chgrp pages repo to volute group");
     }
   }
-  hardenPagesRepo(dir);
+  await hardenPagesRepo(dir);
 }
 
 /** Add a git worktree at <mindDir>/home/pages/_system/ on a per-mind branch. */
@@ -491,12 +552,13 @@ async function findMultiplyLinkedFiles(git: GitOpts, isolation?: IsolationInfo):
 /**
  * Commit whatever the mind has left uncommitted in its worktree, or refuse.
  *
- * `git add -A` runs as the daemon — root under user isolation — and stores a file
- * by its *content*. A hard link the mind planted to a file it cannot read (possible
- * on macOS, which has no `protected_hardlinks`) would be read and committed with
- * root's privileges, and once squash-merged it is an ordinary file everywhere, past
- * every per-read guard from #1089 (#1095). So what `add -A` would stage is swept
- * first, and the whole operation is refused if any of it has a second name.
+ * `git add -A` stores a file by its *content*. It runs as the mind under user
+ * isolation now (#1285), but it ran as root when #1095 was found, and it still runs
+ * as the daemon's user without isolation. A hard link to a file the mind cannot read
+ * (possible on macOS, which has no `protected_hardlinks`) would then be committed
+ * with the daemon's privileges, and once squash-merged it is an ordinary file
+ * everywhere, past every per-read guard from #1089. So what `add -A` would stage is
+ * swept first, and the whole operation is refused if any of it has a second name.
  *
  * Like the containment checks in `ownership.ts`, this closes the durable hole, not
  * a link swapped in between the sweep and the `add`.
