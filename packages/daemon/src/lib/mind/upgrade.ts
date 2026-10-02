@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { readSystemsConfig } from "../config/systems-config.js";
 import { getMindManager } from "../daemon/mind-manager.js";
@@ -19,10 +18,13 @@ import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { repairThreadBatchConfig } from "./event-routes.js";
 import { writeAppliedInfrastructureHash } from "./infrastructure-sync.js";
-import { chownMindDir, isIsolationEnabled, mindFileOwner } from "./isolation.js";
+import { chownMindDir, mindFileOwner, mindGitOpts } from "./isolation.js";
+
+export { mindGitOpts };
+
 import { beginUpgrade } from "./join-lock.js";
 import { repairMechanicsDoc } from "./mechanics-doc.js";
-import { type MindFileOwner, writeMindFile } from "./mind-file-write.js";
+import { writeMindFile } from "./mind-file-write.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import { findMind, mindDir, setMindTemplate, setMindTemplateHash } from "./registry.js";
 import { sharesTemplateBase, TEMPLATE_BRANCH } from "./template-branch.js";
@@ -79,32 +81,6 @@ export async function withUpgradeLock<T>(mindName: string, fn: () => Promise<T>)
   return run;
 }
 
-/**
- * git options for an operation that must run as the mind, not as the daemon.
- *
- * Under user isolation the command goes through `gitExec`'s isolation wrapper
- * (runuser/sudo to the mind's uid), so a hook the mind wrote executes with the
- * mind's privilege rather than the daemon's (#871), and HOME points at the mind's
- * own home/. Note the switching tool has the last word on HOME — `sudo`'s env_reset
- * and `runuser` both may set it from the target account — so treat that as a best
- * effort; the load-bearing property here is the env scrub `exec` applies to every
- * child (`util/exec.ts`, #966), which holds either way because env_reset only ever
- * removes variables.
- *
- * Without isolation there is one uid, so there is no uid to switch to and no reason
- * to redirect HOME (doing so would strip `~/.gitconfig` from git's config
- * resolution and break commits in repos with no per-repo identity) — but the
- * environment is still scrubbed, because the hook still runs and the token is still
- * in the daemon's environment.
- */
-export function mindGitOpts(
-  dir: string,
-  mindName: string,
-): { cwd: string; mindName?: string; env?: NodeJS.ProcessEnv } {
-  if (!isIsolationEnabled()) return { cwd: dir };
-  return { cwd: dir, mindName, env: { HOME: resolve(dir, "home") } };
-}
-
 /** Configure per-repo git identity for a mind: name = mind name, email = [mind].[system]@volute.systems. */
 export async function configureGitIdentity(
   mindName: string,
@@ -120,12 +96,20 @@ export async function configureGitIdentity(
  * Update the volute/template orphan branch with the latest template files.
  * Uses a temporary worktree to avoid touching the main working directory.
  */
-async function updateTemplateBranch(projectRoot: string, template: string, mindName: string) {
+async function updateTemplateBranch(
+  projectRoot: string,
+  template: string,
+  composeName: string,
+  mindName: string,
+) {
   const tempWorktree = resolve(projectRoot, ".variants", "_template_update");
+  // As the mind: a worktree checkout and the commit run the mind's own hooks (#961).
+  const asMind = mindGitOpts(projectRoot, mindName);
+  const inWorktree = mindGitOpts(tempWorktree, mindName);
 
   let branchExists = false;
   try {
-    await gitExec(["rev-parse", "--verify", TEMPLATE_BRANCH], { cwd: projectRoot });
+    await gitExec(["rev-parse", "--verify", TEMPLATE_BRANCH], asMind);
     branchExists = true;
   } catch {
     // branch doesn't exist
@@ -133,7 +117,7 @@ async function updateTemplateBranch(projectRoot: string, template: string, mindN
 
   // Clean up any existing temp worktree
   try {
-    await gitExec(["worktree", "remove", "--force", tempWorktree], { cwd: projectRoot });
+    await gitExec(["worktree", "remove", "--force", tempWorktree], asMind);
   } catch {
     // doesn't exist
   }
@@ -146,21 +130,22 @@ async function updateTemplateBranch(projectRoot: string, template: string, mindN
 
   try {
     if (branchExists) {
-      await gitExec(["worktree", "add", tempWorktree, TEMPLATE_BRANCH], {
-        cwd: projectRoot,
-      });
+      await gitExec(["worktree", "add", tempWorktree, TEMPLATE_BRANCH], asMind);
     } else {
-      await gitExec(["worktree", "add", "--detach", tempWorktree], { cwd: projectRoot });
-      await gitExec(["checkout", "--orphan", TEMPLATE_BRANCH], { cwd: tempWorktree });
-      await gitExec(["rm", "-rf", "--cached", "."], { cwd: tempWorktree });
-      await gitExec(["clean", "-fd"], { cwd: tempWorktree });
+      await gitExec(["worktree", "add", "--detach", tempWorktree], asMind);
+      await gitExec(["checkout", "--orphan", TEMPLATE_BRANCH], inWorktree);
+      await gitExec(["rm", "-rf", "--cached", "."], inWorktree);
+      await gitExec(["clean", "-fd"], inWorktree);
     }
 
     if (branchExists) {
-      await gitExec(["rm", "-rf", "."], { cwd: tempWorktree }).catch(() => {});
+      await gitExec(["rm", "-rf", "."], inWorktree).catch(() => {});
     }
 
-    copyTemplateToDir(composedDir, tempWorktree, mindName, manifest);
+    copyTemplateToDir(composedDir, tempWorktree, composeName, manifest);
+    // The copy ran as the daemon; hand it over before the mind's git stages it, or
+    // the worktree removal below can't unlink root-owned directories.
+    await chownMindDir(tempWorktree, mindName);
 
     const initDir = resolve(tempWorktree, ".init");
     if (existsSync(initDir)) {
@@ -177,16 +162,16 @@ async function updateTemplateBranch(projectRoot: string, template: string, mindN
       }
     }
 
-    await gitExec(["add", "-A"], { cwd: tempWorktree });
+    await gitExec(["add", "-A"], inWorktree);
 
     try {
-      await gitExec(["diff", "--cached", "--quiet"], { cwd: tempWorktree });
+      await gitExec(["diff", "--cached", "--quiet"], inWorktree);
     } catch {
-      await gitExec(["commit", "-m", "template update"], { cwd: tempWorktree });
+      await gitExec(["commit", "-m", "template update"], inWorktree);
     }
   } finally {
     try {
-      await gitExec(["worktree", "remove", "--force", tempWorktree], { cwd: projectRoot });
+      await gitExec(["worktree", "remove", "--force", tempWorktree], asMind);
     } catch {
       // best effort cleanup
     }
@@ -231,15 +216,17 @@ export function templateBranchPaths(composedDir: string, manifest: TemplateManif
  *   it the template's version and the mind's stays in history. Paths the mind
  *   added are left out of the base, so the merge keeps them.
  *
- * `"head"` is plumbing only — no worktree, no commit hooks — so nothing it does
- * runs mind-authored code. The caller chowns the repo afterwards.
+ * Git runs as `mindName`, so the repo must already be the mind's: `update-ref` and
+ * `branch -D` fire a `reference-transaction` hook if the repo config names one,
+ * and `{ composedFor }` commits through {@link updateTemplateBranch} (#961).
  */
 export async function establishTemplateBase(
   dir: string,
   template: string,
   base: "head" | { composedFor: string },
+  mindName: string,
 ): Promise<void> {
-  const opts = { cwd: dir };
+  const opts = mindGitOpts(dir, mindName);
   const head = (await gitExec(["rev-parse", "HEAD"], opts)).trim();
   // A volute/template made by an upgrade that found no base is an orphan of the
   // current template — the very base this replaces.
@@ -256,9 +243,12 @@ export async function establishTemplateBase(
     const entries = (await gitExec(["ls-tree", "-r", "-z", head], opts))
       .split("\0")
       .filter((e) => e && paths.has(e.slice(e.indexOf("\t") + 1)));
-    const indexDir = mkdtempSync(resolve(tmpdir(), "volute-template-base-"));
+    // A scratch index inside .git, which the mind can write — git puts its lock
+    // file beside it. Never the daemon's tmpdir, which the mind can't reach.
+    const indexFile = resolve(dir, ".git", "volute-template-base.index");
+    rmSync(indexFile, { force: true });
     try {
-      const withIndex = { ...opts, env: { GIT_INDEX_FILE: resolve(indexDir, "index") } };
+      const withIndex = { ...opts, env: { ...opts.env, GIT_INDEX_FILE: indexFile } };
       // ls-tree's "<mode> <type> <sha>\t<path>" is one of the forms --index-info reads.
       await gitExec(["update-index", "-z", "--index-info"], {
         ...withIndex,
@@ -268,10 +258,10 @@ export async function establishTemplateBase(
       const commit = (await gitExec(["commit-tree", tree, "-m", "template base"], opts)).trim();
       await gitExec(["update-ref", `refs/heads/${TEMPLATE_BRANCH}`, commit], opts);
     } finally {
-      rmSync(indexDir, { recursive: true, force: true });
+      rmSync(indexFile, { force: true });
     }
   } else {
-    await updateTemplateBranch(dir, template, base.composedFor);
+    await updateTemplateBranch(dir, template, base.composedFor, mindName);
   }
 
   const joined = (
@@ -332,18 +322,14 @@ function mergeJson(base: unknown, ours: unknown, theirs: unknown): unknown {
  * right beside the template's own, so a template dependency bump collides line-wise
  * with a skill install that touched nothing the template did (#1185). Each side's
  * changes survive; a key both sides changed differently leaves the conflict as it
- * was. Returns true when package.json was resolved.
+ * was. Returns true when package.json was resolved. Git runs as the mind (#961).
  */
-export async function resolvePackageJsonConflict(
-  dir: string,
-  owner: MindFileOwner | null,
-): Promise<boolean> {
+export async function resolvePackageJsonConflict(dir: string, mindName: string): Promise<boolean> {
+  const git = mindGitOpts(dir, mindName);
   let stages: unknown[];
   try {
     stages = await Promise.all(
-      [1, 2, 3].map(async (n) =>
-        JSON.parse(await gitExec(["show", `:${n}:package.json`], { cwd: dir })),
-      ),
+      [1, 2, 3].map(async (n) => JSON.parse(await gitExec(["show", `:${n}:package.json`], git))),
     );
   } catch {
     return false; // package.json isn't a both-modified conflict, or a side isn't valid JSON
@@ -359,8 +345,10 @@ export async function resolvePackageJsonConflict(
       );
     }
   }
-  await writeMindFile(dir, "package.json", `${JSON.stringify(merged, null, 2)}\n`, { owner });
-  await gitExec(["add", "package.json"], { cwd: dir });
+  await writeMindFile(dir, "package.json", `${JSON.stringify(merged, null, 2)}\n`, {
+    owner: await mindFileOwner(mindName),
+  });
+  await gitExec(["add", "package.json"], git);
   return true;
 }
 
@@ -369,25 +357,25 @@ export async function resolvePackageJsonConflict(
  * Returns true if there are merge conflicts.
  */
 async function mergeTemplateBranch(worktreeDir: string, mindName: string): Promise<boolean> {
+  // As the mind: the merge and its commit run the mind's own hooks (#961).
+  const git = mindGitOpts(worktreeDir, mindName);
   try {
     await gitExec(
       ["merge", TEMPLATE_BRANCH, "--allow-unrelated-histories", "-m", "merge template update"],
-      { cwd: worktreeDir },
+      git,
     );
     return false;
   } catch (e: unknown) {
     try {
-      const status = await gitExec(["status", "--porcelain"], { cwd: worktreeDir });
+      const status = await gitExec(["status", "--porcelain"], git);
       const hasConflictMarkers = status
         .split("\n")
         .some((line) => line.startsWith("UU") || line.startsWith("AA"));
       if (hasConflictMarkers) {
-        if (await resolvePackageJsonConflict(worktreeDir, await mindFileOwner(mindName))) {
-          const left = await gitExec(["diff", "--name-only", "--diff-filter=U"], {
-            cwd: worktreeDir,
-          });
+        if (await resolvePackageJsonConflict(worktreeDir, mindName)) {
+          const left = await gitExec(["diff", "--name-only", "--diff-filter=U"], git);
           if (!left.trim()) {
-            await gitExec(["commit", "--no-edit"], { cwd: worktreeDir });
+            await gitExec(["commit", "--no-edit"], git);
             return false;
           }
         }
@@ -409,9 +397,12 @@ async function mergeTemplateBranch(worktreeDir: string, mindName: string): Promi
 export async function mergeWithUntrackResolution(
   dir: string,
   branch: string,
+  mindName: string,
 ): Promise<{ merged: true } | { merged: false; files: string[] }> {
+  // As the mind: the merge and the auto-untrack commit run the mind's own hooks (#961).
+  const git = mindGitOpts(dir, mindName);
   try {
-    await gitExec(["merge", branch], { cwd: dir });
+    await gitExec(["merge", branch], git);
     return { merged: true };
   } catch {
     // Conflict (or other failure) — inspect state below. Everything past this
@@ -420,7 +411,7 @@ export async function mergeWithUntrackResolution(
     // mid-merge.
   }
   try {
-    const unmergedRaw = await gitExec(["diff", "--name-only", "--diff-filter=U"], { cwd: dir });
+    const unmergedRaw = await gitExec(["diff", "--name-only", "--diff-filter=U"], git);
     const unmerged = unmergedRaw.split("\n").filter(Boolean);
     if (unmerged.length === 0) {
       // merge failed for a non-conflict reason
@@ -434,7 +425,7 @@ export async function mergeWithUntrackResolution(
     if (!unmerged.includes(".gitignore")) {
       for (const file of unmerged) {
         try {
-          await gitExec(["check-ignore", "--no-index", "-q", "--", file], { cwd: dir });
+          await gitExec(["check-ignore", "--no-index", "-q", "--", file], git);
           resolvable.push(file); // exit 0 → ignored → resolvable by untracking
         } catch {
           // exit 1 → not ignored → real conflict
@@ -443,7 +434,7 @@ export async function mergeWithUntrackResolution(
     }
     const remaining = unmerged.filter((f) => !resolvable.includes(f));
     if (remaining.length > 0) {
-      await gitExec(["merge", "--abort"], { cwd: dir });
+      await gitExec(["merge", "--abort"], git);
       return { merged: false, files: unmerged };
     }
     for (const file of resolvable) {
@@ -451,15 +442,13 @@ export async function mergeWithUntrackResolution(
       // the working tree file; checkout --ours restores main's clean content
       // before untracking. For modify/delete conflicts this is a no-op change
       // (the working tree already holds ours), so it's safe either way.
-      await gitExec(["checkout", "--ours", "--", file], { cwd: dir });
-      await gitExec(["rm", "--cached", "--", file], { cwd: dir });
+      await gitExec(["checkout", "--ours", "--", file], git);
+      await gitExec(["rm", "--cached", "--", file], git);
     }
-    await gitExec(["commit", "-m", "merge template update (auto-untrack ignored files)"], {
-      cwd: dir,
-    });
+    await gitExec(["commit", "-m", "merge template update (auto-untrack ignored files)"], git);
     return { merged: true };
   } catch (err) {
-    await gitExec(["merge", "--abort"], { cwd: dir }).catch(() => {});
+    await gitExec(["merge", "--abort"], git).catch(() => {});
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
@@ -481,19 +470,19 @@ async function mergeUpgradeAndRestart(
   restart: boolean,
 ): Promise<{ ok: true; warning?: string } | { ok: false; conflicts: true; files: string[] }> {
   const templateChanged = template !== oldTemplate;
+  // As the mind, not as the daemon: commits and merges here run the mind's own
+  // hooks, and a hook that refuses (mimsy's MEMORY.md size wall, bardo Aug 2026)
+  // must refuse a mind-privileged commit, not a root-privileged one.
+  const asMind = mindGitOpts(dir, mindName);
   // Auto-commit any uncommitted changes in main worktree
-  const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: dir })).trim();
+  const mainStatus = (await gitExec(["status", "--porcelain"], asMind)).trim();
   if (mainStatus) {
-    // As the mind, not as the daemon: this commit runs the mind's own pre-commit
-    // hooks, and a hook that refuses (mimsy's MEMORY.md size wall, bardo Aug 2026)
-    // must refuse a mind-privileged commit, not a root-privileged one.
-    const asMind = mindGitOpts(dir, mindName);
     await gitExec(["add", "-A"], asMind);
     await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], asMind);
   }
 
-  const preMergeHead = (await gitExec(["rev-parse", "HEAD"], { cwd: dir })).trim();
-  const mergeResult = await mergeWithUntrackResolution(dir, upgradeBranch);
+  const preMergeHead = (await gitExec(["rev-parse", "HEAD"], asMind)).trim();
+  const mergeResult = await mergeWithUntrackResolution(dir, upgradeBranch, mindName);
   if (!mergeResult.merged) {
     // main is restored to its pre-merge state; leave the upgrade worktree/branch
     // in place for manual resolution rather than cleaning them up.
@@ -511,10 +500,10 @@ async function mergeUpgradeAndRestart(
   // working-tree content to preMergeHead's version before untracking, so
   // restoring "from preMergeHead" here just rewrites the same bytes already
   // on disk.
+  // The restore runs as the mind, so what it writes is already the mind's.
   let restoreWarning: string | undefined;
-  let restored: string[] = [];
   try {
-    restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead);
+    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead, mindName);
     if (restored.length > 0) {
       log.info(
         `restored ${restored.length} home files untracked by the allowlist migration for ${mindName}`,
@@ -527,15 +516,6 @@ async function mergeUpgradeAndRestart(
       `${err instanceof Error ? err.message : String(err)}. Recover them manually: list them ` +
       `with \`git diff --name-only --diff-filter=D --no-renames ${preMergeHead} HEAD -- home/\`, ` +
       `then restore each with \`git restore --source=${preMergeHead} --worktree -- <path>\`.`;
-  }
-  if (restored.length > 0) {
-    try {
-      await chownMindDir(dir, mindName);
-    } catch (err) {
-      // cleanupVariant's own chown usually repairs this right after; log rather
-      // than misreport it as a restore failure.
-      log.warn(`failed to chown restored home files for ${mindName}`, log.errorData(err));
-    }
   }
   /** Prefix any later warning with the restore failure — it's mind data, it goes first. */
   const withRestoreWarning = (warning?: string): string | undefined =>
@@ -550,7 +530,7 @@ async function mergeUpgradeAndRestart(
     log.warn(`failed to clean up upgrade worktree for ${mindName}`, log.errorData(err));
   }
   try {
-    await gitExec(["branch", "-D", upgradeBranch], { cwd: dir });
+    await gitExec(["branch", "-D", upgradeBranch], asMind);
   } catch {
     // branch may already be deleted by cleanupVariant
   }
@@ -569,13 +549,11 @@ async function mergeUpgradeAndRestart(
       // their shims, so they aren't stranded (invisible + shims pointing at the
       // old path) after the switch.
       const migratedSkills = migrateSkillsToTemplate(dir, oldTemplate, template);
-      await gitExec(["add", "home/"], { cwd: dir });
+      await gitExec(["add", "home/"], asMind);
       try {
-        await gitExec(["diff", "--cached", "--quiet"], { cwd: dir });
+        await gitExec(["diff", "--cached", "--quiet"], asMind);
       } catch {
-        await gitExec(["commit", "-m", `swap template-owned home files for ${template}`], {
-          cwd: dir,
-        });
+        await gitExec(["commit", "-m", `swap template-owned home files for ${template}`], asMind);
       }
       await chownMindDir(dir, mindName);
       const skillNote =
@@ -894,13 +872,18 @@ export async function upgradeDiff(mindName: string, template?: string): Promise<
   const dir = mindDir(mindName);
   const tmpl = template ?? entry.template ?? "claude";
 
-  await updateTemplateBranch(dir, tmpl, mindName);
+  // Git runs as the mind (#961), so hand it the repo first — a pre-#961 upgrade
+  // may have left root-owned entries behind, .variants/ among them.
+  mkdirSync(resolve(dir, ".variants"), { recursive: true });
+  await chownMindDir(dir, mindName);
+  await updateTemplateBranch(dir, tmpl, mindName, mindName);
 
+  const asMind = mindGitOpts(dir, mindName);
   try {
-    return await gitExec(["diff", "HEAD...volute/template"], { cwd: dir });
+    return await gitExec(["diff", "HEAD...volute/template"], asMind);
   } catch {
     // If three-dot diff fails (no common ancestor), fall back to two-dot
-    return await gitExec(["diff", "HEAD", "volute/template"], { cwd: dir });
+    return await gitExec(["diff", "HEAD", "volute/template"], asMind);
   }
 }
 
@@ -929,6 +912,8 @@ async function runUpgradeCore(
 
   const variantName = upgradeVariantName(mindName);
   const worktreeDir = upgradeWorktreeDir(dir);
+  const asMind = mindGitOpts(dir, mindName);
+  const inWorktree = mindGitOpts(worktreeDir, mindName);
 
   // An upgrade worktree from a prior run may still be sitting here — either a
   // daemon restart orphaned it mid-run, or a caller is genuinely mid-conflict-
@@ -946,7 +931,6 @@ async function runUpgradeCore(
   // Initialize git repo if missing (minds created before git config was fixed)
   if (!existsSync(resolve(dir, ".git"))) {
     try {
-      const asMind = mindGitOpts(dir, mindName);
       await gitExec(["init"], asMind);
       await configureGitIdentity(mindName, asMind);
       await gitExec(["add", "-A"], asMind);
@@ -960,10 +944,22 @@ async function runUpgradeCore(
     }
   }
 
+  // Every git command below runs as the mind, not as the daemon: commits, merges,
+  // checkouts and ref updates run the mind's own hooks, and index reads its
+  // configured fsmonitor — none of which may execute with the daemon's privilege
+  // (#961, #871). The one exception is sharesTemplateBase's rev-parse/merge-base,
+  // which read refs and objects only. All of it needs the repo — .variants/
+  // included, where the worktrees go — to be the mind's first.
+  const parentDir = resolve(dir, ".variants");
+  if (!existsSync(parentDir)) {
+    mkdirSync(parentDir, { recursive: true });
+  }
+  await chownMindDir(dir, mindName);
+
   // Clean up stale worktree refs and leftover branch
-  await gitExec(["worktree", "prune"], { cwd: dir });
+  await gitExec(["worktree", "prune"], asMind);
   try {
-    await gitExec(["branch", "-D", UPGRADE_BRANCH], { cwd: dir });
+    await gitExec(["branch", "-D", UPGRADE_BRANCH], asMind);
   } catch {
     // branch doesn't exist
   }
@@ -973,27 +969,18 @@ async function runUpgradeCore(
   // conflict on every differing template file, every time (#1244).
   if (!(await sharesTemplateBase(dir))) {
     log.info(`establishing a volute/template merge base for ${mindName}`);
-    try {
-      await establishTemplateBase(dir, oldTemplate, "head");
-    } finally {
-      await chownMindDir(dir, mindName);
-    }
+    await establishTemplateBase(dir, oldTemplate, "head", mindName);
   }
 
   // Update template branch
-  await updateTemplateBranch(dir, template, mindName);
+  await updateTemplateBranch(dir, template, mindName, mindName);
 
-  // Create upgrade worktree
-  const parentDir = resolve(dir, ".variants");
-  if (!existsSync(parentDir)) {
-    mkdirSync(parentDir, { recursive: true });
-  }
+  // Create upgrade worktree — as the mind, so it and its admin dir
+  // (.git/worktrees/<branch>) are the mind's from the start.
+  await gitExec(["worktree", "add", "-b", UPGRADE_BRANCH, worktreeDir], asMind);
 
-  await gitExec(["worktree", "add", "-b", UPGRADE_BRANCH, worktreeDir], { cwd: dir });
-
-  // The worktree and its admin dir (.git/worktrees/<branch>) are created by the
-  // root-owned daemon, so every exit path from here on has to remove them. A throw
-  // that skipped this used to leave both behind, root-owned, on a mind-owned repo —
+  // Every exit path from here on has to remove the worktree and its admin dir. A
+  // throw that skipped this used to leave both behind, root-owned, on a mind-owned repo —
   // after which the mind's own `git gc --auto` fails silently forever (#497, #653),
   // and the next hourly auto-upgrade pass just re-created them. The `conflicts`
   // returns below are deliberate exceptions: they *keep* the worktree for a host to
@@ -1001,13 +988,11 @@ async function runUpgradeCore(
   try {
     // Prepare home/ allowlist migration: untrack home files so template
     // branch removal doesn't cause conflicts or deletions
-    await gitExec(["rm", "-r", "--cached", "--ignore-unmatch", "home/"], {
-      cwd: worktreeDir,
-    });
+    await gitExec(["rm", "-r", "--cached", "--ignore-unmatch", "home/"], inWorktree);
     // Re-add VOLUTE.md so template merge can update it
     try {
-      await gitExec(["checkout", "HEAD", "--", "home/VOLUTE.md"], { cwd: worktreeDir });
-      await gitExec(["add", "home/VOLUTE.md"], { cwd: worktreeDir });
+      await gitExec(["checkout", "HEAD", "--", "home/VOLUTE.md"], inWorktree);
+      await gitExec(["add", "home/VOLUTE.md"], inWorktree);
     } catch (err) {
       const msg = String((err as Error)?.message ?? err);
       if (!msg.includes("did not match")) {
@@ -1019,11 +1004,9 @@ async function runUpgradeCore(
     }
     // Commit prep step if there are changes
     try {
-      await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
+      await gitExec(["diff", "--cached", "--quiet"], inWorktree);
     } catch {
-      await gitExec(["commit", "-m", "prepare for home/ allowlist migration"], {
-        cwd: worktreeDir,
-      });
+      await gitExec(["commit", "-m", "prepare for home/ allowlist migration"], inWorktree);
     }
 
     // Merge template branch
@@ -1032,26 +1015,19 @@ async function runUpgradeCore(
     if (!hasConflicts) {
       // Re-add home files that match the new .gitignore allowlist patterns
       try {
-        await gitExec(["add", "home/"], { cwd: worktreeDir });
+        await gitExec(["add", "home/"], inWorktree);
       } catch (err) {
         log.warn(`failed to re-add home files during upgrade for ${mindName}`, log.errorData(err));
       }
       try {
-        await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
+        await gitExec(["diff", "--cached", "--quiet"], inWorktree);
       } catch {
-        await gitExec(["commit", "-m", "re-add allowlisted home files"], {
-          cwd: worktreeDir,
-        });
+        await gitExec(["commit", "-m", "re-add allowlisted home files"], inWorktree);
       }
     }
 
-    // Fix ownership — daemon runs as root but mind needs to own its files
-    await chownMindDir(dir, mindName);
-
     if (hasConflicts) {
-      const filesRaw = await gitExec(["diff", "--name-only", "--diff-filter=U"], {
-        cwd: worktreeDir,
-      });
+      const filesRaw = await gitExec(["diff", "--name-only", "--diff-filter=U"], inWorktree);
       const files = filesRaw
         .split("\n")
         .map((f) => f.trim())
@@ -1085,7 +1061,7 @@ async function runUpgradeCore(
     } catch (cleanupErr) {
       log.warn(`cleanup failed after upgrade error for ${mindName}`, log.errorData(cleanupErr));
     }
-    // Belt and braces over cleanupVariant's own trailing chownMindDir, which it
+    // Belt and braces over cleanupVariant's own chownMindDir, which it
     // swallows the failure of. Handing ownership back is the thing that must not be
     // skipped here, so it is worth paying for twice: auto-upgrade now attempts a
     // failing mind at most once per daemon run, so this walk cannot repeat hourly
@@ -1130,7 +1106,11 @@ async function continueUpgradeCore(
     throw new Error("No upgrade in progress");
   }
 
-  const status = await gitExec(["status", "--porcelain"], { cwd: worktreeDir });
+  // The host resolved the conflicts by hand, perhaps as root; the mind's git below
+  // needs its tree back first.
+  await chownMindDir(dir, mindName);
+  const inWorktree = mindGitOpts(worktreeDir, mindName);
+  const status = await gitExec(["status", "--porcelain"], inWorktree);
   const hasConflicts = status
     .split("\n")
     .some((line) => line.startsWith("UU") || line.startsWith("AA"));
@@ -1139,8 +1119,8 @@ async function continueUpgradeCore(
   }
 
   try {
-    await gitExec(["add", "-A"], { cwd: worktreeDir });
-    await gitExec(["commit", "-m", "merge template update"], { cwd: worktreeDir });
+    await gitExec(["add", "-A"], inWorktree);
+    await gitExec(["commit", "-m", "merge template update"], inWorktree);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const stderr = (e as any)?.stderr ?? "";
@@ -1155,20 +1135,15 @@ async function continueUpgradeCore(
 
   // Re-add home files that match the new .gitignore allowlist patterns
   try {
-    await gitExec(["add", "home/"], { cwd: worktreeDir });
+    await gitExec(["add", "home/"], inWorktree);
   } catch (err) {
     log.warn(`failed to re-add home files during upgrade for ${mindName}`, log.errorData(err));
   }
   try {
-    await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
+    await gitExec(["diff", "--cached", "--quiet"], inWorktree);
   } catch {
-    await gitExec(["commit", "-m", "re-add allowlisted home files"], {
-      cwd: worktreeDir,
-    });
+    await gitExec(["commit", "-m", "re-add allowlisted home files"], inWorktree);
   }
-
-  // Fix ownership after root git operations
-  await chownMindDir(dir, mindName);
 
   // Merge upgrade branch back to main, cleanup, and restart
   const result = await mergeUpgradeAndRestart(
@@ -1208,7 +1183,7 @@ async function abortUpgradeCore(mindName: string): Promise<void> {
 
   // Abort merge if mid-merge
   if (upgradeMidResolution(worktreeDir)) {
-    await gitExec(["merge", "--abort"], { cwd: worktreeDir }).catch(() => {});
+    await gitExec(["merge", "--abort"], mindGitOpts(worktreeDir, mindName)).catch(() => {});
   }
 
   await cleanupVariant(variantName, mindName, dir, worktreeDir, {

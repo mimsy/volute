@@ -64,7 +64,7 @@ describe("mergeVariantExcludingMemory", () => {
     write("src/server.ts", "export const value = 2;\n");
     await commitAll("parent work");
 
-    const delta = await mergeVariantExcludingMemory(repo, "variant");
+    const delta = await mergeVariantExcludingMemory(repo, "variant", "test-mind");
 
     // The merge committed cleanly — no conflict markers, no merge in progress.
     assert.ok(!existsSync(resolve(repo, ".git/MERGE_HEAD")), "merge should be committed");
@@ -104,7 +104,7 @@ describe("mergeVariantExcludingMemory", () => {
     await commitAll("variant code only");
     await git("checkout", "main");
 
-    const delta = await mergeVariantExcludingMemory(repo, "variant");
+    const delta = await mergeVariantExcludingMemory(repo, "variant", "test-mind");
 
     assert.equal(delta, "");
     assert.ok(existsSync(resolve(repo, "src/feature.ts")), "variant code should merge in");
@@ -122,11 +122,14 @@ describe("mergeVariantExcludingMemory", () => {
 
     // A genuine code conflict must reject with the conflicting files, not swallow
     // into a bogus clean commit.
-    await assert.rejects(mergeVariantExcludingMemory(repo, "variant"), (err: unknown) => {
-      assert.ok(err instanceof VariantMergeError);
-      assert.deepEqual(err.conflicts, ["src/server.ts"]);
-      return true;
-    });
+    await assert.rejects(
+      mergeVariantExcludingMemory(repo, "variant", "test-mind"),
+      (err: unknown) => {
+        assert.ok(err instanceof VariantMergeError);
+        assert.deepEqual(err.conflicts, ["src/server.ts"]);
+        return true;
+      },
+    );
 
     // The parent is left clean: no merge in progress, no stray changes, and no
     // merge commit landed.
@@ -140,7 +143,7 @@ describe("mergeVariantExcludingMemory", () => {
     // Branch the variant but never commit past the branch point.
     await git("branch", "variant");
 
-    const delta = await mergeVariantExcludingMemory(repo, "variant");
+    const delta = await mergeVariantExcludingMemory(repo, "variant", "test-mind");
 
     assert.equal(delta, "");
     assert.ok(!existsSync(resolve(repo, ".git/MERGE_HEAD")), "no merge should be in progress");
@@ -154,7 +157,7 @@ describe("mergeVariantExcludingMemory", () => {
     await commitAll("variant deletes a journal day");
     await git("checkout", "main");
 
-    await mergeVariantExcludingMemory(repo, "variant");
+    await mergeVariantExcludingMemory(repo, "variant", "test-mind");
 
     // The parent keeps the day the variant deleted; code still merges.
     assert.ok(
@@ -178,7 +181,7 @@ describe("mergeVariantExcludingMemory", () => {
 
     // Must merge successfully (not abort): the variant-added file is dropped, not
     // left untracked to be swept up by the parent's next auto-commit.
-    await mergeVariantExcludingMemory(repo, "variant");
+    await mergeVariantExcludingMemory(repo, "variant", "test-mind");
 
     assert.ok(
       !existsSync(resolve(repo, "home/MEMORY.md")),
@@ -194,7 +197,7 @@ describe("mergeVariantExcludingMemory", () => {
     await commitAll("variant floods memory");
     await git("checkout", "main");
 
-    const delta = await mergeVariantExcludingMemory(repo, "variant");
+    const delta = await mergeVariantExcludingMemory(repo, "variant", "test-mind");
 
     assert.ok(delta.length < 13000, "delta should be capped near MAX_DELTA_CHARS");
     assert.match(delta, /delta truncated/);
@@ -265,7 +268,7 @@ describe("findUnresolvedHomeFiles / formatUnresolvedHomeFilesMessage (#656)", ()
     mkdirSync(resolve(variantDir, "home/.claude/projects"), { recursive: true });
     writeFileSync(resolve(variantDir, "home/.claude/projects/transcript.jsonl"), "{}\n");
 
-    const result = await findUnresolvedHomeFiles(variantDir);
+    const result = await findUnresolvedHomeFiles(variantDir, "test-mind");
 
     assert.equal(result.totalCount, 1);
     assert.equal(result.files.length, 1);
@@ -283,7 +286,7 @@ describe("findUnresolvedHomeFiles / formatUnresolvedHomeFilesMessage (#656)", ()
       writeFileSync(resolve(variantDir, `home/file-${i}.bin`), "x".repeat(10));
     }
 
-    const result = await findUnresolvedHomeFiles(variantDir);
+    const result = await findUnresolvedHomeFiles(variantDir, "test-mind");
 
     assert.equal(result.totalCount, 25);
     assert.ok(result.files.length < 25, "listing should be capped");
@@ -294,7 +297,7 @@ describe("findUnresolvedHomeFiles / formatUnresolvedHomeFilesMessage (#656)", ()
     mkdirSync(resolve(variantDir, "home/downloads"), { recursive: true });
     writeFileSync(resolve(variantDir, "home/downloads/movie.mp4"), "x".repeat(2048));
 
-    const result = await findUnresolvedHomeFiles(variantDir);
+    const result = await findUnresolvedHomeFiles(variantDir, "test-mind");
     const message = formatUnresolvedHomeFilesMessage("my-variant", result);
 
     assert.match(message, /my-variant/);
@@ -311,7 +314,7 @@ describe("findUnresolvedHomeFiles / formatUnresolvedHomeFilesMessage (#656)", ()
     await variantGit("add", "-A");
     await variantGit("commit", "-m", "tracked change only");
 
-    const result = await findUnresolvedHomeFiles(variantDir);
+    const result = await findUnresolvedHomeFiles(variantDir, "test-mind");
 
     assert.equal(result.totalCount, 0);
     assert.equal(result.files.length, 0);
@@ -325,7 +328,7 @@ describe("findUnresolvedHomeFiles / formatUnresolvedHomeFilesMessage (#656)", ()
     // finds it unresolved — not silently gone, the way the pre-fix code left it.
     writeFileSync(resolve(variantDir, "home/NOTE.md"), "hello from the variant\n");
 
-    const unresolved = await findUnresolvedHomeFiles(variantDir);
+    const unresolved = await findUnresolvedHomeFiles(variantDir, "test-mind");
     assert.equal(
       unresolved.totalCount,
       1,
@@ -350,17 +353,17 @@ describe("findUnresolvedHomeFiles / formatUnresolvedHomeFilesMessage (#656)", ()
 
   it("once resolved (git add -f + commit), the retried join proceeds and the file survives via a normal merge", async () => {
     writeFileSync(resolve(variantDir, "home/NOTE.md"), "hello from the variant\n");
-    assert.equal((await findUnresolvedHomeFiles(variantDir)).totalCount, 1);
+    assert.equal((await findUnresolvedHomeFiles(variantDir, "test-mind")).totalCount, 1);
 
     // The mind resolves it — option 1 from the message: track it explicitly.
     await variantGit("add", "-f", "--", "home/NOTE.md");
     await variantGit("commit", "-m", "keep my note");
 
     // Retrying the join now finds nothing unresolved, so it's safe to proceed.
-    const retried = await findUnresolvedHomeFiles(variantDir);
+    const retried = await findUnresolvedHomeFiles(variantDir, "test-mind");
     assert.equal(retried.totalCount, 0, "resolved files must no longer block the join");
 
-    await mergeVariantExcludingMemory(parent, "variant");
+    await mergeVariantExcludingMemory(parent, "variant", "test-mind");
     await parentGit("worktree", "remove", "--force", variantDir);
 
     assert.ok(

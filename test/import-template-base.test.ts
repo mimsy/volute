@@ -177,7 +177,7 @@ describe("sharesTemplateBase", () => {
     assert.equal(await sharesTemplateBase(dir), false, "no volute/template");
     git(dir, "branch", TEMPLATE_BRANCH, git(dir, "commit-tree", "HEAD^{tree}", "-m", "x").trim());
     assert.equal(await sharesTemplateBase(dir), false, "an orphan volute/template");
-    await establishTemplateBase(dir, "claude", "head");
+    await establishTemplateBase(dir, "claude", "head", "test-mind");
     assert.equal(await sharesTemplateBase(dir), true);
 
     // A git failure is not an answer: reading it as "no base" would rebuild the
@@ -195,7 +195,7 @@ describe("establishTemplateBase", () => {
     commitAsImport(dir);
     const tree = git(dir, "rev-parse", "HEAD^{tree}").trim();
 
-    await establishTemplateBase(dir, "claude", "head");
+    await establishTemplateBase(dir, "claude", "head", "test-mind");
 
     assert.equal(git(dir, "rev-parse", "HEAD^{tree}").trim(), tree);
     assert.ok(hasMergeBase(dir));
@@ -216,7 +216,7 @@ describe("establishTemplateBase", () => {
     );
     commitAsImport(dir);
 
-    await establishTemplateBase(dir, "claude", { composedFor: "old-name" });
+    await establishTemplateBase(dir, "claude", { composedFor: "old-name" }, "test-mind");
 
     // The next template: renamed for this host, plus a change at the top of STALE.
     const wt = resolve(dir, ".variants", "next");
@@ -243,7 +243,7 @@ describe("establishTemplateBase", () => {
     const edited = `${templateFile(STALE, name)}// the mind's own edit\n`;
     writeFileSync(resolve(dir, STALE), edited);
     commitAsImport(dir);
-    await establishTemplateBase(dir, "claude", { composedFor: name });
+    await establishTemplateBase(dir, "claude", { composedFor: name }, "test-mind");
     await addMind(name, 4193, undefined, "claude");
 
     const outcome = await runUpgrade(name, { restart: false });
@@ -328,7 +328,7 @@ describe("an export records the template hash only where it is true", () => {
     // A pre-#1244 full import: registry stamped, history orphaned.
     assert.equal(await trustedTemplateHash(dir, hash), undefined);
 
-    await establishTemplateBase(dir, "claude", "head");
+    await establishTemplateBase(dir, "claude", "head", "test-mind");
     assert.equal(await trustedTemplateHash(dir, hash), hash);
   });
 });

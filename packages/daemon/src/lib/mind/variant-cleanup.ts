@@ -4,7 +4,7 @@ import { forgetCredentialDegraded } from "../daemon/credential-recovery.js";
 import { getMindManager } from "../daemon/mind-manager.js";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
-import { chownMindDir } from "./isolation.js";
+import { chownMindDir, mindGitOpts } from "./isolation.js";
 import { deleteMindDbFootprint, mindDir, readAllMinds, removeMind } from "./registry.js";
 
 /**
@@ -45,13 +45,27 @@ export async function cleanupVariant(
     branchName = variantEntry?.branch ?? variantName;
   }
 
+  // The git below runs as the mind — a ref deletion fires the mind's own
+  // reference-transaction hook (#961) — so the repo has to be the mind's first.
+  // Nothing after this writes into the tree as the daemon (the fallback rmSync only
+  // deletes), so this is also the chown that hands ownership back.
+  try {
+    await chownMindDir(projectRoot, baseName);
+  } catch (err) {
+    log.error(
+      `failed to fix ownership during variant cleanup for ${variantName}`,
+      log.errorData(err),
+    );
+  }
+  const asMind = mindGitOpts(projectRoot, baseName);
+
   if (existsSync(variantPath)) {
     try {
-      await gitExec(["worktree", "remove", "--force", variantPath], { cwd: projectRoot });
+      await gitExec(["worktree", "remove", "--force", variantPath], asMind);
     } catch {
       rmSync(variantPath, { recursive: true, force: true });
       try {
-        await gitExec(["worktree", "prune"], { cwd: projectRoot });
+        await gitExec(["worktree", "prune"], asMind);
       } catch (err) {
         log.warn(`failed to prune worktrees for ${variantName}`, log.errorData(err));
       }
@@ -59,7 +73,7 @@ export async function cleanupVariant(
   }
 
   try {
-    await gitExec(["branch", "-D", branchName], { cwd: projectRoot });
+    await gitExec(["branch", "-D", branchName], asMind);
   } catch (err) {
     const stderr = (err as { stderr?: string })?.stderr ?? "";
     if (stderr.includes("not found")) {
@@ -87,15 +101,6 @@ export async function cleanupVariant(
     await deleteMindDbFootprint(variantName);
   } catch (err) {
     log.warn(`failed to purge DB footprint for variant ${variantName}`, log.errorData(err));
-  }
-
-  try {
-    await chownMindDir(projectRoot, baseName);
-  } catch (err) {
-    log.error(
-      `failed to fix ownership during variant cleanup for ${variantName}`,
-      log.errorData(err),
-    );
   }
 }
 

@@ -604,6 +604,32 @@ async function repairMindUser(baseName: string, user: string): Promise<void> {
 }
 
 /**
+ * git options for an operation that must run as the mind, not as the daemon.
+ *
+ * Under user isolation the command goes through `gitExec`'s isolation wrapper
+ * (runuser/sudo to the mind's uid), so a hook the mind wrote executes with the
+ * mind's privilege rather than the daemon's (#871), and HOME points at the mind's
+ * own home/. Note the switching tool has the last word on HOME — `sudo`'s env_reset
+ * and `runuser` both may set it from the target account — so treat that as a best
+ * effort; the load-bearing property here is the env scrub `exec` applies to every
+ * child (`util/exec.ts`, #966), which holds either way because env_reset only ever
+ * removes variables.
+ *
+ * Without isolation there is one uid, so there is no uid to switch to and no reason
+ * to redirect HOME (doing so would strip `~/.gitconfig` from git's config
+ * resolution and break commits in repos with no per-repo identity) — but the
+ * environment is still scrubbed, because the hook still runs and the token is still
+ * in the daemon's environment.
+ */
+export function mindGitOpts(
+  dir: string,
+  mindName: string,
+): { cwd: string; mindName?: string; env?: NodeJS.ProcessEnv } {
+  if (!isIsolationEnabled()) return { cwd: dir };
+  return { cwd: dir, mindName, env: { HOME: resolve(dir, "home") } };
+}
+
+/**
  * Wrap a command with user isolation if enabled.
  * macOS: `sudo -E -u <user> --`
  * Linux: `runuser -u <user> --`

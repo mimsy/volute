@@ -64,6 +64,7 @@ import {
   createMindUser,
   ensureVoluteGroup,
   isIsolationEnabled,
+  mindGitOpts,
 } from "./isolation.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import {
@@ -195,9 +196,9 @@ export interface MergeVariantParams {
  * the restart handler owns a last-known-good recovery path), so the caller sets
  * the returned `context` as pending and restarts however it must.
  *
- * All git writes run as the daemon (root); the caller is responsible for restoring
- * ownership on the failure paths it surfaces (chownMindDir), mirroring the pre-#330
- * behavior. cleanupVariant already chowns projectRoot back on the success path.
+ * All git runs as the parent mind, never the daemon: commits and the merge run the
+ * mind's own hooks (#961). The tree is handed to the mind before the first of them,
+ * so no path out of here leaves anything root-owned for the caller to repair.
  */
 export async function mergeVariant(params: MergeVariantParams): Promise<VariantMergeResult> {
   const {
@@ -209,19 +210,20 @@ export async function mergeVariant(params: MergeVariantParams): Promise<VariantM
     discardUnresolved = false,
     contextExtras = {},
   } = params;
+  await chownMindDir(projectRoot, parentName);
+  const inVariant = mindGitOpts(variantDir, parentName);
+  const inParent = mindGitOpts(projectRoot, parentName);
 
   // Auto-commit any uncommitted changes in the variant worktree so they ride into
   // the merge. A failure here is fatal to the join — surfacing it (rather than the
   // old restart-path behavior of swallowing it with log.error) is one of the
   // consistency wins of collapsing the two copies.
   if (existsSync(variantDir)) {
-    const status = (await gitExec(["status", "--porcelain"], { cwd: variantDir })).trim();
+    const status = (await gitExec(["status", "--porcelain"], inVariant)).trim();
     if (status) {
       try {
-        await gitExec(["add", "-A"], { cwd: variantDir });
-        await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-          cwd: variantDir,
-        });
+        await gitExec(["add", "-A"], inVariant);
+        await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], inVariant);
       } catch (e) {
         llog.warn(`failed to auto-commit variant worktree for ${parentName}`, log.errorData(e));
         return {
@@ -262,13 +264,11 @@ export async function mergeVariant(params: MergeVariantParams): Promise<VariantM
   }
 
   // Auto-commit any uncommitted changes in the main worktree before merging into it.
-  const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: projectRoot })).trim();
+  const mainStatus = (await gitExec(["status", "--porcelain"], inParent)).trim();
   if (mainStatus) {
     try {
-      await gitExec(["add", "-A"], { cwd: projectRoot });
-      await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-        cwd: projectRoot,
-      });
+      await gitExec(["add", "-A"], inParent);
+      await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], inParent);
     } catch (e) {
       llog.warn(`failed to auto-commit main worktree for ${parentName}`, log.errorData(e));
       return {
@@ -283,10 +283,10 @@ export async function mergeVariant(params: MergeVariantParams): Promise<VariantM
   // `memoryDelta` (#440). A real code/config conflict aborts the merge and throws
   // VariantMergeError; the variant is left intact so the conflict can be resolved
   // there and the join retried.
-  const preMergeHead = (await gitExec(["rev-parse", "HEAD"], { cwd: projectRoot })).trim();
+  const preMergeHead = (await gitExec(["rev-parse", "HEAD"], inParent)).trim();
   let memoryDelta = "";
   try {
-    memoryDelta = await mergeVariantExcludingMemory(projectRoot, variantBranch);
+    memoryDelta = await mergeVariantExcludingMemory(projectRoot, variantBranch, parentName);
   } catch (err) {
     if (!(err instanceof VariantMergeError)) throw err;
     return {
@@ -307,7 +307,7 @@ export async function mergeVariant(params: MergeVariantParams): Promise<VariantM
   if (existsSync(variantDir) && !discardUnresolved) {
     let unresolved: UnresolvedHomeFiles;
     try {
-      unresolved = await findUnresolvedHomeFiles(variantDir);
+      unresolved = await findUnresolvedHomeFiles(variantDir, parentName);
     } catch (err) {
       return {
         status: "check_failed",
@@ -324,13 +324,6 @@ export async function mergeVariant(params: MergeVariantParams): Promise<VariantM
   }
 
   await cleanupVariant(variantName, parentName, projectRoot, variantDir, { stop: true });
-
-  // The merge/cleanup git ops ran as the daemon (root). Hand ownership of the
-  // parent worktree back to the mind user before the wrapped npm install (which
-  // runs as that user) and the caller's restart — otherwise the tree is left
-  // root-owned under isolation. (cleanupVariant already chowns, but a belt-and-
-  // suspenders chown here mirrors the merge route and precedes the install.)
-  await chownMindDir(projectRoot, parentName);
 
   // Bump the stored template hash after an upgrade-named join so staleness tracking
   // stays accurate (the variant merged the newer template into the parent).
@@ -844,12 +837,15 @@ async function importFromFullArchive(
     // built on exactly it — then the mind's own edits to its code merge like any
     // other. Otherwise the mind's own files are the base, which can't be newer
     // than what it has. Non-fatal: an upgrade establishes one where missing.
+    // Its git runs as the mind — the archive's .git/config is untrusted, and the
+    // tree was handed to the mind by the chown above (#961).
     if (existsSync(resolve(dest, ".git"))) {
       try {
         await establishTemplateBase(
           dest,
           manifest.template,
           archiveOnCurrentTemplate(manifest) ? { composedFor: manifest.name } : "head",
+          name,
         );
       } catch (err) {
         llog.warn(`failed to establish a template base for ${name}`, log.errorData(err));
@@ -1311,15 +1307,18 @@ export async function createVariant(input: CreateVariantInput): Promise<CreateVa
 
   mkdirSync(resolve(projectRoot, ".variants"), { recursive: true });
 
-  // Create git worktree
+  // Create git worktree — as the mind, whose post-checkout hook it runs (#961).
   try {
-    await gitExec(["worktree", "add", "-b", variantName, variantDir], { cwd: projectRoot });
+    await chownMindDir(projectRoot, parentName);
+    await gitExec(
+      ["worktree", "add", "-b", variantName, variantDir],
+      mindGitOpts(projectRoot, parentName),
+    );
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    // mkdirSync + `git worktree add` ran as the daemon (root) and may leave
-    // root-owned files under .variants/ in the mind's tree; hand ownership
-    // back before returning so the mind can retry. Surface a restore failure
-    // so a left-behind-root-files condition isn't hidden.
+    // The mkdirSync above ran as the daemon, and the chown that hands it over may
+    // be what failed; hand ownership back before returning so the mind can retry.
+    // Surface a restore failure so a left-behind-root-files condition isn't hidden.
     let error = `Failed to create worktree: ${msg}`;
     try {
       await chownMindDir(projectRoot, parentName);

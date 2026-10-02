@@ -198,13 +198,13 @@ const app = new Hono<AuthEnv>()
 
     const projectRoot = parentEntry.dir ?? mindDir(mindName);
 
-    // Every early return past this point can follow a git write that ran as the
-    // daemon (root): the variant/main auto-commits, the merge, and the merge
-    // --abort. Under user isolation that leaves the parent worktree — and the
+    // The join's git runs as the mind (#961), but a failure can still come after
+    // the daemon wrote into the tree, or before mergeVariant handed it over at
+    // all. Under user isolation a root-owned path in the parent worktree — or the
     // variant worktree nested under it at .variants/<name>, which chownMindDir
-    // recurses — owned root:root, locking the still-running mind out of its own
-    // files. Hand ownership back before returning; surface a restore failure,
-    // since under isolation it means root-owned files were left behind.
+    // recurses — locks the still-running mind out of its own files. Hand ownership
+    // back before returning; surface a restore failure, since under isolation it
+    // means root-owned files may have been left behind.
     const failAfterGitWrite = async (
       message: string,
       extra?: Record<string, unknown>,

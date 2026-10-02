@@ -2,6 +2,9 @@ import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
+import { mindGitOpts } from "./isolation.js";
+
+type GitOpts = Parameters<typeof gitExec>[1];
 
 const SAFE_BRANCH_RE = /^[a-zA-Z0-9._\-/]+$/;
 
@@ -78,10 +81,13 @@ export interface UnresolvedHomeFiles {
  * "couldn't check" as "nothing found" — a safety check that fails open isn't a safety
  * check. Callers must treat a thrown error as blocking too.
  */
-export async function findUnresolvedHomeFiles(cwd: string): Promise<UnresolvedHomeFiles> {
+export async function findUnresolvedHomeFiles(
+  cwd: string,
+  mindName: string,
+): Promise<UnresolvedHomeFiles> {
   const raw = await gitExec(
     ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "home"],
-    { cwd },
+    mindGitOpts(cwd, mindName),
   );
 
   const allPaths = raw
@@ -220,7 +226,11 @@ export async function mergeOrAbort(cwd: string, branch: string): Promise<void> {
 export async function restoreMergeDeletedHomeFiles(
   cwd: string,
   sourceCommit: string,
+  mindName: string,
 ): Promise<string[]> {
+  // As the mind: these read the index (so a configured core.fsmonitor runs) and the
+  // restore writes into home/, which then belongs to the mind with no chown (#961).
+  const git = mindGitOpts(cwd, mindName);
   // --no-renames: rename detection would pair a deleted home file with a
   // similar added file and report R instead of D, silently dropping it here.
   const raw = await gitExec(
@@ -235,7 +245,7 @@ export async function restoreMergeDeletedHomeFiles(
       "--",
       "home/",
     ],
-    { cwd, maxBuffer: RESTORE_DIFF_MAX_BUFFER },
+    { ...git, maxBuffer: RESTORE_DIFF_MAX_BUFFER },
   );
   const deleted = raw.split("\0").filter(Boolean);
   if (deleted.length === 0) return [];
@@ -246,7 +256,7 @@ export async function restoreMergeDeletedHomeFiles(
   let paths: string[] = [];
   try {
     const ignoredRaw = await gitExec(["check-ignore", "--stdin", "-z"], {
-      cwd,
+      ...git,
       maxBuffer: RESTORE_DIFF_MAX_BUFFER,
       stdin: deleted.join("\0"),
     });
@@ -262,9 +272,7 @@ export async function restoreMergeDeletedHomeFiles(
     // patterns; without it a filename containing `*` or `[` would be
     // glob-interpreted.
     const pathspecs = paths.slice(i, i + RESTORE_PATH_CHUNK).map((p) => `:(literal)${p}`);
-    await gitExec(["restore", `--source=${sourceCommit}`, "--worktree", "--", ...pathspecs], {
-      cwd,
-    });
+    await gitExec(["restore", `--source=${sourceCommit}`, "--worktree", "--", ...pathspecs], git);
   }
   return paths;
 }
@@ -288,8 +296,10 @@ export async function restoreMergeDeletedHomeFiles(
 export async function mergeVariantExcludingMemory(
   projectRoot: string,
   variantBranch: string,
+  mindName: string,
 ): Promise<string> {
-  const opts = { cwd: projectRoot };
+  // As the mind: the merge and its commit run the mind's own hooks (#961).
+  const opts = mindGitOpts(projectRoot, mindName);
 
   // Capture the variant's memory/journal delta before merging. An empty diff is
   // fine (the variant wrote nothing), but a real git failure would silently lose
@@ -373,7 +383,7 @@ export class VariantMergeError extends Error {
 }
 
 /** True while a merge is in progress (MERGE_HEAD present) — worktree-safe via rev-parse. */
-async function mergeInProgress(opts: { cwd: string }): Promise<boolean> {
+async function mergeInProgress(opts: GitOpts): Promise<boolean> {
   return gitExec(["rev-parse", "-q", "--verify", "MERGE_HEAD"], opts).then(
     () => true,
     () => false,
@@ -381,7 +391,7 @@ async function mergeInProgress(opts: { cwd: string }): Promise<boolean> {
 }
 
 /** List the files left in conflict (unmerged) in the worktree. */
-async function listConflicts(opts: { cwd: string }): Promise<string[]> {
+async function listConflicts(opts: GitOpts): Promise<string[]> {
   try {
     const out = (await gitExec(["diff", "--name-only", "--diff-filter=U"], opts)).trim();
     return out ? out.split("\n") : [];
@@ -395,7 +405,7 @@ async function listConflicts(opts: { cwd: string }): Promise<string[]> {
  * the restore, so the merge commit can't carry any of the variant's memory or
  * journal. Throws if a difference or a leftover untracked file remains.
  */
-async function assertExcludedPathsRestored(opts: { cwd: string }): Promise<void> {
+async function assertExcludedPathsRestored(opts: GitOpts): Promise<void> {
   await gitExec(["diff", "--cached", "--quiet", "HEAD", "--", ...MERGE_EXCLUDED_PATHS], opts);
   await gitExec(["diff", "--quiet", "HEAD", "--", ...MERGE_EXCLUDED_PATHS], opts);
   // `git diff` ignores untracked files, so a variant-added file the clean step
