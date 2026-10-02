@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -204,16 +212,22 @@ describe("auto-commit batching", () => {
 });
 
 describe("auto-commit retries a failed commit (#1206)", () => {
-  const repoDir = join(tmpDir, "retry-repo");
-  const binDir = join(tmpDir, "retry-bin");
-  const gitLog = join(tmpDir, "retry-git-calls.txt");
-  const refuseOnce = join(tmpDir, "retry-refuse-once");
+  let scratch: string;
+  let repoDir: string;
+  let binDir: string;
+  let gitLog: string;
+  let refuseOnce: string;
 
   after(() => {
-    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
+    rmSync(scratch, { recursive: true, force: true });
   });
 
   before(() => {
+    scratch = mkdtempSync(join(tmpdir(), "volute-autocommit-retry-"));
+    repoDir = join(scratch, "repo");
+    binDir = join(scratch, "bin");
+    gitLog = join(scratch, "git-calls.txt");
+    refuseOnce = join(scratch, "refuse-once");
     mkdirSync(repoDir, { recursive: true });
     git(["init", "-b", "main"], repoDir);
     git(["config", "user.email", "test@test.com"], repoDir);
