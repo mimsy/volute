@@ -1082,6 +1082,9 @@ describe("pages collaborative repo", () => {
       assert.equal(stopped.conflicts, true);
       assert.match(stopped.message ?? "", /stopped on a conflict in pages\/_system: page\.md/);
       assert.match(stopped.message ?? "", /`git add` it, then publish/);
+      // git status's own hint is named, and running it is not a dead end (#1330).
+      assert.match(stopped.message ?? "", /`git status` will suggest `git rebase --continue`/);
+      assert.match(stopped.message ?? "", /If you already ran it, publishing again still recovers/);
       // What the mind will see matches what it was told.
       const status = git(wtB, "status");
       assert.match(status, /You are currently rebasing/);
