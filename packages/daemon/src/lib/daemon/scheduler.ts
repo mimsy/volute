@@ -292,8 +292,9 @@ export class Scheduler {
         // from the minute before this one, keeping the fire history. Not this one: a
         // cron due right now whose tick hasn't run yet is a fire, not a pause. A
         // one-timer only needs the flag cleared — its slot is just the same-minute
-        // guard, and a past-due fireAt is still delivered late by design.
-        this.mark(key, schedule.cron ? { slot: epochMinute - 1 } : {});
+        // guard, and a past-due fireAt is still delivered late by design. Never behind
+        // a fire already acted on this minute, or the resume would fire it twice.
+        this.mark(key, schedule.cron ? { slot: Math.max(current.slot, epochMinute - 1) } : {});
         delete current.disabled;
       }
     }

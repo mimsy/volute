@@ -1503,6 +1503,21 @@ describe("scheduler pause and resume keep their history without false skips (#11
     assert.deepEqual(scheduler.skipNotices, []);
   });
 
+  it("a cron that fired this minute, then was paused and resumed, fires once", () => {
+    const scheduler = new TestScheduler();
+    const mind = "pause-fired-now-mind";
+    const dir = resolve(voluteSystemDir(), mind);
+    const now = nowMin();
+    const dream = { id: "dream", cron: dailyCronAgo(0), message: "dream", enabled: true };
+    (scheduler as any).state.set(`${mind}:dream`, { slot: now, firedAt: now, cron: dream.cron });
+    writeConfig(dir, [{ ...dream, enabled: false }]);
+    scheduler.loadSchedules(mind, dir);
+    writeConfig(dir, [dream]);
+    scheduler.loadSchedules(mind, dir);
+
+    assert.equal((scheduler as any).shouldFire(dream, now + 1, mind, new Map()), false);
+  });
+
   it("the pause survives a daemon restart in between", async () => {
     const scheduler = new TestScheduler();
     const mind = "pause-restart-mind";
