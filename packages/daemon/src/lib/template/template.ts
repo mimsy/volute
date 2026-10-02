@@ -24,6 +24,7 @@ import {
   writeMindFile,
 } from "../mind/mind-file-write.js";
 import { getBaseName } from "../mind/registry.js";
+import { voluteRoot } from "../util/volute-root.js";
 
 export type TemplateManifest = {
   rename: Record<string, string>;
@@ -54,8 +55,7 @@ export function mergeManifests(
 }
 
 /**
- * Find the templates root directory by walking up from the calling module's location.
- * Returns the parent `templates/` directory (not a specific template).
+ * The templates root: `templates/` under Volute's package root (not a specific template).
  */
 let _templatesRoot: string | null = null;
 
@@ -67,16 +67,12 @@ let _templatesRoot: string | null = null;
  */
 export function locateTemplatesRoot(): string | null {
   if (_templatesRoot) return _templatesRoot;
-  let dir = dirname(new URL(import.meta.url).pathname);
-  for (let i = 0; i < 7; i++) {
-    const candidate = resolve(dir, "templates");
-    if (existsSync(resolve(candidate, "_base"))) {
-      _templatesRoot = candidate;
-      return _templatesRoot;
-    }
-    dir = dirname(dir);
-  }
-  return null;
+  const root = voluteRoot();
+  if (!root) return null;
+  const candidate = resolve(root, "templates");
+  if (!existsSync(resolve(candidate, "_base"))) return null;
+  _templatesRoot = candidate;
+  return _templatesRoot;
 }
 
 export function findTemplatesRoot(): string {
@@ -87,7 +83,7 @@ export function findTemplatesRoot(): string {
   // every mind, bridge, and the web server that no try/catch could stop. Route handlers
   // catch this and return 500.
   throw new Error(
-    `Templates directory not found. Searched up from: ${dirname(new URL(import.meta.url).pathname)}`,
+    `Templates directory not found under Volute's package root (${voluteRoot() ?? "not found"})`,
   );
 }
 

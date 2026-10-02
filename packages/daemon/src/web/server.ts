@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer as createHttpsServer } from "node:https";
-import { dirname, extname, resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import type { ServerType } from "@hono/node-server";
 import { serve } from "@hono/node-server";
 import log from "../lib/util/logger.js";
+import { voluteRoot } from "../lib/util/volute-root.js";
 import app from "./app.js";
 
 const MIME_TYPES: Record<string, string> = {
@@ -52,16 +53,9 @@ export async function startServer({
   tls?: { key: Buffer; cert: Buffer };
 }): Promise<{ stopListening: StopListening; internalPort?: number }> {
   // Find built frontend assets
-  let assetsDir = "";
-  let searchDir = dirname(new URL(import.meta.url).pathname);
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(searchDir, "dist", "web-assets");
-    if (existsSync(candidate)) {
-      assetsDir = candidate;
-      break;
-    }
-    searchDir = dirname(searchDir);
-  }
+  const root = voluteRoot();
+  const builtAssets = root ? resolve(root, "dist", "web-assets") : null;
+  const assetsDir = builtAssets && existsSync(builtAssets) ? builtAssets : "";
 
   if (assetsDir) {
     // Serve static files and SPA fallback

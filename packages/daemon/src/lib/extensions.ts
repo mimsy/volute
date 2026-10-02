@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import type {
   ArgDef,
   Database,
@@ -50,6 +50,7 @@ import {
 import { hostNpmEnv } from "./util/host-npm-env.js";
 import log from "./util/logger.js";
 import { sanitizeSvgIcon } from "./util/sanitize-svg.js";
+import { voluteRoot } from "./util/volute-root.js";
 
 const VALID_EXTENSION_ID = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -508,19 +509,12 @@ async function loadExtension(
   }
 
   // Serve static UI assets with SPA fallback for client-side routing
-  // Resolve assetsDir: try direct path first, then search from project root
+  // Resolve assetsDir: try direct path first, then the bundled copy under Volute's root
   // (import.meta.dirname changes after tsup bundling)
   let resolvedAssetsDir = manifest.ui?.assetsDir ?? "";
   if (resolvedAssetsDir && !existsSync(resolvedAssetsDir)) {
-    let searchDir = dirname(new URL(import.meta.url).pathname);
-    for (let i = 0; i < 5; i++) {
-      const candidate = resolve(searchDir, "packages", "extensions", manifest.id, "dist", "ui");
-      if (existsSync(candidate)) {
-        resolvedAssetsDir = candidate;
-        break;
-      }
-      searchDir = dirname(searchDir);
-    }
+    const candidate = bundledExtensionPath(manifest.id, "dist", "ui");
+    if (candidate && existsSync(candidate)) resolvedAssetsDir = candidate;
   }
   if (resolvedAssetsDir && existsSync(resolvedAssetsDir)) {
     const assetsDir = resolvedAssetsDir;
@@ -605,6 +599,16 @@ async function loadExtension(
 }
 
 /**
+ * Where a built-in extension's files ship under Volute's root
+ * (`packages/extensions/<id>/...`), or null when the root can't be identified. Whether
+ * the path exists is the caller's question.
+ */
+export function bundledExtensionPath(id: string, ...segments: string[]): string | null {
+  const root = voluteRoot();
+  return root ? resolve(root, "packages", "extensions", id, ...segments) : null;
+}
+
+/**
  * Resolve the skills directory for an extension.
  * The manifest's skillsDir may be wrong when bundled by tsup (import.meta.dirname
  * resolves to the dist/ directory). Fall back to searching from the project root.
@@ -615,17 +619,13 @@ function resolveSkillsDir(manifest: ExtensionManifest): string | null {
   if (!manifest.skillsDir) return null;
   const cached = skillsDirCache.get(manifest.id);
   if (cached !== undefined) return cached;
-  // Search from daemon entry point for extension-specific skills directory first.
+  // Look for the extension-specific skills directory under Volute's root first.
   // This is needed because tsup bundling makes import.meta.dirname resolve to dist/,
   // so relative paths like "../skills" can accidentally hit the repo root skills/ dir.
-  let searchDir = dirname(new URL(import.meta.url).pathname);
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(searchDir, "packages", "extensions", manifest.id, "skills");
-    if (existsSync(candidate)) {
-      skillsDirCache.set(manifest.id, candidate);
-      return candidate;
-    }
-    searchDir = dirname(searchDir);
+  const candidate = bundledExtensionPath(manifest.id, "skills");
+  if (candidate && existsSync(candidate)) {
+    skillsDirCache.set(manifest.id, candidate);
+    return candidate;
   }
   // Fall back to the declared path (works in dev mode where import.meta.dirname is correct)
   if (existsSync(manifest.skillsDir)) {

@@ -146,6 +146,15 @@ export function analyzeInstallPath(realPath: string): {
 }
 
 /**
+ * Best-effort version of a linked/source-checkout binary (`<root>/dist/cli.js`), read
+ * from Volute's own package.json beside it — never from whatever package.json happens
+ * to sit further up (#1336).
+ */
+export function linkedInstallVersion(realPath: string): string | null {
+  return voluteManifest(dirname(realPath))?.version ?? null;
+}
+
+/**
  * Resolve where the `volute` binary that is actually on PATH lives, so updates can be
  * installed into the prefix that owns it rather than whatever prefix the ambient npm
  * happens to use. The two diverge under nvm/fnm/volta/Homebrew setups, which is the
@@ -168,15 +177,14 @@ export function resolveVoluteInstall(): VoluteInstall | null {
   const { packageRoot, prefix, isLinked } = analyzeInstallPath(realPath);
   if (isLinked) {
     // Running from a source checkout or `npm link`.
-    // Walk up from the binary to find its package.json for a best-effort version.
-    let dir = dirname(realPath);
-    let version: string | null = null;
-    for (let i = 0; i < 4 && dir !== dirname(dir); i++) {
-      version = readPackageVersion(dir);
-      if (version) break;
-      dir = dirname(dir);
-    }
-    return { binPath, realPath, packageRoot: null, prefix: null, version, isLinked: true };
+    return {
+      binPath,
+      realPath,
+      packageRoot: null,
+      prefix: null,
+      version: linkedInstallVersion(realPath),
+      isLinked: true,
+    };
   }
 
   return {
