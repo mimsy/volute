@@ -198,6 +198,8 @@ export class BridgeManager {
       lastStderr = chunk.toString().trim();
     });
 
+    // The pid now, so a crash before its identity is read still leaves a handle on it.
+    this.writeBridgePid(platform, { pid: child.pid, start: null, boot: null });
     this.live.set(child, platform);
     this.bridges.set(platform, { child, platform });
     // Clear the crash budget only once this spawn has proved it can stay up —
@@ -248,7 +250,7 @@ export class BridgeManager {
       this.scheduleRestart(platform, daemonPort, delay);
     });
 
-    await this.saveBridgePid(platform, child);
+    await this.saveBridgeIdentity(platform, child);
     blog.info(`started bridge ${platform}`);
   }
 
@@ -386,21 +388,20 @@ export class BridgeManager {
     return processIdentity(pid);
   }
 
-  /**
-   * Record `child`'s pid, start time and boot. Skipped if it has already exited: its
-   * exit handler has run, and nothing would remove the file.
-   */
-  private async saveBridgePid(platform: string, child: ChildProcess): Promise<void> {
-    const id = await this.processIdentity(child.pid!);
-    if (!this.live.has(child)) return;
+  private writeBridgePid(platform: string, record: BridgePidRecord): void {
     const pidPath = this.bridgePidPath(platform);
     mkdirSync(dirname(pidPath), { recursive: true });
-    const record: BridgePidRecord = {
-      pid: child.pid!,
-      start: id?.start ?? null,
-      boot: id?.boot ?? null,
-    };
     writeFileSync(pidPath, JSON.stringify(record));
+  }
+
+  /**
+   * Add `child`'s start time and boot to its PID file. Skipped if it has already
+   * exited: its exit handler has run, and nothing would remove the file.
+   */
+  private async saveBridgeIdentity(platform: string, child: ChildProcess): Promise<void> {
+    const id = await this.processIdentity(child.pid!);
+    if (!id || !this.live.has(child)) return;
+    this.writeBridgePid(platform, { pid: child.pid!, start: id.start, boot: id.boot });
   }
 
   private readBridgePid(platform: string): BridgePidRecord | null {

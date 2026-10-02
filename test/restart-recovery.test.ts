@@ -777,6 +777,42 @@ setInterval(() => {}, 1000);`,
         }
       });
 
+      it("writes the pid before its identity is read, so a crash then leaves a handle", async () => {
+        const marker = resolve(fixtureDir, "early-pid-spawns.txt");
+        const mgr = newBridgeManager();
+        mgr.resolveBuiltinBridge = () =>
+          writeFixture("early-pid", marker, "setInterval(() => {}, 1000);");
+        let release!: () => void;
+        const read = new Promise<void>((r) => {
+          release = r;
+        });
+        mgr.processIdentity = async () => {
+          await read;
+          return { args: "x", start: "started-then", boot: "this-boot" };
+        };
+        const pidPath = mgr.bridgePidPath("early-pid");
+        try {
+          const started = mgr.startBridge("early-pid", 1618);
+          assert.ok(await waitFor(() => existsSync(pidPath), 5000), "no PID file while reading");
+          const pid = mgr.bridges.get("early-pid").child.pid;
+          assert.deepEqual(JSON.parse(readFileSync(pidPath, "utf-8")), {
+            pid,
+            start: null,
+            boot: null,
+          });
+          release();
+          await started;
+          assert.deepEqual(JSON.parse(readFileSync(pidPath, "utf-8")), {
+            pid,
+            start: "started-then",
+            boot: "this-boot",
+          });
+        } finally {
+          release();
+          await mgr.stopBridge("early-pid");
+        }
+      });
+
       it("records the spawned bridge's start time and boot in its PID file", async () => {
         const marker = resolve(fixtureDir, "identity-spawns.txt");
         const mgr = newBridgeManager();
@@ -788,6 +824,8 @@ setInterval(() => {}, 1000);`,
           const record = JSON.parse(readFileSync(mgr.bridgePidPath("identity"), "utf-8"));
           const id = await processIdentity(pid);
           assert.ok(id?.boot, "no boot recorded");
+          // The boot's second alone: its usec moves when the clock is stepped.
+          if (process.platform === "darwin") assert.match(id.boot, /^\d+$/);
           assert.deepEqual(record, { pid, start: id.start, boot: id.boot });
         } finally {
           await mgr.stopBridge("identity");
