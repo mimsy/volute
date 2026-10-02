@@ -857,7 +857,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
           try {
-            const status = await pagesStatus(mindDir, isolationFrom(ctx));
+            const status = await pagesStatus(mindName, mindDir, isolationFrom(ctx));
             return { output: status };
           } catch (err) {
             return { error: `Failed to check shared status: ${(err as Error).message}` };
@@ -944,7 +944,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const limit = (flags.limit as number | undefined) ?? 20;
 
         try {
-          const output = await pagesLog(mindDir, limit, isolationFrom(ctx));
+          const output = await pagesLog(mindName, mindDir, limit, isolationFrom(ctx));
           return { output };
         } catch (err) {
           return { error: `Failed to read shared log: ${(err as Error).message}` };

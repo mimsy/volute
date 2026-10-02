@@ -139,15 +139,19 @@ describe("exec env scrub (#966)", () => {
     const mindDir = join(base, "alpha");
     mkdirSync(dataDir, { recursive: true });
     await ensurePagesRepo(dataDir);
-    // core.hooksPath in the central repo's config applies to every worktree of it.
+    // Pages git runs with hooks off (#1285), but config the repo carries still runs
+    // programs: a clean filter, which `git add` runs on the page being committed.
     const outFile = join(base, "seen.txt");
-    plantPreCommitHook(join(base, "hooks"), outFile);
-    await gitExec(["config", "core.hooksPath", join(base, "hooks")], {
-      cwd: join(dataDir, "repo"),
-    });
+    const filter = join(base, "probe-filter");
+    writeFileSync(
+      filter,
+      `#!/bin/sh\nprintf 'token=[%s]\\nhost=[%s]' "$VOLUTE_DAEMON_TOKEN" "$HOST_ONLY_SECRET" > "${outFile}"\ncat\n`,
+    );
+    chmodSync(filter, 0o755);
+    await gitExec(["config", "filter.probe.clean", filter], { cwd: join(dataDir, "repo") });
     await addPagesWorktree("alpha", mindDir, dataDir);
 
-    mkdirSync(join(mindDir, "home/pages/_system"), { recursive: true });
+    writeFileSync(join(mindDir, "home/pages/_system/.gitattributes"), "*.md filter=probe\n");
     writeFileSync(join(mindDir, "home/pages/_system/lore.md"), "# Lore\n");
     const r = await pagesPullAndMerge("alpha", mindDir, dataDir, "start lore");
     assert.equal(r.ok, true, JSON.stringify(r));
