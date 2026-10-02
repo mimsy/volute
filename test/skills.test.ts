@@ -1357,6 +1357,35 @@ describe("mind skill operations", () => {
     });
     assert.equal(ref.trim(), wired?.upstream?.baseCommit);
   });
+  // #1310: the new version's base is recorded before the merge writes or commits
+  // anything, so a git dir the mind can't write to fails the update with nothing done.
+  it("update changes nothing when recording the new base fails", async (t) => {
+    if (process.getuid?.() === 0) return t.skip("a read-only dir doesn't bind root");
+    const source = writeWiredSkill("wired", [], []);
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+    writeFileSync(join(source, "extra.md"), "v2\n");
+    await importSkillFromDir(source, "author");
+
+    const head = async () => (await exec("git", ["rev-parse", "HEAD"], { cwd: mindDir })).trim();
+    const before = await head();
+    const refDir = join(mindDir, ".git", "refs", "volute", "skill-upstream", "wired");
+    chmodSync(refDir, 0o555);
+    try {
+      await assert.rejects(() => updateSkill(mindName, mindDir, "wired"));
+    } finally {
+      chmodSync(refDir, 0o755);
+    }
+
+    assert.equal(await head(), before, "no update commit landed");
+    const status = await exec("git", ["status", "--porcelain"], { cwd: mindDir });
+    assert.equal(status.trim(), "", "no merged file left uncommitted");
+    const wired = (await listMindSkills(mindDir)).find((sk) => sk.id === "wired");
+    assert.equal(wired?.upstream?.version, 1);
+    assert.equal(wired?.updateAvailable, true);
+    // The retry goes through once the git dir is writable again.
+    assert.deepEqual(await updateSkill(mindName, mindDir, "wired"), { status: "updated" });
+  });
   // #1299: an imported mind's .upstream.json names a base only its source repo had.
   describe("an imported mind's skill", () => {
     const body = (top: string, extra = "") =>

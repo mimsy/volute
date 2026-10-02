@@ -1,5 +1,5 @@
 import { execFile as execFileCb, execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { voluteSystemDir } from "./mind/registry.js";
@@ -39,21 +39,19 @@ function writeCache(latest: string): void {
 }
 
 export function getCurrentVersion(): string {
-  // Walk up from this file to find package.json
+  // Walk up from this file to Volute's own package.json — by name, since the workspace
+  // package this file lives in has one of its own (#1249).
   // In built dist (flat with splitting): dist/chunk-*.js → ../package.json
-  // In dev via tsx: src/lib/update-check.ts → ../../package.json
-  const thisDir = new URL(".", import.meta.url).pathname;
-  const candidates = [
+  // In dev via tsx: packages/daemon/src/lib/update-check.ts → ../../../../package.json
+  const thisDir = import.meta.dirname;
+  for (const p of [
     resolve(thisDir, "../package.json"),
-    resolve(thisDir, "../../package.json"),
-    resolve(thisDir, "../../../package.json"),
-  ];
-  for (const p of candidates) {
-    if (existsSync(p)) {
-      try {
-        return JSON.parse(readFileSync(p, "utf-8")).version;
-      } catch {}
-    }
+    resolve(thisDir, "../../../../package.json"),
+  ]) {
+    try {
+      const pkg = JSON.parse(readFileSync(p, "utf-8"));
+      if (pkg.name === "volute") return pkg.version;
+    } catch {}
   }
   return "0.0.0";
 }

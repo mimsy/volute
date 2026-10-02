@@ -23,6 +23,7 @@ import {
   isIsolationEnabled,
   lockPrivateSubtrees,
   mindUserName,
+  reclaimMindGit,
   skipNodeModules,
   wrapForIsolation,
 } from "../packages/daemon/src/lib/mind/isolation.js";
@@ -428,6 +429,37 @@ describe("isolation", () => {
     const dir = seedTree("lock-bare-", []);
     assert.deepEqual(await lockPrivateSubtrees(dir), [dir]);
     assert.equal(mode(dir), 0o700);
+  });
+
+  // #1310: skills git runs as the mind, so its .git must be the mind's first. The
+  // mind user here doesn't exist, so a reclaim that runs fails — which proves it ran.
+  describe("reclaimMindGit", () => {
+    const tmp = () => mkdtempSync(resolve(tmpdir(), "reclaim-git-"));
+
+    it("reclaims a mind's .git directory", async () => {
+      process.env.VOLUTE_ISOLATION = "user";
+      const dir = tmp();
+      mkdirSync(resolve(dir, ".git", "objects"), { recursive: true });
+      await assert.rejects(
+        () => reclaimMindGit(dir, "no-such-iso-mind"),
+        /Failed to reclaim .*\.git/,
+      );
+    });
+
+    it("leaves a variant worktree's .git file alone, and a repo-less dir", async () => {
+      process.env.VOLUTE_ISOLATION = "user";
+      const variant = tmp();
+      writeFileSync(resolve(variant, ".git"), "gitdir: /elsewhere\n");
+      await reclaimMindGit(variant, "no-such-iso-mind");
+      await reclaimMindGit(tmp(), "no-such-iso-mind");
+    });
+
+    it("does nothing without isolation", async () => {
+      delete process.env.VOLUTE_ISOLATION;
+      const dir = tmp();
+      mkdirSync(resolve(dir, ".git"));
+      await reclaimMindGit(dir, "no-such-iso-mind");
+    });
   });
 
   describe("containMindPath", () => {

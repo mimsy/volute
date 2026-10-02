@@ -76,6 +76,11 @@ describe("archive", () => {
       assert.equal(parsed.name, testMind);
       assert.equal(parsed.template, "claude");
       assert.ok(parsed.exportedAt);
+      // The version that wrote it — Volute's own, not "unknown" (#1249).
+      const repoPkg = JSON.parse(
+        readFileSync(resolve(import.meta.dirname, "../package.json"), "utf-8"),
+      );
+      assert.equal(parsed.voluteVersion, repoPkg.version);
     });
 
     it("includes mind files under mind/ prefix with includeSrc", () => {
