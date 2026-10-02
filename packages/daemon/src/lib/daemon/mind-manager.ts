@@ -309,7 +309,11 @@ export class MindManager {
   private recoveries = new Map<string, { timer?: NodeJS.Timeout; deferred?: boolean }>();
   // Minds whose recovery restart must wait — an upgrade is rewriting their tree, and a
   // boot now would run on half-installed dependencies (#1279). See `holdRecovery`.
-  private recoveryHolds = new Set<string>();
+  // Counted, so that when a skill's npm install overlaps an upgrade or a join (#1302) the
+  // first to finish doesn't lift the other's hold. The count keeps the hold correct, not
+  // the overlap safe: two writers in one tree aren't serialized against each other, nor
+  // against starts other than recovery's (#1341).
+  private recoveryHolds = new Map<string, number>();
   // Delay before retrying a recovery restart that failed outside the mind's own
   // startup (spawn EMFILE/EAGAIN, a registry read) — see `onRecoveryStartFailed`.
   private strainRetryDelayMs = 60_000;
@@ -1016,17 +1020,27 @@ export class MindManager {
   /**
    * Keep crash recovery from starting `name` until {@link releaseRecovery}. A restart
    * that comes due meanwhile waits, still pending. For an upgrade, whose merge and
-   * npm install leave the tree half-written until its own final start (#1279).
+   * npm install leave the tree half-written until its own final start (#1279), or a skill's
+   * npm install (#1302). Holds nest: each needs its own release.
    * Resolves once any lifecycle op already under way for `name` — a recovery start
    * that got past the hold check before it was taken — has settled.
    */
   async holdRecovery(name: string): Promise<void> {
-    this.recoveryHolds.add(name);
+    this.recoveryHolds.set(name, (this.recoveryHolds.get(name) ?? 0) + 1);
     await this.withLock(name, async () => {});
   }
 
-  /** Lift {@link holdRecovery}, starting at once a recovery restart that came due while held. */
+  /**
+   * Lift one {@link holdRecovery}. When the last is lifted, a recovery restart that came
+   * due while held starts at once.
+   */
   releaseRecovery(name: string): void {
+    const holds = this.recoveryHolds.get(name);
+    if (holds === undefined) return;
+    if (holds > 1) {
+      this.recoveryHolds.set(name, holds - 1);
+      return;
+    }
     this.recoveryHolds.delete(name);
     if (this.recoveries.get(name)?.deferred) this.scheduleRecoveryStart(name, 0);
   }
@@ -1242,4 +1256,21 @@ export function tryGetMindManager(): MindManager | null {
  */
 export function isProcessLive(name: string): boolean {
   return !instance || instance.isRunning(name);
+}
+
+/**
+ * Run `fn` with crash recovery held for `mindName`: while an upgrade's merge and install,
+ * a join's, or a skill's npm install leave the tree half-written, a recovery restart
+ * firing would boot the mind on it (#1279, #1302). A restart that comes due meanwhile
+ * runs on release — when an upgrade restarts the mind, its final start has already
+ * cancelled it.
+ */
+export async function withRecoveryHold<T>(mindName: string, fn: () => Promise<T>): Promise<T> {
+  const manager = instance;
+  await manager?.holdRecovery(mindName);
+  try {
+    return await fn();
+  } finally {
+    manager?.releaseRecovery(mindName);
+  }
 }

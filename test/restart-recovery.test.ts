@@ -453,17 +453,60 @@ describe("crash recovery wiring", () => {
     });
 
     it("taking the hold waits out a recovery start already in flight", async () => {
+      await runningMind("draining", 4980);
       const mgr = new MindManager() as AnyMgr;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 50, maxDelay: 100 });
+      let started = false;
       let booted = false;
-      // A recovery start that got past the hold check before the hold was taken.
-      mgr.withLock("draining", async () => {
+      // The real recovery path, into the real startMind; only the boot itself is stubbed.
+      mgr._startMind = async () => {
+        started = true;
         await delay(300);
         booted = true;
-      });
+      };
+      const child = fakeChild();
+      mgr.minds.set("draining", { child, port: 4979 });
+      mgr.setupCrashRecovery("draining", child);
+      child.emit("exit", 1);
+      // The recovery start got past the hold check before the hold was taken.
+      assert.ok(await waitFor(() => started, 5000));
 
       await mgr.holdRecovery("draining");
       assert.equal(booted, true, "the merge must not begin under a boot in progress");
       mgr.releaseRecovery("draining");
+      mgr.shuttingDown = true;
+    });
+
+    // #1302: a skill install and an upgrade can hold the same mind at once; whichever
+    // finishes first must not lift the other's hold.
+    it("an overlapping hold stays held until its own release", async () => {
+      await runningMind("held-twice", 4978);
+      const mgr = new MindManager() as AnyMgr;
+      const baseDelay = 200;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay, maxDelay: 2000 });
+      let starts = 0;
+      mgr.startMind = async () => {
+        starts++;
+      };
+
+      await mgr.holdRecovery("held-twice");
+      await mgr.holdRecovery("held-twice");
+      const child = fakeChild();
+      mgr.minds.set("held-twice", { child, port: 4977 });
+      mgr.setupCrashRecovery("held-twice", child);
+      child.emit("exit", 1);
+      assert.ok(await waitFor(() => mgr.hasPendingRecovery("held-twice"), 5000));
+      await delay(baseDelay * 3);
+
+      mgr.releaseRecovery("held-twice");
+      await delay(baseDelay * 2);
+      assert.equal(starts, 0, "still held by the other holder");
+      assert.equal(mgr.hasPendingRecovery("held-twice"), true);
+
+      mgr.releaseRecovery("held-twice");
+      assert.ok(await waitFor(() => starts === 1, 5000), "the last release starts it");
+
+      mgr.shuttingDown = true;
     });
 
     it("a held recovery the upgrade's own stop cancelled stays cancelled on release", async () => {
