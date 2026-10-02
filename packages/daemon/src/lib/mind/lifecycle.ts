@@ -82,7 +82,7 @@ import {
 } from "./registry.js";
 import { spawnServer } from "./spawn-server.js";
 import { applyThinkingLevel } from "./thinking-config.js";
-import { configureGitIdentity } from "./upgrade.js";
+import { configureGitIdentity, withRecoveryHold } from "./upgrade.js";
 import { cleanupVariant } from "./variant-cleanup.js";
 import {
   findUnresolvedHomeFiles,
@@ -201,6 +201,12 @@ export interface MergeVariantParams {
  * so no path out of here leaves anything root-owned for the caller to repair.
  */
 export async function mergeVariant(params: MergeVariantParams): Promise<VariantMergeResult> {
+  // The merge and npm install below leave the parent's tree half-written until the
+  // caller restarts it; a crash-recovery restart must not boot it in between (#1279).
+  return withRecoveryHold(params.parentName, () => mergeVariantHeld(params));
+}
+
+async function mergeVariantHeld(params: MergeVariantParams): Promise<VariantMergeResult> {
   const {
     parentName,
     variantName,

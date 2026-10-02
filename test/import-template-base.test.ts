@@ -11,8 +11,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { after, before, describe, it } from "node:test";
+import { after, before, describe, it, mock } from "node:test";
 import {
+  getMindManager,
   initMindManager,
   tryGetMindManager,
 } from "../packages/daemon/src/lib/daemon/mind-manager.js";
@@ -166,6 +167,38 @@ describe("an upgrade repairs a mind whose history never joined volute/template",
     assert.equal(outcome.status, "upgraded", JSON.stringify(outcome));
     assert.equal(readFileSync(resolve(dir, STALE), "utf-8"), templateFile(STALE, name));
     assert.ok(existsSync(resolve(dir, MINE)));
+  });
+});
+
+describe("an upgrade holds crash recovery through its merge (#1279)", () => {
+  it("takes the hold before the merge touches the tree and releases it after", async () => {
+    const name = `tb-hold-${process.pid}`;
+    const dir = archivedMind(name);
+    commitAsImport(dir);
+    await addMind(name, 4195, undefined, "claude");
+    const stale = readFileSync(resolve(dir, STALE), "utf-8");
+
+    const manager = getMindManager();
+    const seen: { call: string; merged: boolean }[] = [];
+    const merged = () => readFileSync(resolve(dir, STALE), "utf-8") !== stale;
+    const hold = mock.method(manager, "holdRecovery", async () => {
+      seen.push({ call: "hold", merged: merged() });
+    });
+    const release = mock.method(manager, "releaseRecovery", () => {
+      seen.push({ call: "release", merged: merged() });
+    });
+    try {
+      const outcome = await runUpgrade(name, { restart: false });
+      assert.equal(outcome.status, "upgraded", JSON.stringify(outcome));
+    } finally {
+      hold.mock.restore();
+      release.mock.restore();
+    }
+
+    assert.deepEqual(seen, [
+      { call: "hold", merged: false },
+      { call: "release", merged: true },
+    ]);
   });
 });
 

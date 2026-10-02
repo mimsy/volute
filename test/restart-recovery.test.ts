@@ -417,6 +417,77 @@ describe("crash recovery wiring", () => {
       mgr.shuttingDown = true;
     });
 
+    // #1279: an upgrade holds recovery while its merge and npm install leave the
+    // tree half-written, so a backoff that ends inside that window doesn't boot it.
+    it("a held recovery waits, still pending, and starts on release", async () => {
+      await runningMind("held", 4984);
+      const mgr = new MindManager() as AnyMgr;
+      const baseDelay = 200;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay, maxDelay: 2000 });
+      let starts = 0;
+      mgr.startMind = async () => {
+        starts++;
+      };
+
+      mgr.holdRecovery("held");
+      const child = fakeChild();
+      mgr.minds.set("held", { child, port: 4983 });
+      mgr.setupCrashRecovery("held", child);
+      child.emit("exit", 1);
+      assert.ok(await waitFor(() => mgr.hasPendingRecovery("held"), 5000));
+
+      // Past the backoff, so an unheld timer would have fired.
+      await delay(baseDelay * 3);
+      assert.equal(starts, 0, "no boot while held");
+      assert.equal(mgr.hasPendingRecovery("held"), true, "still coming back");
+
+      mgr.releaseRecovery("held");
+      assert.ok(await waitFor(() => starts === 1, 5000), "released, it starts");
+
+      mgr.shuttingDown = true;
+    });
+
+    it("taking the hold waits out a recovery start already in flight", async () => {
+      const mgr = new MindManager() as AnyMgr;
+      let booted = false;
+      // A recovery start that got past the hold check before the hold was taken.
+      mgr.withLock("draining", async () => {
+        await delay(300);
+        booted = true;
+      });
+
+      await mgr.holdRecovery("draining");
+      assert.equal(booted, true, "the merge must not begin under a boot in progress");
+      mgr.releaseRecovery("draining");
+    });
+
+    it("a held recovery the upgrade's own stop cancelled stays cancelled on release", async () => {
+      await runningMind("held-stopped", 4982);
+      const mgr = new MindManager() as AnyMgr;
+      const baseDelay = 200;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay, maxDelay: 2000 });
+      let starts = 0;
+      mgr.startMind = async () => {
+        starts++;
+      };
+
+      mgr.holdRecovery("held-stopped");
+      const child = fakeChild();
+      mgr.minds.set("held-stopped", { child, port: 4981 });
+      mgr.setupCrashRecovery("held-stopped", child);
+      child.emit("exit", 1);
+      assert.ok(await waitFor(() => mgr.hasPendingRecovery("held-stopped"), 5000));
+      await delay(baseDelay * 3);
+
+      await mgr.stopMind("held-stopped");
+      mgr.releaseRecovery("held-stopped");
+      await delay(baseDelay * 2);
+      assert.equal(starts, 0);
+      assert.equal(mgr.hasPendingRecovery("held-stopped"), false);
+
+      mgr.shuttingDown = true;
+    });
+
     // #1069: a restart that fails outside the mind's own startup (a raw spawn
     // error, a registry read) is the daemon under strain, not a broken mind.
     it("retries a restart that failed outside startup without spending the budget", async () => {

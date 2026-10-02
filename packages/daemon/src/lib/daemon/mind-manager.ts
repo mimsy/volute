@@ -306,7 +306,10 @@ export class MindManager {
   // Recovery restarts pending for a mind — waiting out a backoff (`timer` set) or
   // with the start in flight. The mind is not in `minds` while it waits, so an
   // operator stop has to find it here (#1070).
-  private recoveries = new Map<string, { timer?: NodeJS.Timeout }>();
+  private recoveries = new Map<string, { timer?: NodeJS.Timeout; deferred?: boolean }>();
+  // Minds whose recovery restart must wait — an upgrade is rewriting their tree, and a
+  // boot now would run on half-installed dependencies (#1279). See `holdRecovery`.
+  private recoveryHolds = new Set<string>();
   // Delay before retrying a recovery restart that failed outside the mind's own
   // startup (spawn EMFILE/EAGAIN, a registry read) — see `onRecoveryStartFailed`.
   private strainRetryDelayMs = 60_000;
@@ -925,7 +928,7 @@ export class MindManager {
   /** Start `name` after `delay`, in a timer an operator stop (or shutdown) can cancel. */
   private scheduleRecoveryStart(name: string, delay: number): void {
     this.cancelRecovery(name);
-    const recovery: { timer?: NodeJS.Timeout } = {};
+    const recovery: { timer?: NodeJS.Timeout; deferred?: boolean } = {};
     // Whether this recovery is still the live one — a stop, a start or shutdown
     // may have cancelled it while its start was in flight.
     const live = () => this.recoveries.get(name) === recovery;
@@ -936,6 +939,12 @@ export class MindManager {
         return;
       }
       if (!live()) return;
+      // Held: stay pending — an upgrade checks for this recovery to know the mind is
+      // coming back — and start when the hold is released.
+      if (this.recoveryHolds.has(name)) {
+        recovery.deferred = true;
+        return;
+      }
       this.startMind(name).then(
         () => {
           if (live()) this.recoveries.delete(name);
@@ -997,6 +1006,24 @@ export class MindManager {
   /** True while `name` is down and a crash-recovery restart is pending or in flight. */
   hasPendingRecovery(name: string): boolean {
     return this.recoveries.has(name);
+  }
+
+  /**
+   * Keep crash recovery from starting `name` until {@link releaseRecovery}. A restart
+   * that comes due meanwhile waits, still pending. For an upgrade, whose merge and
+   * npm install leave the tree half-written until its own final start (#1279).
+   * Resolves once any lifecycle op already under way for `name` — a recovery start
+   * that got past the hold check before it was taken — has settled.
+   */
+  async holdRecovery(name: string): Promise<void> {
+    this.recoveryHolds.add(name);
+    await this.withLock(name, async () => {});
+  }
+
+  /** Lift {@link holdRecovery}, starting at once a recovery restart that came due while held. */
+  releaseRecovery(name: string): void {
+    this.recoveryHolds.delete(name);
+    if (this.recoveries.get(name)?.deferred) this.scheduleRecoveryStart(name, 0);
   }
 
   /**
