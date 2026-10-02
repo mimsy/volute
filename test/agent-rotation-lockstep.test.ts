@@ -84,6 +84,14 @@ describe("claude template: relockstepMessageIds", () => {
       "each entry gets the NEW channel's seq, not the stale old one",
     );
     assert.equal(pushedMsgs.length, 3, "every pending message is re-pushed into the new channel");
+    // Each re-push carries a fresh uuid, recorded on its entry, by which the fresh stream's
+    // `result` lists what its run consumed (#1319).
+    const uuids = result.map((e) => e.uuid);
+    assert.deepEqual(
+      pushedMsgs.map((m) => (m as { uuid?: string }).uuid),
+      uuids,
+    );
+    assert.equal(new Set(uuids.filter(Boolean)).size, 3);
   });
 
   it("matches by seq, not array position — an out-of-order oldMessageIds still resolves correctly", () => {
@@ -124,7 +132,10 @@ describe("claude template: relockstepMessageIds", () => {
       [],
       (m) => m,
     );
-    assert.deepEqual(result, [{ id: undefined, seq: 0 }]);
+    assert.deepEqual(
+      result.map(({ id, seq }) => ({ id, seq })),
+      [{ id: undefined, seq: 0 }],
+    );
   });
 
   it("applies the transform (recovered-message marker) to every re-pushed message", () => {
@@ -221,7 +232,7 @@ describe("claude template: relockstepMessageIds", () => {
 
     assert.equal(result, freshMessageIds, "must mutate and return the SAME array, not a fresh one");
     assert.deepEqual(
-      freshMessageIds,
+      freshMessageIds.map(({ id, seq }) => ({ id, seq })),
       [racerEntry, { id: "recovered-msg", seq: 1 }],
       "the racer's entry must survive alongside the relockstepped recovered entry",
     );

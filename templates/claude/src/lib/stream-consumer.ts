@@ -18,7 +18,27 @@ export type MessageIdEntry = {
   seq: number;
   /** It interrupted the turn it arrived in, so it runs as a turn of its own, not folded in. */
   interrupting?: boolean;
+  /**
+   * The uuid it was pushed to the SDK with, which a `result` lists among the user messages
+   * its run consumed (`user_message_uuids`) — see the `result` handler.
+   */
+  uuid?: string;
+  /**
+   * A result handed it back without the SDK having said it ran it — one with no list from a
+   * CLI that echoes (a delivery failure, a zeroed result). It may never run, so it is not
+   * taken as a turn's driver on timing, nor named as the next turn's: only a frame naming it
+   * binds it (see `consumeStream`).
+   */
+  unrun?: boolean;
 };
+
+/**
+ * The delivery the next turn will answer, as far as the queue can tell: its head, past any
+ * entry that may never run (`unrun`).
+ */
+export function nextQueued(messageIds: MessageIdEntry[]): MessageIdEntry | undefined {
+  return messageIds.find((e) => !e.unrun);
+}
 
 export type StreamSession = {
   name: string;
@@ -77,6 +97,81 @@ function emit(
   if (filtered) daemonEmit(filtered);
 }
 
+/** The most uuids a `result`'s `user_message_uuids` holds; a list this long may be cut short. */
+const CONSUMED_LIST_CAP = 64;
+
+/**
+ * Take out of `session.messageIds` every entry the run that just produced `result` consumed
+ * besides its driver, and return them.
+ *
+ * The SDK says which: `user_message_uuids` lists every user message the run took — a
+ * message queued before the run started can be folded into it between tool rounds as
+ * readily as one that arrived mid-run, so no timing rule can tell (#1319). An entry it does
+ * not list (one that interrupted the run, or queued behind it) stays for a run of its own.
+ *
+ * Without the list (an older CLI), an entry is judged by timing: one pushed after the run
+ * started was folded into it, one queued before it gets a run of its own — except that an
+ * interrupting entry, and everything behind it, waits for the next. That rule is #1319
+ * itself: an entry queued before the run that the SDK folded in anyway stays as a later
+ * turn's driver. Nothing else can tell without the list; the CLI the template pins sends it
+ * on every run of a message of ours (a result without it there runs none — see the caller).
+ *
+ * A list holding its full 64 may have been cut short: the SDK's CLI keeps the first 63 it
+ * took plus the turn's own (the last of a batch it merged), and drops any it folds in after
+ * that. It takes queued messages in the order they were pushed, so every entry pushed before
+ * the last one it names was consumed too; one after that is judged by timing — which, as on
+ * an older CLI, folds in a mid-run arrival the run may not have reached.
+ */
+function foldedEntries(
+  session: StreamSession,
+  preTurnPending: number,
+  result: object,
+  driver: MessageIdEntry | undefined,
+): MessageIdEntry[] {
+  const consumed = (result as { user_message_uuids?: unknown }).user_message_uuids;
+  const listed = Array.isArray(consumed) ? new Set(consumed) : undefined;
+  const entries = session.messageIds.splice(0);
+  // The seq of the last-pushed entry a full list names — the driver too, which is the last
+  // of a merged batch: every entry pushed before it was consumed.
+  let through = -1;
+  if (listed && listed.size >= CONSUMED_LIST_CAP) {
+    for (const e of driver ? [driver, ...entries] : entries) {
+      if (e.uuid !== undefined && listed.has(e.uuid)) through = Math.max(through, e.seq);
+    }
+  }
+  const byTiming = !listed || listed.size >= CONSUMED_LIST_CAP;
+  const folded: MessageIdEntry[] = [];
+  let interrupted = false;
+  for (const [i, entry] of entries.entries()) {
+    if (entry.seq <= through || (entry.uuid !== undefined && listed?.has(entry.uuid))) {
+      folded.push(entry);
+      continue;
+    }
+    if (byTiming && i >= preTurnPending) {
+      interrupted ||= entry.interrupting === true;
+      if (!interrupted) {
+        folded.push(entry);
+        continue;
+      }
+    }
+    session.messageIds.push(entry);
+  }
+  return folded;
+}
+
+/**
+ * Whether this CLI echoes the uuids it was sent — on a turn's first frame
+ * (`user_message_uuid`) and in its result's list — so a turn without one ran no message of
+ * ours. Process-wide, not per stream: a rotated or fresh stream runs the same CLI, and its
+ * first turn may be one of the SDK's own.
+ */
+let echoes = false;
+
+/** Test seam: forget that the CLI echoes uuids, as an older one wouldn't. */
+export function resetUuidEchoes(): void {
+  echoes = false;
+}
+
 export async function consumeStream(
   stream: ReturnType<typeof query>,
   session: StreamSession,
@@ -99,12 +194,59 @@ export async function consumeStream(
   let checkRestoredTotals = opts.resumed === true;
   /** The main loop's model, as `system/init` names it — its key in `modelUsage`. */
   let mainModel: string | undefined;
+  /**
+   * The entry this turn answers. Taken on timing at the turn's first stream message, then
+   * confirmed by what the SDK echoes: its first frame names the message it answers, and its
+   * result lists what it consumed (#1319).
+   */
+  let driver: MessageIdEntry | undefined;
+  /** The turn's first top-level frame is still to come. */
+  let firstFrame = true;
+  /** The turn was found to answer no message of ours: take no driver until it ends. */
+  let driverless = false;
+  const bind = (entry: MessageIdEntry | undefined) => {
+    driver = entry;
+    session.currentMessageId = entry?.id;
+    session.currentSeq = entry?.seq;
+  };
   for await (const msg of stream) {
-    if (session.currentMessageId === undefined) {
-      const entry = session.messageIds.shift();
-      session.currentMessageId = entry?.id;
-      session.currentSeq = entry?.seq;
+    if (session.currentMessageId === undefined && !driverless) {
+      const next = nextQueued(session.messageIds);
+      if (next) session.messageIds.splice(session.messageIds.indexOf(next), 1);
+      bind(next);
       preTurnPending = session.messageIds.length;
+    }
+    // Rebind before this frame's blocks are emitted, so they are tagged with the message the
+    // turn answers. A frame naming another queued message takes it as the driver, and the one
+    // taken on timing goes back to the head of the queue — still listed at the result, and so
+    // covered, when the SDK merged the two into one batch (whose turn names its last). The
+    // first frame of a turn naming nothing, from a CLI that echoes, is a turn of the SDK's own
+    // (a background task's notification): it gives its driver back at once, so a stream that
+    // dies mid-turn still covers it (agent.ts covers what is left in the queue).
+    if (msg.type === "assistant" && !msg.parent_tool_use_id) {
+      const stamped = (msg as { user_message_uuid?: unknown }).user_message_uuid;
+      if (typeof stamped === "string") {
+        echoes = true;
+        const i =
+          driver?.uuid === stamped ? -1 : session.messageIds.findIndex((e) => e.uuid === stamped);
+        if (i !== -1) {
+          const [found] = session.messageIds.splice(i, 1);
+          if (i < preTurnPending) preTurnPending--;
+          if (driver) {
+            session.messageIds.unshift(driver);
+            preTurnPending++;
+          }
+          delete found.unrun;
+          bind(found);
+          driverless = false;
+        }
+      } else if (firstFrame && echoes && driver) {
+        session.messageIds.unshift(driver);
+        preTurnPending++;
+        bind(undefined);
+        driverless = true;
+      }
+      firstFrame = false;
     }
     if ("session_id" in msg && msg.session_id) {
       callbacks.onSessionId?.(msg.session_id as string);
@@ -179,6 +321,31 @@ export async function consumeStream(
       }
     }
     if (msg.type === "result") {
+      const listed = (msg as { user_message_uuids?: unknown }).user_message_uuids;
+      const consumed = Array.isArray(listed) ? listed : undefined;
+      if (consumed) echoes = true;
+      // The backstop to the first frame's rebind (a turn may end before any frame): a run
+      // whose list leaves the driver out didn't answer it, and neither did one with no list
+      // at all from a CLI that echoes — that turn ran no message of ours. Either way the
+      // driver goes back to the head of the queue for the run that will answer it, and this
+      // `done` names nothing it didn't run (#1319). The list keeps its first 63 entries, so
+      // a driver it consumed is always in it. From a CLI that has never echoed (an older one)
+      // the driver is trusted, as before.
+      //
+      // A zeroed result for a run that did take the driver has no list either: the driver
+      // goes back too, marked `unrun`, and is covered when the stream ends (`emitDone`). If
+      // the stream runs on, it stays queued, never taken on timing or named as the next turn's
+      // — only a frame naming it binds it — and never acked, so the daemon holds its slot until
+      // the slot ages out. Only a CLI that took a message and never ran it, on a stream that
+      // lives on, can leave one there.
+      const ranNothingOfOurs = consumed === undefined && echoes;
+      const unanswered =
+        driver?.uuid !== undefined &&
+        (ranNothingOfOurs || (consumed !== undefined && !consumed.includes(driver.uuid)));
+      if (unanswered) {
+        session.currentMessageId = undefined;
+        session.currentSeq = undefined;
+      }
       if (session.currentMessageId) {
         session.messageChannels.delete(session.currentMessageId);
       }
@@ -186,26 +353,22 @@ export async function consumeStream(
       // message-channel.ts). Without this the channel's inFlight set strands an
       // entry per turn, which gets replayed verbatim on the next rotation (#764).
       if (session.currentSeq !== undefined) callbacks.ack(session.currentSeq);
-      // Prune every id folded into this turn — the ones pushed after it started
-      // — not just currentMessageId. The SDK folds mid-run arrivals into the
-      // active run (they never see a result of their own), and a stranded entry
-      // would be shifted in as the NEXT turn's id, tagging that turn's rows with
-      // the wrong channel (#700). Ids queued before the turn started stay: each
-      // still gets a run (and result) of its own. Ack each folded entry too — same
-      // reasoning as above, applied to every message the fold absorbed.
       // Every delivery this turn finished, for the `done` below: its driver and each one
-      // folded into it (#1207).
+      // folded into it (#1207). Each folded entry is pruned, so it is never shifted in as the
+      // NEXT turn's id, tagging that turn's rows with the wrong delivery (#700), and acked.
       const covers = session.currentMessageId !== undefined ? [session.currentMessageId] : [];
-      let interrupted = false;
-      for (const entry of session.messageIds.splice(preTurnPending)) {
-        // A message that interrupted this turn is not folded into it: the SDK runs it
-        // next, as a turn of its own, whose `done` will cover it — and so is everything
-        // that arrived after it, which queued behind it rather than joining this turn.
-        interrupted ||= entry.interrupting === true;
-        if (interrupted) {
-          session.messageIds.push(entry);
-          continue;
-        }
+      const folded = ranNothingOfOurs
+        ? []
+        : foldedEntries(session, preTurnPending, msg, unanswered ? undefined : driver);
+      if (unanswered && driver) {
+        // Without a list, nothing says the SDK will ever run it (see `unrun`).
+        if (ranNothingOfOurs) driver.unrun = true;
+        session.messageIds.unshift(driver);
+      }
+      driver = undefined;
+      firstFrame = true;
+      driverless = false;
+      for (const entry of folded) {
         if (entry.id !== undefined) {
           session.messageChannels.delete(entry.id);
           covers.push(entry.id);

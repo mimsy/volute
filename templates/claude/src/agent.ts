@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { HookCallback, SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
@@ -50,6 +51,7 @@ import {
   consumeStream,
   type MessageChannelEntry,
   type MessageIdEntry,
+  nextQueued,
 } from "./lib/stream-consumer.js";
 import { createBuiltinSubagentModelHook, defaultSubagentModel } from "./lib/subagent-model.js";
 import { createSystemPromptSource } from "./lib/system-prompt.js";
@@ -318,7 +320,7 @@ export function createMind(options: {
           session: session.name,
           // The delivery this prompt answers — the running turn's, or, between turns, the
           // next one queued — so the notices it drains are that turn's (#1207).
-          messageId: session.currentMessageId ?? session.messageIds[0]?.id,
+          messageId: session.currentMessageId ?? nextQueued(session.messageIds)?.id,
         });
         if (result.additionalContext || Object.keys(result.metadata).length > 0) {
           const channel = session.currentMessageId
@@ -1120,13 +1122,16 @@ export function createMind(options: {
           log("mind", `session "${sessionName}": interrupting current turn`);
         }
 
-        // Push message into SDK
+        // Push message into SDK, under a uuid its run's `result` lists it by (#1319).
         session.lastActivityAt = Date.now();
+        const uuid = randomUUID();
+        entry.uuid = uuid;
         const seq = session.channel.push({
           type: "user",
           session_id: "",
           message: { role: "user", content: toSDKContent(content) },
           parent_tool_use_id: null,
+          uuid,
         });
         entry.seq = seq;
         session.messageIds.push(entry);
