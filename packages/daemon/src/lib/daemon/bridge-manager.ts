@@ -37,6 +37,17 @@ export class BridgeManager {
    * `bridges` by then, so this is the only handle a disable has on the respawn (#1352).
    */
   private pendingRestarts = new Map<string, NodeJS.Timeout>();
+  /**
+   * Bumped by every start and stop. A start that had to wait (terminating the bridge it
+   * replaces) spawns only if no later start or stop came in meanwhile — so a stop always
+   * wins over a start already in flight.
+   */
+  private generations = new Map<string, number>();
+  /** SIGTERM-to-SIGKILL grace when stopping, and when replacing a running bridge. */
+  private stopGraceMs = 5000;
+  private replaceGraceMs = 3000;
+  /** Every child spawned and not yet exited, tracked or not (one in its kill grace). */
+  private live = new Set<ChildProcess>();
 
   async startBridges(daemonPort: number): Promise<void> {
     const config = readBridgesConfig();
@@ -72,12 +83,16 @@ export class BridgeManager {
   async startBridge(platform: string, daemonPort: number): Promise<void> {
     // This start supersedes any pending crash restart, which would otherwise kill it.
     this.cancelPendingRestart(platform);
+    const generation = this.bumpGeneration(platform);
 
     // Replace the running bridge, if any. The kill is deliberate, so its exit must not
     // count as a crash — that would spend a restart attempt and schedule a restart that
     // then kills the replacement.
     const existing = this.bridges.get(platform);
-    if (existing) await this.terminate(platform, existing.child, 3000);
+    if (existing) {
+      await this.terminate(platform, existing.child, this.replaceGraceMs);
+      if (this.generations.get(platform) !== generation) return; // stopped or restarted since
+    }
 
     // Kill orphan from previous daemon session
     this.killOrphanBridge(platform);
@@ -131,6 +146,7 @@ export class BridgeManager {
       this.saveBridgePid(platform, child.pid);
     }
 
+    this.live.add(child);
     this.bridges.set(platform, { child, platform });
     // Clear the crash budget only once this spawn has proved it can stay up —
     // resetting here at spawn time let a bridge that dies immediately refresh its
@@ -140,6 +156,7 @@ export class BridgeManager {
     // This child's exit handler is the one owner of its lifecycle: whoever ended it,
     // it untracks this child and its PID file, and only then decides whether it crashed.
     child.on("exit", (code) => {
+      this.live.delete(child);
       const current = this.bridges.get(platform)?.child === child;
       if (current) {
         // This spawn died before it earned a reset — keep its accumulated count.
@@ -175,13 +192,15 @@ export class BridgeManager {
     // A crashed bridge waiting out its backoff is untracked, so the pending restart is
     // the only thing left to stop (#1352).
     const cancelled = this.cancelPendingRestart(platform);
+    this.bumpGeneration(platform);
     const tracked = this.bridges.get(platform);
-    if (tracked) await this.terminate(platform, tracked.child, 5000);
+    if (tracked) await this.terminate(platform, tracked.child, this.stopGraceMs);
 
     // Also covers a bridge that gave up after crashing: nothing tracked, nothing pending,
-    // but its budget is spent and a PID file may remain.
+    // but its budget is spent. Its PID file is the exit handler's to remove — unless it
+    // names no child of ours still alive (a leftover from an earlier daemon, say).
     this.restartTracker.reset(platform);
-    if (!this.bridges.has(platform)) this.removeBridgePid(platform);
+    if (!this.ownsPid(this.readBridgePid(platform))) this.removeBridgePid(platform);
     if (tracked || cancelled) blog.info(`stopped bridge ${platform}`);
   }
 
@@ -191,8 +210,13 @@ export class BridgeManager {
    */
   private async terminate(platform: string, child: ChildProcess, graceMs: number): Promise<void> {
     if (this.bridges.get(platform)?.child === child) this.bridges.delete(platform);
+    let killTimer: NodeJS.Timeout | undefined;
     await new Promise<void>((res) => {
-      child.on("exit", () => res());
+      child.on("exit", () => {
+        // Disarm the SIGKILL so it can't later land on a reused pgid.
+        clearTimeout(killTimer);
+        res();
+      });
       try {
         if (child.pid) {
           process.kill(-child.pid, "SIGTERM");
@@ -205,7 +229,7 @@ export class BridgeManager {
         }
         res();
       }
-      setTimeout(() => {
+      killTimer = setTimeout(() => {
         try {
           if (child.pid) {
             process.kill(-child.pid, "SIGKILL");
@@ -254,6 +278,17 @@ export class BridgeManager {
     return tracked != null && !tracked.child.killed;
   }
 
+  private bumpGeneration(platform: string): number {
+    const next = (this.generations.get(platform) ?? 0) + 1;
+    this.generations.set(platform, next);
+    return next;
+  }
+
+  /** Whether `pid` is a child of ours that hasn't exited yet. */
+  private ownsPid(pid: number | null): boolean {
+    return pid != null && [...this.live].some((c) => c.pid === pid);
+  }
+
   private cancelPendingRestart(platform: string): boolean {
     const timer = this.pendingRestarts.get(platform);
     if (!timer) return false;
@@ -295,6 +330,9 @@ export class BridgeManager {
     if (!existsSync(pidPath)) return;
     try {
       const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+      // A child we replaced that is still in its kill grace is ours, not an orphan; its
+      // exit handler cleans up after it.
+      if (this.ownsPid(pid)) return;
       // Never 1: `kill(-1)` signals every process we're allowed to.
       if (pid > 1) {
         // Only ESRCH means it's gone; anything else (EPERM) means it may still be up.

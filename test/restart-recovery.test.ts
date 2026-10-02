@@ -269,6 +269,86 @@ describe("crash recovery wiring", () => {
       assert.equal(mgr.pendingRestarts.size, 0);
     });
 
+    it("a stop wins over a start still terminating the bridge it replaces", async () => {
+      const marker = resolve(fixtureDir, "race-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 300, maxDelay: 2000 });
+      // Takes a moment to wind down on SIGTERM, so the replacing start is mid-terminate.
+      mgr.resolveBuiltinBridge = () =>
+        writeFixture(
+          "race",
+          marker,
+          `process.on("SIGTERM", () => setTimeout(() => process.exit(0), 300));\nsetInterval(() => {}, 1000);`,
+        );
+      try {
+        await mgr.startBridge("race", 1618);
+        assert.ok(await waitFor(() => spawnTimes(marker).length === 1, 5000));
+
+        const start = mgr.startBridge("race", 1618);
+        await mgr.stopBridge("race");
+        await start;
+
+        await delay(300);
+        assert.equal(spawnTimes(marker).length, 1, "the stopped bridge was spawned anyway");
+        assert.equal(mgr.isRunning("race"), false);
+      } finally {
+        await mgr.stopBridge("race");
+      }
+    });
+
+    it("disarms the SIGKILL once a terminated bridge exits", async () => {
+      const marker = resolve(fixtureDir, "disarm-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.stopGraceMs = 300;
+      mgr.resolveBuiltinBridge = () =>
+        writeFixture("disarm", marker, "setInterval(() => {}, 1000);");
+      const realKill = process.kill;
+      const sigkills: number[] = [];
+      try {
+        await mgr.startBridge("disarm", 1618);
+        process.kill = ((pid: number, sig?: string | number) => {
+          if (sig === "SIGKILL") sigkills.push(pid);
+          return realKill(pid, sig);
+        }) as typeof process.kill;
+        await mgr.stopBridge("disarm");
+        await delay(500);
+        assert.deepEqual(sigkills, [], "a group SIGKILL fired after the child had exited");
+      } finally {
+        process.kill = realKill;
+        await mgr.stopBridge("disarm");
+      }
+    });
+
+    it("leaves the PID file of a stopped child that is still alive to its exit handler", async () => {
+      const marker = resolve(fixtureDir, "survivor-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.stopGraceMs = 200;
+      mgr.resolveBuiltinBridge = () =>
+        writeFixture("survivor", marker, "setInterval(() => {}, 1000);");
+      const realKill = process.kill;
+      let child: AnyMgr;
+      try {
+        await mgr.startBridge("survivor", 1618);
+        child = mgr.bridges.get("survivor").child;
+        const pidPath = mgr.bridgePidPath("survivor");
+        // Every signal goes astray, so the child outlives the stop.
+        process.kill = (() => true) as typeof process.kill;
+        await mgr.stopBridge("survivor");
+        process.kill = realKill;
+        assert.equal(existsSync(pidPath), true, "removed the PID file of a live child");
+
+        process.kill(-child.pid, "SIGKILL");
+        assert.ok(await waitFor(() => !existsSync(pidPath), 5000), "its exit left the PID file");
+      } finally {
+        process.kill = realKill;
+        if (child && child.exitCode === null && child.signalCode === null) {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {}
+        }
+      }
+    });
+
     describe("killOrphanBridge", () => {
       const realKill = process.kill;
       after(() => {
@@ -295,6 +375,26 @@ describe("crash recovery wiring", () => {
       }
 
       const errno = (code: string) => Object.assign(new Error(code), { code });
+
+      it("leaves alone a PID file naming a child of ours still alive", async () => {
+        const mgr = new BridgeManager() as AnyMgr;
+        mgr.live.add({ pid: 424242 });
+        const pidPath = mgr.bridgePidPath("orphan");
+        mkdirSync(dirname(pidPath), { recursive: true });
+        writeFileSync(pidPath, "424242");
+        const kills: number[] = [];
+        process.kill = ((pid: number) => {
+          kills.push(pid);
+          return true;
+        }) as typeof process.kill;
+        try {
+          mgr.killOrphanBridge("orphan");
+        } finally {
+          process.kill = realKill;
+        }
+        assert.deepEqual(kills, []);
+        rmSync(pidPath, { force: true });
+      });
 
       it("is silent when the process is already gone (ESRCH)", async () => {
         const logs = await orphanLogs(() => {
