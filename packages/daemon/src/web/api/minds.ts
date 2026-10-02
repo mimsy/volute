@@ -18,7 +18,7 @@ import {
   recordNotice,
 } from "../../lib/chat/system-events.js";
 import { getSpiritName } from "../../lib/config/setup.js";
-import { clearUpgradeFailure, upgradeBlockedReason } from "../../lib/daemon/auto-upgrade.js";
+import { upgradeBlockedReason } from "../../lib/daemon/auto-upgrade.js";
 import {
   forgetCredentialDegraded,
   getCredentialDegraded,
@@ -139,9 +139,6 @@ import {
 } from "../middleware/auth.js";
 import { hasAdminAuthority } from "../middleware/effective-principal.js";
 import { refusedSenderMessage } from "./chat.js";
-
-/** The upgrade operations the upgrade route runs — a seam so its tests can stub them. */
-export const upgradeOps = { runUpgrade, continueUpgrade };
 
 const _lastActiveCache: { map: Map<string, string>; ts: number } = { map: new Map(), ts: 0 };
 const _LAST_ACTIVE_TTL = 60_000;
@@ -1446,7 +1443,7 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: "No upgrade in progress" }, 400);
       }
       try {
-        const result = await upgradeOps.continueUpgrade(mindName, { template });
+        const result = await continueUpgrade(mindName, { template });
         if (result.status === "conflicts") {
           return c.json({
             ok: false,
@@ -1457,7 +1454,6 @@ const app = new Hono<AuthEnv>()
               result.message ?? "Merge conflicts detected. Resolve them, then run with continue.",
           });
         }
-        clearUpgradeFailure(mindName);
         return c.json({ ok: true, warning: result.warning });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to merge upgrade";
@@ -1485,7 +1481,7 @@ const app = new Hono<AuthEnv>()
     // Fresh upgrade. A stale worktree from an orphaned prior run self-heals inside
     // runUpgrade; only a worktree that's genuinely mid-conflict-resolution 409s.
     try {
-      const result = await upgradeOps.runUpgrade(mindName, { template });
+      const result = await runUpgrade(mindName, { template });
       if (result.status === "conflicts") {
         return c.json({
           ok: false,
@@ -1496,7 +1492,6 @@ const app = new Hono<AuthEnv>()
             result.message ?? "Merge conflicts detected. Resolve them, then run with continue.",
         });
       }
-      clearUpgradeFailure(mindName);
       return c.json({ ok: true, warning: result.warning });
     } catch (err) {
       if (err instanceof UpgradeInProgressError || err instanceof UpgradeBlockedByJoinError) {

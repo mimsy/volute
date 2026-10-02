@@ -4,7 +4,6 @@ import {
   type AutoUpgradeBlocked,
   type AutoUpgradeOneDeps,
   autoUpgradeOne,
-  clearUpgradeFailure,
   failureDetail,
   getUpgradeBlocked,
   pruneAutoUpgradeState,
@@ -383,29 +382,6 @@ describe("autoUpgradeOne", () => {
     mode = "fail";
     await autoUpgradeOne(entry, false, deps);
     assert.equal(alerts.length, 2, "a failure after a clean upgrade is a new failure");
-  });
-
-  it("a manual upgrade clears the failure: badge gone, next pass attempts and alerts again (#974)", async () => {
-    const entry = makeEntry({ name: "fixed-by-hand" });
-    const alerts: Alert[] = [];
-    let attempts = 0;
-    const deps = makeUpgradeDeps(alerts, {
-      runUpgrade: async () => {
-        attempts++;
-        throw new Error("hook refused");
-      },
-    });
-
-    await autoUpgradeOne(entry, false, deps);
-    assert.ok(getUpgradeBlocked("fixed-by-hand"));
-
-    // What the upgrade route does after a successful `volute mind upgrade`.
-    clearUpgradeFailure("fixed-by-hand");
-    assert.equal(getUpgradeBlocked("fixed-by-hand"), undefined);
-
-    await autoUpgradeOne(entry, false, deps);
-    assert.equal(attempts, 4, "no longer gated as failed this run");
-    assert.equal(alerts.length, 2, "a failure after the fix is news again");
   });
 
   it("sleeping mind: never restarts it, even if it was running", async () => {

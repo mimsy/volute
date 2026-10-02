@@ -55,25 +55,11 @@ export function getUpgradeBlocked(name: string): AutoUpgradeBlocked | undefined 
 }
 
 /**
- * Forget a mind's failure record after an upgrade succeeds, however it was run. The
- * blocked notice tells the host to upgrade by hand; once that works, the badge, the
- * attempt gate and the alert dedupe all describe a failure that is over (#974).
- */
-export function clearUpgradeFailure(name: string): void {
-  blocked.delete(name);
-  failedThisRun.delete(name);
-  alertedReason.delete(name);
-}
-
-/**
  * The "upgrade blocked" badge for a mind: the recorded reason, but only while its
  * template is still stale. Once it is current — upgraded by any path — there is no
  * upgrade left to be blocked, so a record that outlived it is never shown (#974).
  */
-export function upgradeBlockedReason(
-  entry: MindEntry,
-  templateStale: boolean = isTemplateStale(entry),
-): string | undefined {
+export function upgradeBlockedReason(entry: MindEntry, templateStale: boolean): string | undefined {
   return templateStale ? blocked.get(entry.name)?.reason : undefined;
 }
 
@@ -301,7 +287,8 @@ export async function autoUpgradeOne(
   // and the alert record — if this mind breaks again later, even in the same way,
   // that is news and gets its own alert. (pruneAutoUpgradeState does the same for a
   // mind fixed by hand, which leaves the eligible set instead of passing through here.)
-  clearUpgradeFailure(entry.name);
+  failedThisRun.delete(entry.name);
+  alertedReason.delete(entry.name);
 }
 
 /** Serialized auto-upgrade pass over stale, eligible minds. Never throws. */
