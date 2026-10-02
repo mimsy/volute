@@ -209,6 +209,12 @@ const PROTECT_HOME_DIRS = ["/home/", "/root/", "/run/user/"];
  * mind's `runuser`, which answers by SIGKILLing its mind 2s later (#1364), so every
  * `volute restart`/`update`/`down` cut each mind's shutdown to 2s.
  *
+ * The trade-off, accepted: when the daemon *crashes* rather than stops, systemd
+ * cleans up the unit with SIGKILL straight away, so the minds get no shutdown at
+ * all — where control-group gave them a SIGTERM and runuser's 2s. A stop is the
+ * common case and the one a mind's last turn depends on; a crash already loses
+ * whatever the daemon was doing.
+ *
  * Existing installs pick up changes here through `volute service reconcile`, which
  * `volute update` runs before its restart (#874, #1224).
  */

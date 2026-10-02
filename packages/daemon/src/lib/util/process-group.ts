@@ -194,7 +194,7 @@ export async function terminateGroup(
  * safe), and nothing when it finds none. Without `/proc`, only while the leader —
  * unreaped, so still pinning the id — is known to be alive.
  */
-async function killRemainder(
+export async function killRemainder(
   pgid: number,
   opts: GroupOpts & { leaderAlive: boolean },
 ): Promise<void> {

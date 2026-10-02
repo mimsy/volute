@@ -109,13 +109,13 @@ describe("depsChangedSince / npmInstallNeeded", () => {
 describe("npmInstallAsMind retry", () => {
   const cwd = join(tmpDir, "install-retry");
 
-  type Attempt = { cmd: string; args: string[] };
+  type Attempt = { cmd: string; args: string[]; supervised?: boolean };
 
   /** Collect each attempt's argv; fail the given attempts (1-based) with `err`. */
   function recorder(failing: number[], err: Error) {
     const attempts: Attempt[] = [];
-    const run = async (cmd: string, args: string[]) => {
-      attempts.push({ cmd, args });
+    const run = async (cmd: string, args: string[], opts?: { supervised?: boolean }) => {
+      attempts.push({ cmd, args, supervised: opts?.supervised });
       if (failing.includes(attempts.length)) throw err;
       return "";
     };
@@ -210,6 +210,16 @@ describe("npmInstallAsMind retry", () => {
       const { attempts, run } = recorder([], etarget);
       await npmInstallAsMind(isoCwd, "no-such-iso-mind", [], run);
       assert.equal(attempts.length, 1);
+    });
+
+    // #1364: the install is pre-wrapped, so exec can't tell runuser leads it unless
+    // told — and a shutdown would then SIGTERM runuser, which kills npm 2s later.
+    it("tells the runner whether the wrap left runuser supervising", async () => {
+      mkdirSync(isoCwd, { recursive: true });
+      const { attempts, run } = recorder([], etarget);
+      await npmInstallAsMind(isoCwd, "no-such-iso-mind", [], run);
+      assert.equal(attempts[0].supervised, attempts[0].cmd === "runuser");
+      assert.equal(attempts[0].supervised, process.platform !== "darwin");
     });
   });
 

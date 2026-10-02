@@ -31,7 +31,7 @@ import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { buildMindBaseEnv, type IsolationMode } from "../util/mind-env.js";
-import { isRunuser, stopGroup } from "../util/process-group.js";
+import { isRunuser, killRemainder, stopGroup } from "../util/process-group.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
 import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
@@ -1228,10 +1228,23 @@ async function killProcessOnPort(port: number): Promise<void> {
     ),
   );
   // The new server binds this port next: wait, bounded, for it to come free.
-  const deadline = Date.now() + STOP_GRACE_MS;
-  while (Date.now() < deadline && (await listeners()).length) {
-    await new Promise((r) => setTimeout(r, 100));
+  const waitFree = async (ms: number) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (!(await listeners()).length) return true;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  };
+  if (await waitFree(STOP_GRACE_MS)) return;
+  // Still held: SIGKILL now, rather than leave it to stopGroup's deferred check.
+  for (const pid of await listeners()) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
   }
+  await Promise.all([...groups].map((pgid) => killRemainder(pgid, { leaderAlive: false })));
+  if (!(await waitFree(1000))) mlog.warn(`port ${port} is still held after SIGKILL`);
 }
 
 let instance: MindManager | null = null;

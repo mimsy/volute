@@ -77,11 +77,16 @@ export async function exec(
      * promise rejects with `timedOut: true`. See {@link execTimed}.
      */
     timeout?: number;
+    /**
+     * For a caller that wrapped `cmd` for isolation itself (no `mindName`): the
+     * wrap's own answer, so a shutdown signals past its `runuser` (#1364).
+     */
+    supervised?: boolean;
   },
 ): Promise<string> {
   const [wrappedCmd, wrappedArgs, supervised] = options?.mindName
     ? await wrapForIsolation(cmd, args, options.mindName)
-    : [cmd, args, false];
+    : [cmd, args, options?.supervised ?? false];
   const env = { ...buildMindBaseEnv(), ...options?.env };
   // The base already withholds the token, so this only matters when a caller's own
   // env re-admits it — which is exactly the failure this PR is undoing, and a default

@@ -17,6 +17,7 @@ import {
 import {
   stopTrackedChildren,
   trackChild,
+  trackedChildren,
 } from "../packages/daemon/src/lib/util/tracked-children.js";
 
 const tempDirs: string[] = [];
@@ -302,6 +303,16 @@ describe("stopGroup", () => {
     await stopped;
     assert.ok(Date.now() - exitedAt < 1_000, "returns once the orphan is gone");
     assert.deepEqual(sent, [[-100, "SIGTERM"]]);
+  });
+});
+
+describe("exec's registration", () => {
+  it("records a pre-wrapped command as supervised when the caller says so", async () => {
+    const running = exec("sleep", ["5"], { supervised: true });
+    running.catch(() => {});
+    assert.ok(trackedChildren().some((h) => !h.group && h.supervised));
+    await stopTrackedChildren(2_000);
+    await assert.rejects(running);
   });
 });
 

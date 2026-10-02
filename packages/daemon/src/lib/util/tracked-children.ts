@@ -23,6 +23,11 @@ const inFlight = new Map<ChildProcess, How>();
 
 const exited = (child: ChildProcess) => child.exitCode !== null || child.signalCode !== null;
 
+/** How each in-flight child is registered — for tests. */
+export function trackedChildren(): How[] {
+  return [...inFlight.values()];
+}
+
 /** Register a child until it exits. */
 export function trackChild(child: ChildProcess, how: How): void {
   if (exited(child)) return;
