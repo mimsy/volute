@@ -39,6 +39,7 @@ import { readVoluteConfig, resolveWakeTriggers, type SleepConfig } from "../mind
 import { getPrompt } from "../prompts.js";
 import { deliveryQueue } from "../schema.js";
 import { collectTurnContext } from "../turn-context.js";
+import type { ExecError } from "../util/exec.js";
 import log from "../util/logger.js";
 import { parseDbTimestamp } from "../util/time.js";
 import { ManagerNotReadyError } from "./manager-not-ready.js";
@@ -133,6 +134,31 @@ function formatDuration(from: Date, to: Date): string {
   const minutes = Math.floor((ms % 3_600_000) / 60_000);
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+}
+
+/**
+ * What the mind is told when its wake-context hook fails — worded like the hook
+ * loader's `hook_failed` notices, so both read the same under "[Your hooks]".
+ */
+function wakeHookFailureMessage(err: ExecError, stderr: string | undefined): string {
+  const ran = err.timedOut || typeof err.code === "number" || !!err.signal;
+  const summary = err.timedOut
+    ? err.message
+    : typeof err.code === "number"
+      ? `exited with code ${err.code}`
+      : err.signal
+        ? `was killed by ${err.signal}`
+        : "couldn't be started";
+  // A hook that never started (no sandbox runtime, say) isn't the mind's to fix.
+  const whose = ran ? " It's part of your own machinery — yours to look into." : "";
+  const MAX = 1000;
+  const output = stderr
+    ? `\nIt said:\n${stderr.length > MAX ? `…${stderr.slice(-MAX)}` : stderr}`
+    : "";
+  return (
+    `Your wake hook .local/hooks/wake-context.sh ${summary}, so the context it adds ` +
+    `was missing from this wake.${whose}${output}`
+  );
 }
 
 const globRegexCache = new Map<string, RegExp>();
@@ -1189,6 +1215,21 @@ export class SleepManager {
         ...log.errorData(err),
         ...(stderr ? { stderr } : {}),
       });
+      // The daemon log is out of the mind's reach, so without this the orientation
+      // the hook exists to give would just vanish (#1162). Same `hook_failed` notice
+      // the mind-side hook loader sends, mind-level so any thread's next turn has it.
+      // Never let reporting fail the wake itself.
+      try {
+        await recordNotice({
+          mind: name,
+          thread: MIND_LEVEL_THREAD,
+          kind: "hook_failed",
+          reason: "hook_failed",
+          detail: wakeHookFailureMessage(err as ExecError, stderr),
+        });
+      } catch (noticeErr) {
+        slog.warn(`failed to record wake-context failure for ${name}`, log.errorData(noticeErr));
+      }
       return "";
     }
   }

@@ -22,6 +22,17 @@ function runHook(sm: SleepManager, name: string, sleepingSince: string, duration
   ).runWakeContextScript(name, sleepingSince, duration);
 }
 
+/** The `hook_failed` notices recorded for a mind, cleared once read. */
+async function takeHookNotices(name: string): Promise<{ thread: string; body: string }[]> {
+  const { getDb } = await import("../packages/daemon/src/lib/db.js");
+  const { systemEvents } = await import("../packages/daemon/src/lib/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const db = await getDb();
+  const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, name)).all();
+  await db.delete(systemEvents).where(eq(systemEvents.mind, name));
+  return rows.filter((r) => (r.meta ?? "").includes('"hook_failed"'));
+}
+
 function writeHook(name: string, body: string): void {
   const hooksDir = resolve(mindDir(name), "home", ".local", "hooks");
   mkdirSync(hooksDir, { recursive: true });
@@ -141,6 +152,12 @@ describe("wake-context hook", () => {
     const sm = new SleepManager();
     const out = await runHook(sm, name, new Date().toISOString(), "3 hours");
     assert.equal(out, "", "hook must not run outside the sandbox when sandbox mode is on");
+    // The mind still hears its wake context is missing — but not that it's theirs to
+    // fix: a missing sandbox runtime is the host's problem.
+    const notices = await takeHookNotices(name);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0].body, /couldn't be started/);
+    assert.doesNotMatch(notices[0].body, /yours to look into/);
   });
 
   // Drives the whole chain — runWakeContextScript → runMindScript → exec — with a
@@ -163,6 +180,39 @@ describe("wake-context hook", () => {
     // The wake path asks for 5s. Anything near the hook's own 120s means the cap
     // was lost somewhere between the call site and execFile.
     assert.ok(elapsed < 30_000, `wake waited ${elapsed}ms on a hanging hook`);
+    const notices = await takeHookNotices(name);
+    assert.equal(notices.length, 1, "the mind is told its wake hook was cut off");
+    assert.match(notices[0].body, /timed out after 5s/);
+  });
+
+  // #1162: a failed wake hook used to reach only the daemon log, which the mind can't
+  // read — the orientation it exists to give vanished without a trace.
+  it("tells the mind, mind-level, when its wake hook fails", async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    delete process.env.VOLUTE_SANDBOX_OPTIONAL;
+    const name = "wake-fail-notice-mind";
+    writeHook(name, "#!/bin/bash\necho 'no such file: notes.md' >&2\nexit 2\n");
+
+    const out = await runHook(new SleepManager(), name, new Date().toISOString(), "3 hours");
+
+    assert.equal(out, "");
+    const notices = await takeHookNotices(name);
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].thread, "", "mind-level, so any thread's next turn carries it");
+    assert.match(notices[0].body, /wake-context\.sh exited with code 2/);
+    assert.match(notices[0].body, /no such file: notes\.md/, "with what the hook said");
+  });
+
+  it("records no notice for a hook that succeeds", async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    delete process.env.VOLUTE_SANDBOX_OPTIONAL;
+    const name = "wake-ok-notice-mind";
+    writeHook(name, "#!/bin/bash\necho 'you dreamt of rivers'\n");
+
+    const out = await runHook(new SleepManager(), name, new Date().toISOString(), "3 hours");
+
+    assert.equal(out, "you dreamt of rivers");
+    assert.deepEqual(await takeHookNotices(name), []);
   });
 
   // The hook now runs through execFile, where a 1MB stdout cap would be easy to end
