@@ -14,8 +14,9 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { userInfo } from "node:os";
 import { dirname, relative, resolve, sep } from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it, type TestContext } from "node:test";
 import { voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
 import { gitExec } from "../packages/daemon/src/lib/util/exec.js";
 import { resolveRealWithinBase } from "../packages/daemon/src/lib/util/paths.js";
@@ -29,6 +30,7 @@ import {
   pagesPullAndMerge,
   pagesRepoDir,
   pagesStatus,
+  reclaimGitDir,
   removePagesWorktree,
   worktreeGitDir,
 } from "../packages/extensions/pages/src/shared-pages.js";
@@ -994,6 +996,69 @@ describe("pages collaborative repo", () => {
     // Root keeps the repo's own work: the squash merge is not the mind's to run.
     assert.equal(verbs.includes("merge"), false);
     await removePagesWorktree(name, mindDir, dataDir);
+  });
+
+  // #1326: worktrees provisioned while root still ran their git keep root-owned files
+  // in their gitdir, and a 0644 COMMIT_EDITMSG fails every commit the mind now runs as
+  // itself. A test can't be root, so the test's own uid stands in for the daemon's
+  // and a second group of ours for the mind's ownership.
+  describe("reclaimGitDir", () => {
+    const otherGid = (t: TestContext, path: string) => {
+      const ids = execFileSync("id", ["-G"], { encoding: "utf-8" }).trim().split(/\s+/);
+      const gid = ids.map(Number).find((g) => g !== statSync(path).gid);
+      if (gid === undefined && process.env.CI) assert.fail("CI needs a supplementary group");
+      if (gid === undefined) t.skip("no second group to move files to");
+      return gid;
+    };
+
+    async function legacyGitDir(name: string) {
+      await ensurePagesRepo(dataDir);
+      const mindDir = await createFakeMind(name);
+      await addPagesWorktree(name, mindDir, dataDir);
+      const wt = resolve(mindDir, "home", "pages", "_system");
+      const gitDir = worktreeGitDir(pagesRepoDir(dataDir), wt)!;
+      writeFileSync(resolve(gitDir, "COMMIT_EDITMSG"), "wip\n", { mode: 0o644 });
+      writeFileSync(resolve(gitDir, "ORIG_HEAD"), git(wt, "rev-parse", "HEAD"));
+      return { mindDir, wt, gitDir };
+    }
+
+    it("re-owns the daemon's files in the gitdir, and nothing else", async (t) => {
+      const { mindDir, wt, gitDir } = await legacyGitDir("test-pages-reclaim");
+      const gid = otherGid(t, gitDir);
+      if (gid === undefined) return;
+      // A second name for a file outside, and a link out: never re-owned.
+      const outside = resolve(voluteHome(), "test-pages-reclaim-outside");
+      writeFileSync(outside, "");
+      linkSync(outside, resolve(gitDir, "planted"));
+      const target = resolve(voluteHome(), "test-pages-reclaim-target");
+      writeFileSync(target, "");
+      symlinkSync(target, resolve(gitDir, "pointer"));
+      const deep = resolve(gitDir, "logs", "HEAD");
+
+      const reowned = reclaimGitDir(gitDir, userInfo().uid, { uid: userInfo().uid, gid });
+
+      for (const name of ["", "COMMIT_EDITMSG", "ORIG_HEAD", "HEAD", "index"]) {
+        assert.ok(reowned.includes(resolve(gitDir, name)), `${name || "gitdir"} re-owned`);
+        assert.equal(lstatSync(resolve(gitDir, name)).gid, gid);
+      }
+      assert.notEqual(statSync(outside).gid, gid, "a hard link's file keeps its owner");
+      assert.notEqual(statSync(target).gid, gid, "a symlink is never followed");
+      assert.notEqual(lstatSync(deep).gid, gid, "only the gitdir's own files");
+      // The mind's commit path, through the files it was handed.
+      writeFileSync(resolve(wt, "page.html"), "<p>hi</p>");
+      const result = await pagesPullAndMerge("test-pages-reclaim", mindDir, dataDir, "publish");
+      assert.ok(result.ok, JSON.stringify(result));
+    });
+
+    it("leaves a gitdir with nothing of the daemon's in it alone", async (t) => {
+      const { gitDir } = await legacyGitDir("test-pages-reclaim-clean");
+      const gid = otherGid(t, gitDir);
+      if (gid === undefined) return;
+      // Nothing here is owned by this uid, so nothing is the "daemon's".
+      const notOurs = userInfo().uid + 1;
+      assert.deepEqual(reclaimGitDir(gitDir, notOurs, { uid: userInfo().uid, gid }), []);
+      assert.notEqual(statSync(resolve(gitDir, "COMMIT_EDITMSG")).gid, gid);
+    });
   });
 
   describe("worktreeGitDir", () => {
