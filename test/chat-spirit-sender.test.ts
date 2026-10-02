@@ -143,7 +143,7 @@ describe("spirit as a mind sender via POST /api/v1/chat", () => {
     // Open a turn on the spirit's `main` thread and send from that thread, so the
     // outbound must be tagged with this turn — the attribution that was skipped
     // entirely while the spirit was misclassified as a non-mind sender.
-    const turnId = await createTurn("volute", "main");
+    const turnId = await createTurn("volute", "main", "volute");
     assert.ok(turnId, "createTurn should return a turn id");
 
     const res = await spiritSend(

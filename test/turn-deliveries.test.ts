@@ -11,6 +11,7 @@ import {
   clearMind,
   closedTurnFor,
   getActiveTurnId,
+  holdInterrupted,
   markErrored,
   markInterrupted,
   openDeliveredTurn,
@@ -112,7 +113,7 @@ describe("a done names the deliveries it covers", () => {
       covers: ["d1", "d2"],
     });
 
-    assert.equal(getActiveTurnId(mind, "s1"), undefined, "the turn should be closed");
+    assert.equal(getActiveTurnId(mind, "s1", mind), undefined, "the turn should be closed");
     assert.equal(await turnStatus(turnId!), "complete");
     assert.equal(dm.isSessionBusy(mind, "s1"), false);
     assert.equal(hasTurnSlot(mind, "s1"), false, "the slot is free");
@@ -193,7 +194,7 @@ describe("a done names the deliveries it covers", () => {
       endsTurn: false,
     });
 
-    assert.equal(getActiveTurnId(mind, "s1"), turnId, "the running turn is untouched");
+    assert.equal(getActiveTurnId(mind, "s1", mind), turnId, "the running turn is untouched");
     assert.equal(dm.isSessionBusy(mind, "s1"), true, "d1 is still running");
     assert.equal(hasTurnSlot(mind, "s1"), true);
 
@@ -225,7 +226,7 @@ describe("a done names the deliveries it covers", () => {
       covers: ["d2"],
       endsTurn: false,
     });
-    assert.equal(getActiveTurnId(mind, "s1"), turnId);
+    assert.equal(getActiveTurnId(mind, "s1", mind), turnId);
     assert.equal(dm.isSessionBusy(mind, "s1"), false);
     assert.equal(hasTurnSlot(mind, "s1"), true, "the slot stays with the running turn");
   });
@@ -251,7 +252,7 @@ describe("a done names the deliveries it covers", () => {
     const db = await getDb();
     const row = await db.select().from(mindHistory).where(eq(mindHistory.id, insertedId!)).get();
     assert.equal(row!.turn_id, null);
-    assert.equal(getActiveTurnId(mind, "s1"), turnId);
+    assert.equal(getActiveTurnId(mind, "s1", mind), turnId);
   });
 
   it("an interrupted delivery the done forgot is finished by the turn that took over", async () => {
@@ -298,7 +299,7 @@ describe("a done names the deliveries it covers", () => {
 
     // A bare done from an un-upgraded variant: it covers only the variant's own.
     await handleMindEvent(mind, { type: "done", session: "s1", messageId: "v1" }, variant);
-    assert.equal(getActiveTurnId(mind, "s1"), turnId, "the parent's turn runs on");
+    assert.equal(getActiveTurnId(mind, "s1", mind), turnId, "the parent's turn runs on");
     assert.equal(dm.isSessionBusy(mind, "s1"), true, "the parent's delivery is outstanding");
 
     // The parent's turn still owns its drain and its error.
@@ -330,11 +331,11 @@ describe("a done names the deliveries it covers", () => {
 
   it("a mind's stop forgets the drained notices and error flags of turns that never ended", async () => {
     const mind = mindNamed("td-stop");
-    recordDrained(mind, "s1", [7], "d1");
-    markErrored(mind, "s1", "d1");
+    recordDrained(mind, "s1", mind, [7], "d1");
+    markErrored(mind, "s1", mind, "d1");
     await clearMind(mind);
-    assert.deepEqual(takeDrained(mind, "s1"), []);
-    assert.equal(takeErrored(mind, "s1"), false);
+    assert.deepEqual(takeDrained(mind, "s1", mind), []);
+    assert.equal(takeErrored(mind, "s1", mind), false);
   });
 
   it("a failed delivery's done frees the slot once the turn it failed beside has ended", async () => {
@@ -407,7 +408,7 @@ describe("a done names the deliveries it covers", () => {
     const parent = handleMindEvent(mind, { type: "text", session: "s1", content: "p" });
     await vDone;
     const { turnId } = await parent;
-    assert.equal(getActiveTurnId(mind, "s1"), turnId, "the parent's turn runs on");
+    assert.equal(getActiveTurnId(mind, "s1", mind), turnId, "the parent's turn runs on");
     assert.equal(await turnStatus(turnId!), "active");
   });
 
@@ -427,8 +428,8 @@ describe("a done names the deliveries it covers", () => {
       content: "x",
     });
     await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
-    assert.deepEqual(takeDrained(mind, "s1"), [], "the drain went to d1's turn");
-    assert.equal(takeErrored(mind, "s1"), false, "and so did the error");
+    assert.deepEqual(takeDrained(mind, "s1", mind), [], "the drain went to d1's turn");
+    assert.equal(takeErrored(mind, "s1", mind), false, "and so did the error");
     assert.ok((await bodies(mind)).includes("A"), "which errored, so A survives");
   });
 
@@ -459,8 +460,8 @@ describe("a done names the deliveries it covers", () => {
     const mind = mindNamed("td-variant-waited");
     const variant = `${mind}@v`;
     const db = await getDb();
-    // The variant's turn holds the thread's key; the parent's message folds in on the
-    // daemon's side and is linked to nothing — the running turn isn't the parent's.
+    // The variant's turn runs on the thread; the parent's message, delivered with no slot,
+    // is linked to nothing — the running turn isn't the parent's.
     delivered(mind, "s1", "v1", variant);
     const { turnId: vTurn } = await handleMindEvent(
       mind,
@@ -607,8 +608,8 @@ describe("a done names the deliveries it covers", () => {
     });
     delivered(mind, "s1", "d2"); // the mind will run this as its own next turn
     await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1" });
-    assert.equal(closedTurnFor(mind, "s1", "d1"), turnId);
-    assert.equal(closedTurnFor(mind, "s1", "d2"), undefined, "d2's usage is not this turn's");
+    assert.equal(closedTurnFor("s1", mind, "d1"), turnId);
+    assert.equal(closedTurnFor("s1", mind, "d2"), undefined, "d2's usage is not this turn's");
   });
 
   it("folded deliveries a turn adopted move on again when that turn doesn't cover them", async () => {
@@ -849,7 +850,7 @@ describe("a notice is told once per turn (#1233)", () => {
     const mind = mindNamed("tn-not-running");
     await notice(mind, "A");
     // A record left under a delivery that is no longer outstanding must not hide A forever.
-    recordDrained(mind, "s1", [(await drainEvents(mind, "s1"))[0].id], "gone");
+    recordDrained(mind, "s1", mind, [(await drainEvents(mind, "s1"))[0].id], "gone");
     delivered(mind, "s1", "d1");
     assert.deepEqual(await drained(mind, "d1"), ["A"]);
   });
@@ -860,5 +861,300 @@ describe("a notice is told once per turn (#1233)", () => {
     await notice(mind, "A");
     assert.deepEqual(await drained(mind), ["A"]);
     assert.deepEqual(await drained(mind), ["A"]);
+  });
+});
+
+describe("a variant's turns are its own beside its parent's on one thread (#1177)", () => {
+  it("parent and variant on the same thread each get their own turn and rows", async () => {
+    const mind = mindNamed("tv-own-rows");
+    const variant = `${mind}@v`;
+    const db = await getDb();
+    delivered(mind, "s1", "p1");
+    delivered(mind, "s1", "v1", variant);
+    const ev = (type: string, content: string, messageId: string, extra = {}) => ({
+      type,
+      session: "s1",
+      messageId,
+      content,
+      ...extra,
+    });
+    // Interleaved, as two processes stream on one thread name.
+    const p1 = await handleMindEvent(mind, ev("thinking", "parent thinks", "p1"));
+    const v1 = await handleMindEvent(mind, ev("thinking", "variant thinks", "v1"), variant);
+    const p2 = await handleMindEvent(
+      mind,
+      ev("tool_use", "parent tool", "p1", { metadata: { id: "tu_p" } }),
+    );
+    const v2 = await handleMindEvent(
+      mind,
+      ev("tool_use", "variant tool", "v1", { metadata: { id: "tu_v" } }),
+      variant,
+    );
+    const v3 = await handleMindEvent(mind, ev("text", "variant says", "v1"), variant);
+    const p3 = await handleMindEvent(mind, ev("text", "parent says", "p1"));
+
+    const parentTurn = p1.turnId;
+    const variantTurn = v1.turnId;
+    assert.ok(parentTurn && variantTurn);
+    assert.notEqual(parentTurn, variantTurn);
+    for (const r of [p1, p2, p3]) assert.equal(r.turnId, parentTurn);
+    for (const r of [v1, v2, v3]) assert.equal(r.turnId, variantTurn);
+    for (const r of [p1, p2, p3, v1, v2, v3]) {
+      const row = await db
+        .select()
+        .from(mindHistory)
+        .where(eq(mindHistory.id, r.insertedId!))
+        .get();
+      assert.equal(row!.mind, mind, "history stays under the base name");
+    }
+
+    // The variant's done ends only its own turn; the parent's runs on.
+    await handleMindEvent(
+      mind,
+      { type: "done", session: "s1", messageId: "v1", covers: ["v1"] },
+      variant,
+    );
+    assert.equal(await turnStatus(variantTurn), "complete");
+    assert.equal(getActiveTurnId(mind, "s1", mind), parentTurn);
+    assert.equal(await turnStatus(parentTurn), "active");
+    // And a later row of the parent's still lands on the parent's.
+    const p4 = await handleMindEvent(mind, ev("text", "parent again", "p1"));
+    assert.equal(p4.turnId, parentTurn);
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "p1", covers: ["p1"] });
+    assert.equal(await turnStatus(parentTurn), "complete");
+  });
+
+  it("a variant's failed delivery doesn't free the thread's slot while its parent's turn runs", async () => {
+    const mind = mindNamed("tv-slot");
+    const variant = `${mind}@v`;
+    delivered(mind, "s1", "v1", variant);
+    // The parent is running a turn on the thread with no delivery of ours (an event's, say).
+    await handleMindEvent(mind, { type: "text", session: "s1", content: "parent working" });
+    await handleMindEvent(
+      mind,
+      { type: "done", session: "s1", messageId: "v1", covers: ["v1"], endsTurn: false },
+      variant,
+    );
+    assert.equal(hasTurnSlot(mind, "s1"), true, "a turn runs on: the slot is still held");
+  });
+
+  it("a variant's turn ending doesn't free the thread's slot while its parent's turn runs", async () => {
+    const mind = mindNamed("tv-slot-ends");
+    const variant = `${mind}@v`;
+    delivered(mind, "s1", "v1", variant);
+    await handleMindEvent(mind, { type: "text", session: "s1", content: "parent working" });
+    await handleMindEvent(
+      mind,
+      { type: "text", session: "s1", messageId: "v1", content: "v" },
+      variant,
+    );
+    await handleMindEvent(
+      mind,
+      { type: "done", session: "s1", messageId: "v1", covers: ["v1"] },
+      variant,
+    );
+    assert.equal(hasTurnSlot(mind, "s1"), true, "the parent's turn still holds it");
+    // The parent's own done ends the last turn on the thread: the slot goes back.
+    await handleMindEvent(mind, { type: "done", session: "s1" });
+    assert.equal(hasTurnSlot(mind, "s1"), false);
+  });
+
+  it("a variant's stop frees the slot its turn was left holding", async () => {
+    const mind = mindNamed("tv-slot-stop");
+    const variant = `${mind}@v`;
+    delivered(mind, "s1", "p1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "p1", content: "p" });
+    await handleMindEvent(mind, { type: "text", session: "s1", content: "v" }, variant);
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "p1", covers: ["p1"] });
+    assert.equal(hasTurnSlot(mind, "s1"), true, "left to the variant's turn");
+    dm.releaseStopped(variant, await clearMind(variant));
+    assert.equal(hasTurnSlot(mind, "s1"), false);
+  });
+
+  it("a variant's stop drops its deliveries, freeing the slot and the typing indicator", async () => {
+    const mind = mindNamed("tv-stop-delivery");
+    const variant = `${mind}@v`;
+    delivered(mind, "s1", "p1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "p1", content: "p" });
+    delivered(mind, "s1", "v1", variant);
+    await handleMindEvent(
+      mind,
+      { type: "text", session: "s1", messageId: "v1", content: "v" },
+      variant,
+    );
+    const typing = getTypingMap();
+    typing.set("@bob", mind, { persistent: true });
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "p1", covers: ["p1"] });
+    assert.ok(typing.get("@bob").includes(mind), "the variant is still on its turn");
+    // It stops without a done for v1.
+    dm.releaseStopped(variant, await clearMind(variant));
+    assert.equal(dm.isSessionBusy(mind, "s1"), false);
+    assert.equal(hasTurnSlot(mind, "s1"), false);
+    assert.ok(!typing.get("@bob").includes(mind));
+  });
+
+  it("a turn beside that has gone quiet past a slot's lifetime holds nothing", async () => {
+    const mind = mindNamed("tv-slot-quiet");
+    const variant = `${mind}@v`;
+    delivered(mind, "s1", "p1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "p1", content: "p" });
+    await handleMindEvent(mind, { type: "text", session: "s1", content: "v" }, variant);
+    const typing = getTypingMap();
+    typing.set("@bob", mind, { persistent: true });
+    const realNow = Date.now;
+    Date.now = () => realNow() + 31 * 60_000;
+    try {
+      await handleMindEvent(mind, { type: "done", session: "s1", messageId: "p1", covers: ["p1"] });
+    } finally {
+      Date.now = realNow;
+    }
+    assert.equal(hasTurnSlot(mind, "s1"), false);
+    assert.ok(!typing.get("@bob").includes(mind));
+  });
+
+  it("a turn beside that is still being heard from holds the slot, however old", async () => {
+    const mind = mindNamed("tv-slot-heard");
+    const variant = `${mind}@v`;
+    delivered(mind, "s1", "p1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "p1", content: "p" });
+    await handleMindEvent(mind, { type: "text", session: "s1", content: "v" }, variant);
+    const realNow = Date.now;
+    Date.now = () => realNow() + 31 * 60_000;
+    try {
+      await handleMindEvent(mind, { type: "tool_use", session: "s1", content: "still" }, variant);
+      await handleMindEvent(mind, { type: "done", session: "s1", messageId: "p1", covers: ["p1"] });
+    } finally {
+      Date.now = realNow;
+    }
+    assert.equal(hasTurnSlot(mind, "s1"), true);
+  });
+
+  it("an interrupted turn's message goes to its own process's next turn, never the other's", async () => {
+    const mind = mindNamed("tv-interrupted");
+    const variant = `${mind}@v`;
+    const db = await getDb();
+    const row = async (content: string) =>
+      (
+        await db
+          .insert(mindHistory)
+          .values({ mind, type: "inbound", channel: "@alice", sender: "alice", content })
+          .returning({ id: mindHistory.id })
+      )[0].id;
+    const cutOff = await row("cut off");
+    await holdInterrupted(mind, "s1", variant, [cutOff]);
+
+    // The parent's turn, opened for a message of its own, does not take the variant's.
+    const forParent = await row("for the parent");
+    (dm as any).addOutstanding(mind, "s1", "p1", mind, undefined, undefined, [forParent]);
+    const p = await handleMindEvent(mind, { type: "text", session: "s1", content: "p" });
+    // The variant's, opened by its first event for the interrupting message, does.
+    const interrupting = await row("interrupting");
+    (dm as any).addOutstanding(mind, "s1", "v2", variant, undefined, undefined, [interrupting]);
+    const v = await handleMindEvent(mind, { type: "text", session: "s1", content: "v" }, variant);
+
+    const turnOf = async (id: number) =>
+      (await db.select().from(mindHistory).where(eq(mindHistory.id, id)).get())!.turn_id;
+    assert.equal(await turnOf(forParent), p.turnId);
+    assert.equal(await turnOf(interrupting), v.turnId, "its trigger, linked exactly");
+    assert.equal(await turnOf(cutOff), v.turnId);
+  });
+});
+
+describe("error and drain state only for threads the daemon knows (#1220)", () => {
+  it("an error on a thread with no delivery or turn keeps one stray record per process", async () => {
+    const mind = mindNamed("te-stray-error");
+    await handleMindEvent(mind, { type: "error", session: "made-up-1", content: "boom" });
+    await handleMindEvent(mind, { type: "error", session: "made-up-2", content: "boom" });
+    // Naming threads doesn't grow it: the second replaced the first.
+    assert.equal(takeErrored(mind, "made-up-1", mind), false);
+    assert.equal(takeErrored(mind, "made-up-2", mind), true);
+    // A variant's error naming its parent's delivery is the variant's, never the parent's.
+    delivered(mind, "s1", "d1");
+    await handleMindEvent(
+      mind,
+      { type: "error", session: "s1", messageId: "d1", content: "boom" },
+      `${mind}@v`,
+    );
+    assert.equal(takeErrored(mind, "s1", mind, ["d1"]), false, "not keyed to the parent's");
+    assert.equal(takeErrored(mind, "s1", `${mind}@v`), true);
+  });
+
+  it("a delivery a done has covered no longer counts as outstanding, while it is recorded", async () => {
+    const mind = mindNamed("te-retiring");
+    delivered(mind, "s1", "d1");
+    assert.equal(dm.isOutstanding(mind, "s1", "d1", mind), true);
+    assert.equal(dm.hasOutstanding(mind, "s1", mind), true);
+    dm.markRetiring(mind, "s1", ["d1"]);
+    assert.equal(dm.isOutstanding(mind, "s1", "d1", mind), false);
+    assert.equal(dm.hasOutstanding(mind, "s1", mind), false);
+  });
+
+  it("an error handled after its turn's done flags nothing that runs next", async () => {
+    // The mind POSTs a turn's `error` and `done` concurrently (#1298); the done won.
+    const mind = mindNamed("te-late-error");
+    delivered(mind, "s1", "d1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "a" });
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
+    await handleMindEvent(mind, { type: "error", session: "s1", messageId: "d1", content: "x" });
+    await notice(mind, "A");
+    delivered(mind, "s1", "d2");
+    await drainNotices(mind, "s1", mind, "d2");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d2", content: "b" });
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d2", covers: ["d2"] });
+    await settled(mind, "A");
+    assert.ok(!(await bodies(mind)).includes("A"), "the next turn ran clean");
+  });
+
+  it("an error naming no delivery still flags a thread its process has a delivery on", async () => {
+    // A template that predates `messageId` on errors: failure notices still accumulate.
+    const mind = mindNamed("te-legacy");
+    delivered(mind, "s1", "d1");
+    await handleMindEvent(mind, { type: "error", session: "s1", content: "boom" });
+    assert.equal(takeErrored(mind, "s1", mind, ["d1"]), true);
+  });
+
+  it("a folded event run as its own turn delivers what it drained before that turn opened", async () => {
+    // The event folded in, so it has no delivery and no turn yet when its prompt drains.
+    const mind = mindNamed("te-stray-drain");
+    await notice(mind, "A");
+    assert.deepEqual(
+      (await drainNotices(mind, "s1", mind)).map((n) => n.body),
+      ["A"],
+    );
+    await handleMindEvent(mind, { type: "text", session: "s1", content: "on it" });
+    await handleMindEvent(mind, { type: "done", session: "s1" });
+    await settled(mind, "A");
+    assert.deepEqual(await bodies(mind), [], "the clean turn delivered it");
+  });
+
+  it("a folded event's turn that failed before it opened keeps what it drained", async () => {
+    const mind = mindNamed("te-stray-failed");
+    await notice(mind, "A");
+    await drainNotices(mind, "s1", mind);
+    await handleMindEvent(mind, { type: "error", session: "s1", content: "boom" });
+    await handleMindEvent(mind, { type: "text", session: "s1", content: "sorry" });
+    await handleMindEvent(mind, { type: "done", session: "s1" });
+    await new Promise((r) => setTimeout(r, 150));
+    assert.ok((await bodies(mind)).includes("A"), "an errored turn delivers nothing");
+  });
+
+  it("a stray record left past a slot's lifetime is no later turn's", async () => {
+    const mind = mindNamed("te-stray-stale");
+    await handleMindEvent(mind, { type: "error", session: "s1", content: "boom" });
+    const realNow = Date.now;
+    Date.now = () => realNow() + 31 * 60_000;
+    try {
+      assert.equal(takeErrored(mind, "s1", mind), false);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it("stray drains are bounded: another thread's replaces the last", async () => {
+    const mind = mindNamed("te-stray-bound");
+    await notice(mind, "A");
+    await drainNotices(mind, "s1", mind);
+    await drainNotices(mind, "s2", mind);
+    assert.deepEqual(takeDrained(mind, "s1", mind), []);
   });
 });

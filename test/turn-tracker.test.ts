@@ -26,7 +26,7 @@ describe("turn-tracker", () => {
   const mind = "test-turn-tracker";
 
   it("creates a turn and returns its ID", async () => {
-    const turnId = await createTurn(mind);
+    const turnId = await createTurn(mind, undefined, mind);
     assert.ok(turnId, "should return a turn ID");
 
     const db = await getDb();
@@ -41,33 +41,33 @@ describe("turn-tracker", () => {
   });
 
   it("reuses existing active turn for same mind", async () => {
-    const id1 = await createTurn(mind);
-    const id2 = await createTurn(mind);
+    const id1 = await createTurn(mind, undefined, mind);
+    const id2 = await createTurn(mind, undefined, mind);
     assert.equal(id1, id2, "should reuse the same turn");
 
     await clearMind(mind);
   });
 
   it("getActiveTurnId returns the active turn", async () => {
-    const turnId = await createTurn(mind);
-    assert.equal(getActiveTurnId(mind), turnId);
-    assert.equal(getActiveTurnId(mind, null), turnId, "should fall back to wildcard");
+    const turnId = await createTurn(mind, undefined, mind);
+    assert.equal(getActiveTurnId(mind, undefined, mind), turnId);
+    assert.equal(getActiveTurnId(mind, null, mind), turnId, "should fall back to wildcard");
 
     await clearMind(mind);
   });
 
   it("keys a thread's turn by its thread from the start, with no fallback", async () => {
-    const turnId = await createTurn(mind, "sess-1");
+    const turnId = await createTurn(mind, "sess-1", mind);
     assert.ok(turnId);
-    assert.equal(getActiveTurnId(mind, "sess-1"), turnId);
+    assert.equal(getActiveTurnId(mind, "sess-1", mind), turnId);
     // Neither the sessionless slot nor another thread resolves to it, and a thread with
     // no turn of its own never resolves to the sessionless one (#1173).
-    assert.equal(getActiveTurnId(mind), undefined);
-    assert.equal(getActiveTurnId(mind, "sess-2"), undefined);
-    const sessionless = await createTurn(mind);
+    assert.equal(getActiveTurnId(mind, undefined, mind), undefined);
+    assert.equal(getActiveTurnId(mind, "sess-2", mind), undefined);
+    const sessionless = await createTurn(mind, undefined, mind);
     assert.ok(sessionless && sessionless !== turnId);
-    assert.equal(getActiveTurnId(mind, "sess-2"), undefined);
-    assert.equal(getActiveTurnId(mind), sessionless);
+    assert.equal(getActiveTurnId(mind, "sess-2", mind), undefined);
+    assert.equal(getActiveTurnId(mind, undefined, mind), sessionless);
 
     const db = await getDb();
     const row = await db.select().from(turns).where(eq(turns.id, turnId)).get();
@@ -77,53 +77,53 @@ describe("turn-tracker", () => {
   });
 
   it("tracks tool_use event IDs", async () => {
-    await createTurn(mind);
+    await createTurn(mind, undefined, mind);
 
-    assert.equal(getLastToolUseEventId(mind), undefined);
+    assert.equal(getLastToolUseEventId(mind, undefined, mind), undefined);
 
-    trackToolUse(mind, null, 42);
-    assert.equal(getLastToolUseEventId(mind), 42);
+    trackToolUse(mind, null, mind, 42);
+    assert.equal(getLastToolUseEventId(mind, undefined, mind), 42);
 
-    trackToolUse(mind, null, 99);
-    assert.equal(getLastToolUseEventId(mind), 99);
+    trackToolUse(mind, null, mind, 99);
+    assert.equal(getLastToolUseEventId(mind, undefined, mind), 99);
 
     await clearMind(mind);
   });
 
   it("getToolUseEventId resolves the matching tool_use by SDK id", async () => {
-    await createTurn(mind);
+    await createTurn(mind, undefined, mind);
 
     // Two tool calls in one turn (e.g. parallel), tracked with their SDK ids.
-    trackToolUse(mind, null, 10, "toolu_a");
-    trackToolUse(mind, null, 11, "toolu_b");
+    trackToolUse(mind, null, mind, 10, "toolu_a");
+    trackToolUse(mind, null, mind, 11, "toolu_b");
 
     // A result must link to its OWN tool_use, not just the most recent one.
-    assert.equal(getToolUseEventId(mind, null, "toolu_a"), 10);
-    assert.equal(getToolUseEventId(mind, null, "toolu_b"), 11);
+    assert.equal(getToolUseEventId(mind, null, mind, "toolu_a"), 10);
+    assert.equal(getToolUseEventId(mind, null, mind, "toolu_b"), 11);
 
     await clearMind(mind);
   });
 
   it("getToolUseEventId falls back to the last tool_use when id is absent/unknown", async () => {
-    await createTurn(mind);
+    await createTurn(mind, undefined, mind);
 
-    trackToolUse(mind, null, 10, "toolu_a");
-    trackToolUse(mind, null, 11, "toolu_b");
+    trackToolUse(mind, null, mind, 10, "toolu_a");
+    trackToolUse(mind, null, mind, 11, "toolu_b");
 
     // No id (older template) → last tool_use.
-    assert.equal(getToolUseEventId(mind, null), 11);
+    assert.equal(getToolUseEventId(mind, null, mind), 11);
     // Unknown id → last tool_use.
-    assert.equal(getToolUseEventId(mind, null, "toolu_missing"), 11);
+    assert.equal(getToolUseEventId(mind, null, mind, "toolu_missing"), 11);
 
     await clearMind(mind);
   });
 
   it("completes a turn", async () => {
-    const turnId = await createTurn(mind);
-    const completedId = await completeTurn(mind);
+    const turnId = await createTurn(mind, undefined, mind);
+    const completedId = await completeTurn(mind, undefined, mind);
 
     assert.equal(completedId, turnId);
-    assert.equal(getActiveTurnId(mind), undefined);
+    assert.equal(getActiveTurnId(mind, undefined, mind), undefined);
 
     const db = await getDb();
     const row = await db.select().from(turns).where(eq(turns.id, turnId)).get();
@@ -131,32 +131,44 @@ describe("turn-tracker", () => {
   });
 
   it("a done closes only its own thread's turn, never an unrelated sessionless one", async () => {
-    const sessionless = await createTurn(mind);
-    assert.equal(await completeTurn(mind, "s1"), undefined, "s1 has no turn to close");
-    assert.equal(getActiveTurnId(mind), sessionless, "the sessionless turn is not s1's");
+    const sessionless = await createTurn(mind, undefined, mind);
+    assert.equal(await completeTurn(mind, "s1", mind), undefined, "s1 has no turn to close");
+    assert.equal(
+      getActiveTurnId(mind, undefined, mind),
+      sessionless,
+      "the sessionless turn is not s1's",
+    );
 
-    const own = await createTurn(mind, "s1");
-    assert.equal(await completeTurn(mind, "s1"), own);
-    assert.equal(getActiveTurnId(mind), sessionless);
-    assert.equal(await completeTurn(mind), sessionless, "a sessionless done closes it");
+    const own = await createTurn(mind, "s1", mind);
+    assert.equal(await completeTurn(mind, "s1", mind), own);
+    assert.equal(getActiveTurnId(mind, undefined, mind), sessionless);
+    assert.equal(
+      await completeTurn(mind, undefined, mind),
+      sessionless,
+      "a sessionless done closes it",
+    );
     await clearMind(mind);
   });
 
   it("completeTurn returns undefined when no active turn", async () => {
-    const result = await completeTurn("nonexistent-mind");
+    const result = await completeTurn("nonexistent-mind", undefined, "nonexistent-mind");
     assert.equal(result, undefined);
   });
 
   it("clearMind removes all entries and returns orphaned turns", async () => {
-    const turnId = await createTurn(mind, "s1");
+    const turnId = await createTurn(mind, "s1", mind);
 
     // Create another turn for a different mind
     const otherMind = "test-turn-tracker-other";
-    const otherId = await createTurn(otherMind);
+    const otherId = await createTurn(otherMind, undefined, otherMind);
 
     const orphaned = await clearMind(mind);
-    assert.equal(getActiveTurnId(mind, "s1"), undefined);
-    assert.equal(getActiveTurnId(otherMind), otherId, "other mind should be unaffected");
+    assert.equal(getActiveTurnId(mind, "s1", mind), undefined);
+    assert.equal(
+      getActiveTurnId(otherMind, undefined, otherMind),
+      otherId,
+      "other mind should be unaffected",
+    );
 
     assert.equal(orphaned.length, 1);
     assert.equal(orphaned[0].turnId, turnId);
@@ -166,7 +178,7 @@ describe("turn-tracker", () => {
   });
 
   it("clearMind returns wildcard session as undefined", async () => {
-    const turnId = await createTurn(mind);
+    const turnId = await createTurn(mind, undefined, mind);
     const orphaned = await clearMind(mind);
 
     assert.equal(orphaned.length, 1);
@@ -206,28 +218,64 @@ describe("turn-tracker", () => {
   });
 
   it("takeErrored returns the flag once then clears it", () => {
-    markErrored("errmind", "s1");
-    assert.equal(takeErrored("errmind", "s1"), true);
-    assert.equal(takeErrored("errmind", "s1"), false);
+    markErrored("errmind", "s1", "errmind");
+    assert.equal(takeErrored("errmind", "s1", "errmind"), true);
+    assert.equal(takeErrored("errmind", "s1", "errmind"), false);
   });
 
   it("errored flag is per (mind, session)", () => {
-    markErrored("errmind", "s1");
-    assert.equal(takeErrored("errmind", "s2"), false, "different session unaffected");
-    assert.equal(takeErrored("other", "s1"), false, "different mind unaffected");
-    assert.equal(takeErrored("errmind", "s1"), true);
+    markErrored("errmind", "s1", "errmind");
+    assert.equal(takeErrored("errmind", "s2", "errmind"), false, "different session unaffected");
+    assert.equal(takeErrored("other", "s1", "other"), false, "different mind unaffected");
+    assert.equal(takeErrored("errmind", "s1", "errmind"), true);
   });
 
   it("clearMind drops a pending errored flag for that mind only", async () => {
-    markErrored("errmind", "s1");
-    markErrored("keepmind", "s1");
+    markErrored("errmind", "s1", "errmind");
+    markErrored("keepmind", "s1", "keepmind");
     await clearMind("errmind");
-    assert.equal(takeErrored("errmind", "s1"), false, "cleared on crash/stop");
-    assert.equal(takeErrored("keepmind", "s1"), true, "other mind's flag intact");
+    assert.equal(takeErrored("errmind", "s1", "errmind"), false, "cleared on crash/stop");
+    assert.equal(takeErrored("keepmind", "s1", "keepmind"), true, "other mind's flag intact");
+  });
+
+  it("clearMind clears one process's turns and state: a variant's never its parent's, nor the reverse", async () => {
+    const parent = "clear-parent";
+    const variant = "clear-parent@v";
+    const p1 = await createTurn(parent, "s1", parent);
+    const v1 = await createTurn(parent, "s1", variant);
+    markErrored(parent, "s1", parent, "pd");
+    markErrored(parent, "s1", variant, "vd");
+
+    // The variant crashes: only its turn and flags go, its turns reported under the base name.
+    const orphaned = await clearMind(variant);
+    assert.deepEqual(orphaned, [{ turnId: v1, mind: parent, session: "s1" }]);
+    assert.equal(getActiveTurnId(parent, "s1", variant), undefined);
+    assert.equal(getActiveTurnId(parent, "s1", parent), p1, "the parent's turn runs on");
+    assert.equal(takeErrored(parent, "s1", variant, ["vd"]), false);
+    assert.equal(takeErrored(parent, "s1", parent, ["pd"]), true);
+
+    // The parent crashes: the variant's new turn and flags are left alone.
+    const v2 = await createTurn(parent, "s1", variant);
+    markErrored(parent, "s1", variant, "vd2");
+    assert.deepEqual(await clearMind(parent), [{ turnId: p1, mind: parent, session: "s1" }]);
+    assert.equal(getActiveTurnId(parent, "s1", variant), v2);
+    assert.equal(takeErrored(parent, "s1", variant, ["vd2"]), true);
+    await clearMind(variant);
   });
 
   describe("sweepWedgedTurns", () => {
     const idleMs = 10 * 60_000;
+
+    it("sweeps a turn whose process isn't running, done or not", async () => {
+      const id = await seedTurn("ws-dead", [{ type: "tool_use", msAgo: 1000 }]);
+      const live = await createTurn("sweep-mind", "ws-dead", "sweep-mind@v");
+      const swept = await sweepWedgedTurns(idleMs, (process) => process !== "sweep-mind");
+      assert.ok(swept.some((t) => t.turnId === id));
+      assert.ok(!swept.some((t) => t.turnId === live), "a running process's turn stays");
+      assert.equal(getActiveTurnId("sweep-mind", "ws-dead", "sweep-mind"), undefined);
+      assert.equal(getActiveTurnId("sweep-mind", "ws-dead", "sweep-mind@v"), live);
+      await clearMind("sweep-mind@v");
+    });
 
     // Create a real (in-memory + DB) turn for `sweep-mind`, assign it a session, and
     // attach mind_history events at the given ages. Returns the real turn id.
@@ -235,7 +283,7 @@ describe("turn-tracker", () => {
       sess: string,
       events: { type: string; msAgo: number }[],
     ): Promise<string> {
-      const id = await createTurn("sweep-mind", sess);
+      const id = await createTurn("sweep-mind", sess, "sweep-mind");
       assert.ok(id);
       const db = await getDb();
       for (const e of events) {
@@ -255,7 +303,11 @@ describe("turn-tracker", () => {
         { type: "text", msAgo: 30 * 60_000 },
         { type: "done", msAgo: 20 * 60_000 },
       ]);
-      assert.equal(getActiveTurnId("sweep-mind", "ws1"), id, "turn is active in memory");
+      assert.equal(
+        getActiveTurnId("sweep-mind", "ws1", "sweep-mind"),
+        id,
+        "turn is active in memory",
+      );
 
       const swept = await sweepWedgedTurns(idleMs);
       const mine = swept.find((t) => t.turnId === id);
@@ -266,7 +318,11 @@ describe("turn-tracker", () => {
       const db = await getDb();
       const row = await db.select().from(turns).where(eq(turns.id, id)).get();
       assert.equal(row!.status, "complete", "turn should be marked complete");
-      assert.equal(getActiveTurnId("sweep-mind", "ws1"), undefined, "in-memory entry cleared");
+      assert.equal(
+        getActiveTurnId("sweep-mind", "ws1", "sweep-mind"),
+        undefined,
+        "in-memory entry cleared",
+      );
     });
 
     it("does NOT sweep an active turn that never received a done", async () => {
@@ -305,7 +361,7 @@ describe("turn-tracker", () => {
     });
 
     it("sweeps a sessionless wedged turn (null session)", async () => {
-      const id = await createTurn("sweep-nosess");
+      const id = await createTurn("sweep-nosess", undefined, "sweep-nosess");
       assert.ok(id);
       const db = await getDb();
       for (const e of [
@@ -325,14 +381,18 @@ describe("turn-tracker", () => {
       const mine = swept.find((t) => t.turnId === id);
       assert.ok(mine, "sessionless wedged turn should be swept");
       assert.equal(mine!.session, undefined, "null session maps to undefined");
-      assert.equal(getActiveTurnId("sweep-nosess"), undefined, "in-memory wildcard entry cleared");
+      assert.equal(
+        getActiveTurnId("sweep-nosess", undefined, "sweep-nosess"),
+        undefined,
+        "in-memory wildcard entry cleared",
+      );
     });
 
     it("sweeps a quiet sessionless turn with no done, but not a quiet thread's", async () => {
       // Only a sessionless done closes a sessionless turn, and a template that tags only
       // its done never sends one: idleness is the only other end it can have.
-      const bare = await createTurn("sweep-bare");
-      const threaded = await createTurn("sweep-bare", "t1");
+      const bare = await createTurn("sweep-bare", undefined, "sweep-bare");
+      const threaded = await createTurn("sweep-bare", "t1", "sweep-bare");
       const db = await getDb();
       for (const [id, thread] of [
         [bare, null],
@@ -351,9 +411,9 @@ describe("turn-tracker", () => {
         swept.find((t) => t.turnId === bare),
         "quiet sessionless turn swept",
       );
-      assert.equal(getActiveTurnId("sweep-bare"), undefined);
+      assert.equal(getActiveTurnId("sweep-bare", undefined, "sweep-bare"), undefined);
       assert.ok(!swept.find((t) => t.turnId === threaded), "a thread's turn waits for its done");
-      assert.equal(getActiveTurnId("sweep-bare", "t1"), threaded);
+      assert.equal(getActiveTurnId("sweep-bare", "t1", "sweep-bare"), threaded);
       await clearMind("sweep-bare");
     });
 
@@ -377,9 +437,9 @@ describe("turn-tracker", () => {
           created_at: utcStamp(e.msAgo),
         });
       }
-      const newId = await createTurn("sweep-mind", "wsX");
+      const newId = await createTurn("sweep-mind", "wsX", "sweep-mind");
       assert.ok(newId);
-      assert.equal(getActiveTurnId("sweep-mind", "wsX"), newId);
+      assert.equal(getActiveTurnId("sweep-mind", "wsX", "sweep-mind"), newId);
 
       const swept = await sweepWedgedTurns(idleMs);
       assert.ok(
@@ -391,7 +451,7 @@ describe("turn-tracker", () => {
       const oldRow = await db.select().from(turns).where(eq(turns.id, oldId)).get();
       assert.equal(oldRow!.status, "complete");
       assert.equal(
-        getActiveTurnId("sweep-mind", "wsX"),
+        getActiveTurnId("sweep-mind", "wsX", "sweep-mind"),
         newId,
         "newer turn's in-memory entry must survive",
       );

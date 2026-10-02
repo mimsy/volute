@@ -819,7 +819,8 @@ describe("system-events reflection attribution", () => {
       );
       const aliceId = await recordInbound(mind, "@alice", "alice", null, "hey, private question");
       acquireTurnSlot(mind, "main"); // the slot alice's delivery took, opening its turn
-      await linkRowsToTurn((await openDeliveredTurn(mind, "main", mind))!.turnId, [aliceId]);
+      const aliceTurn = (await openDeliveredTurn(mind, "main", mind))!.turnId;
+      await linkRowsToTurn(aliceTurn, [aliceId]);
       const { id } = await deliverEvent(mind, { type: "schedule", body: "morning check" });
       await handleMindEvent(mind, {
         type: "text",
@@ -836,8 +837,8 @@ describe("system-events reflection attribution", () => {
         null,
         "chat turn's closing text must not become the event's reflection",
       );
-      // A folded event's row is not claimed by the turn it folded into: the daemon can't
-      // tell that from the next turn the mind runs it as.
+      // A folded event's row joins the turn its process was running when it was handed the
+      // event — by its own row id — and is not that turn's trigger.
       const db = await getDb();
       const eventRows = await db
         .select()
@@ -845,8 +846,10 @@ describe("system-events reflection attribution", () => {
         .where(and(eq(mindHistory.mind, mind), eq(mindHistory.type, "event")));
       assert.deepEqual(
         eventRows.map((r) => r.turn_id),
-        [null],
+        [aliceTurn],
       );
+      const turn = await db.select().from(turns).where(eq(turns.id, aliceTurn)).get();
+      assert.equal(turn!.trigger_event_id, aliceId);
 
       // A later event gets its own turn, attributed exactly.
       const { id: later } = await deliverEvent(mind, { type: "schedule", body: "evening check" });
@@ -858,11 +861,11 @@ describe("system-events reflection attribution", () => {
     }
   });
 
-  it("an event that folded in is claimed by the turn the mind runs it as", async () => {
+  it("an event that folded in with no turn of its process running is linked to nothing", async () => {
     const mind = uniqueMind();
     const stub = await stubMind(mind);
     try {
-      acquireTurnSlot(mind, "main"); // a turn is running: the event folds in
+      acquireTurnSlot(mind, "main"); // the slot is held, but no turn of the mind's runs
       const { id } = await deliverEvent(mind, { type: "schedule", body: "after this" });
       releaseTurnSlot(mind);
       const db = await getDb();
@@ -871,14 +874,14 @@ describe("system-events reflection attribution", () => {
         .from(mindHistory)
         .where(and(eq(mindHistory.mind, mind), eq(mindHistory.type, "event")))
         .get();
-      assert.equal(row!.turn_id, null, "not linked into the running turn");
-      // The mind runs it next, as a turn of its own.
+      assert.equal(row!.turn_id, null);
+      // The mind runs it next, naming its channel: a channel the mind reports is no evidence
+      // (#1178), so the row stays unlinked and the turn has no trigger — and no reflection.
       await runEventTurn(mind, id!, "schedule", "Done with it.");
-      const linked = await db.select().from(mindHistory).where(eq(mindHistory.id, row!.id)).get();
-      assert.ok(linked!.turn_id, "claimed by its turn");
-      const turn = await db.select().from(turns).where(eq(turns.id, linked!.turn_id!)).get();
-      assert.equal(turn!.trigger_event_id, row!.id);
-      assert.equal(await waitForReflection(id!), "Done with it.");
+      const after = await db.select().from(mindHistory).where(eq(mindHistory.id, row!.id)).get();
+      assert.equal(after!.turn_id, null);
+      await new Promise((r) => setTimeout(r, 150));
+      assert.equal((await eventRow(id!))?.reflection, null);
     } finally {
       stub.close();
       await cleanupMind(mind);

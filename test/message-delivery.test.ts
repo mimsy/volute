@@ -540,7 +540,7 @@ describe("linkToolResultToTurn", () => {
   });
 
   it("never links a send recorded with no thread, whatever turn prints its marker", async () => {
-    const sole = await createTurn(LINK_MIND);
+    const sole = await createTurn(LINK_MIND, undefined, LINK_MIND);
     const id = await recordOutbound(LINK_MIND, "dm:alice", "from nowhere");
     await linkToolResultToTurn(LINK_MIND, sole!, `[volute:outbound:${id}]`, undefined);
     await linkToolResultToTurn(LINK_MIND, "turn-x", `[volute:outbound:${id}]`, undefined, {
@@ -555,7 +555,7 @@ describe("linkToolResultToTurn", () => {
   it("stamps a command's activity with the caller's turn, even acting --mind for another", async () => {
     // The spirit (or an admin) runs a command acting for another mind: the activity is
     // about that mind, but it happened in the caller's turn.
-    const callerTurn = await createTurn(LINK_MIND, "main");
+    const callerTurn = await createTurn(LINK_MIND, "main", LINK_MIND);
     const actId = await publishTurnActivity(
       { type: "mind_active", mind: "test-link-acted-for", summary: "done for them" },
       { mind: LINK_MIND, thread: "main" },
@@ -639,6 +639,26 @@ describe("linkToolResultToTurn", () => {
       .from(mindHistory)
       .where(and(eq(mindHistory.mind, LINK_MIND), eq(mindHistory.type, "activity")));
     assert.equal(rows.length, 0, "no copy of its summary in this mind's history");
+    await db.delete(activity).where(eq(activity.id, actId));
+  });
+
+  it("links only the sending process's activity: never its variant's, nor its parent's", async () => {
+    const variant = `${LINK_MIND}@v`;
+    const actId = await publishActivity({ type: "mind_active", mind: variant, summary: "v's" });
+    await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, `[volute:activity:${actId}]`, 1, {
+      thread: "main",
+      sender: LINK_MIND,
+    });
+    const db = await getDb();
+    let act = await db.select().from(activity).where(eq(activity.id, actId)).get();
+    assert.equal(act!.turn_id, null, "the parent's turn doesn't take the variant's");
+    await linkToolResultToTurn(LINK_MIND, "turn-variant", `[volute:activity:${actId}]`, 2, {
+      thread: "main",
+      sender: variant,
+    });
+    act = await db.select().from(activity).where(eq(activity.id, actId)).get();
+    assert.equal(act!.turn_id, "turn-variant", "the variant's own turn does");
+    await db.delete(mindHistory).where(eq(mindHistory.turn_id, "turn-variant"));
     await db.delete(activity).where(eq(activity.id, actId));
   });
 

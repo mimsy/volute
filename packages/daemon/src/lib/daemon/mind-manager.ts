@@ -861,11 +861,16 @@ export class MindManager {
       // Clear turn state and delivery session state so ghost counts don't accumulate.
       // Generate summaries for any orphaned turns before they're lost.
       clearTurnState(name)
-        .then((orphaned) => {
+        .then(async (orphaned) => {
           summarizeOrphanedTurns(orphaned);
+          const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
+          tryGetDeliveryManager()?.releaseStopped(name, orphaned);
           // Tell the mind, on its next successful turn in each affected session, that it
           // crashed mid-turn — so the scope of the interruption is clear.
-          for (const { session } of orphaned) {
+          for (const { mind, session } of orphaned) {
+            // Not for a variant's: next-turn notices are kept per base name and thread, so
+            // one recorded for a variant's crash would tell its parent.
+            if (mind !== name) continue;
             void recordNotice({
               mind: name,
               thread: session ?? "main",
@@ -1085,6 +1090,8 @@ export class MindManager {
     try {
       const orphanedTurns = await clearTurnState(name);
       summarizeOrphanedTurns(orphanedTurns);
+      const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
+      tryGetDeliveryManager()?.releaseStopped(name, orphanedTurns);
     } catch (err) {
       mlog.warn(`failed to clear turn state for ${name} on stop`, log.errorData(err));
     }
@@ -1226,4 +1233,13 @@ export function getMindManager(): MindManager {
 /** Like getMindManager but returns null instead of throwing when uninitialized. */
 export function tryGetMindManager(): MindManager | null {
   return instance;
+}
+
+/**
+ * Whether a process — a mind or a variant — is running, for turn bookkeeping: a turn whose
+ * process stopped is no turn beside another's, and the wedged sweep takes it. With no
+ * manager (as in tests) every process reads as running.
+ */
+export function isProcessLive(name: string): boolean {
+  return !instance || instance.isRunning(name);
 }

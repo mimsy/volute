@@ -466,7 +466,14 @@ async function getMindIdentityLine(mind: string): Promise<string> {
  */
 const awaitingUsage = new Map<
   string,
-  { mind: string; session: string | undefined; at: number; timer: ReturnType<typeof setTimeout> }
+  {
+    mind: string;
+    session: string | undefined;
+    /** The process that ran it, to hand an interrupted turn's message on (`handOff`). */
+    process: string | undefined;
+    at: number;
+    timer: ReturnType<typeof setTimeout>;
+  }
 >();
 const USAGE_HOLD_MS = 2 * 60_000;
 
@@ -489,12 +496,12 @@ export function settleHeld(turnId: string): void {
     // A usage that named the turn's delivery but was written with no turn — handled across
     // the `done` that recorded it — is the turn's: link it before judging the turn.
     const { deliveriesOf, linkReportsToTurn } = await import("./turn-tracker.js");
-    const deliveries = deliveriesOf(held.mind, held.session, turnId);
+    const deliveries = held.process ? deliveriesOf(held.process, turnId) : [];
     if (held.session && deliveries.length > 0) {
       await linkReportsToTurn(held.mind, held.session, turnId, deliveries);
     }
     await summarizeTurn(held.mind, held.session, undefined, 0, turnId, undefined, {
-      handOff: true,
+      handOff: held.process,
     });
   })().catch((err) => sLog.error("turn summarization failed", log.errorData(err)));
 }
@@ -545,10 +552,10 @@ async function settleUnsummarizedTurns(idleMs: number): Promise<void> {
   }
 }
 
-/** Drop a mind's held turns (on its stop): the tick settles them from the database. */
-export function forgetAwaitingUsage(mind: string): void {
+/** Drop a process's held turns (on its stop): the tick settles them from the database. */
+export function forgetAwaitingUsage(process: string): void {
   for (const [turnId, held] of awaitingUsage) {
-    if (held.mind !== mind) continue;
+    if ((held.process ?? held.mind) !== process) continue;
     clearTimeout(held.timer);
     awaitingUsage.delete(turnId);
   }
@@ -565,10 +572,11 @@ export async function summarizeTurn(
     /** Called on the turn's `done`: hold a turn whose `usage` is still to come. */
     onDone?: boolean;
     /**
-     * The turn has just ended, so an interrupted one's message goes to the turn that answers
-     * it (`holdInterrupted`). Settled later, the thread has moved on: it doesn't.
+     * The process that ran the turn, which has just ended, so an interrupted one's message
+     * goes to that process's turn that answers it (`holdInterrupted`). Settled later, the
+     * thread has moved on: it doesn't.
      */
-    handOff?: boolean;
+    handOff?: string;
   } = {},
 ): Promise<void> {
   if (turnId) {
@@ -593,10 +601,11 @@ async function summarizeTurnOnce(
     /** Called on the turn's `done`: hold a turn whose `usage` is still to come. */
     onDone?: boolean;
     /**
-     * The turn has just ended, so an interrupted one's message goes to the turn that answers
-     * it (`holdInterrupted`). Settled later, the thread has moved on: it doesn't.
+     * The process that ran the turn, which has just ended, so an interrupted one's message
+     * goes to that process's turn that answers it (`holdInterrupted`). Settled later, the
+     * thread has moved on: it doesn't.
      */
-    handOff?: boolean;
+    handOff?: string;
   } = {},
 ): Promise<void> {
   const { events, fromId, toId } = turnId
@@ -654,7 +663,13 @@ async function summarizeTurnOnce(
     const turnToSettle = effectiveTurnId;
     const timer = setTimeout(() => settleHeld(turnToSettle), USAGE_HOLD_MS);
     timer.unref?.();
-    awaitingUsage.set(effectiveTurnId, { mind, session, at: Date.now(), timer });
+    awaitingUsage.set(effectiveTurnId, {
+      mind,
+      session,
+      process: opts.handOff,
+      at: Date.now(),
+      timer,
+    });
     // A usage recorded since the events were read found nothing held to resume.
     const db = await getDb();
     const usage = await db
@@ -700,6 +715,7 @@ async function summarizeTurnOnce(
           await holdInterrupted(
             mind,
             thread,
+            opts.handOff,
             released.map((r) => r.id).sort((a, b) => a - b),
           );
         await db
@@ -2083,7 +2099,8 @@ export class Summarizer {
 export async function reconcileWedgedTurns(idleMs: number): Promise<void> {
   await settleUnsummarizedTurns(idleMs);
   const { sweepWedgedTurns, summarizeOrphanedTurns } = await import("./turn-tracker.js");
-  const wedged = await sweepWedgedTurns(idleMs);
+  const { isProcessLive } = await import("./mind-manager.js");
+  const wedged = await sweepWedgedTurns(idleMs, isProcessLive);
   if (wedged.length === 0) return;
 
   summarizeOrphanedTurns(wedged);
@@ -2095,7 +2112,7 @@ export async function reconcileWedgedTurns(idleMs: number): Promise<void> {
   const dm = tryGetDeliveryManager();
   if (!dm) return;
   for (const t of wedged) {
-    if (t.session) dm.forgetOutstanding(t.mind, t.session, idleMs);
+    if (t.session && !t.stopped) dm.forgetOutstanding(t.mind, t.session, idleMs);
   }
 }
 

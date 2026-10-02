@@ -1839,7 +1839,7 @@ describe("summarizer", () => {
       const idleMs = 10 * 60_000;
 
       // A wedged turn: has a `done`, last event well past the idle window.
-      const id = await createTurn(mind, session);
+      const id = await createTurn(mind, session, mind);
       assert.ok(id);
       const db = await getDb();
       for (const e of [

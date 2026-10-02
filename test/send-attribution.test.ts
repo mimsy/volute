@@ -129,8 +129,8 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
     const token = await setup();
     await handleMindEvent(MIND, { type: "tool_use", session: "main", content: "m" });
     await handleMindEvent(MIND, { type: "tool_use", session: "#bardo", content: "b" });
-    const turnMain = getActiveTurnId(MIND, "main");
-    const turnBardo = getActiveTurnId(MIND, "#bardo");
+    const turnMain = getActiveTurnId(MIND, "main", MIND);
+    const turnBardo = getActiveTurnId(MIND, "#bardo", MIND);
     assert.ok(turnMain && turnBardo && turnMain !== turnBardo);
 
     await send(token, "from main", "main");
@@ -148,7 +148,7 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
     const token = await setup();
     // A sibling thread's turn mid-creation: created, not yet re-keyed to its session.
     // `main` has no active turn of its own (its first event hasn't landed yet).
-    const sibling = await createTurn(MIND);
+    const sibling = await createTurn(MIND, undefined, MIND);
     assert.ok(sibling);
 
     await send(token, "main, early", "main");
@@ -170,7 +170,7 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
     // open on it yet. A send naming that thread must not open one, or attach to it.
     acquireTurnSlot(MIND, "@admin");
     await send(token, "naming another thread", "@admin");
-    assert.equal(getActiveTurnId(MIND, "@admin"), undefined);
+    assert.equal(getActiveTurnId(MIND, "@admin", MIND), undefined);
     const db = await getDb();
     assert.equal((await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length, 0);
     assert.equal((await outboundRow("naming another thread")).turn_id, null);
@@ -180,7 +180,7 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
     const token = await setup();
     // A sibling turn in the sessionless slot that is never assigned a thread: the
     // sending thread's tool_result must still link to the sending thread's own turn.
-    const sibling = await createTurn(MIND);
+    const sibling = await createTurn(MIND, undefined, MIND);
     const { outboundId } = await send(token, "main, linked later", "main");
     assert.ok(outboundId != null);
 
@@ -189,7 +189,7 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
       session: "main",
       content: `Message sent.\n[volute:outbound:${outboundId}]`,
     });
-    const turnMain = getActiveTurnId(MIND, "main");
+    const turnMain = getActiveTurnId(MIND, "main", MIND);
     assert.ok(turnMain && turnMain !== sibling);
 
     const row = await outboundRow("main, linked later");
@@ -200,7 +200,7 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
   it("a send's marker echoed into another thread never credits it to that thread", async () => {
     const token = await setup();
     await handleMindEvent(MIND, { type: "tool_use", session: "#bardo", content: "b" });
-    const turnBardo = getActiveTurnId(MIND, "#bardo");
+    const turnBardo = getActiveTurnId(MIND, "#bardo", MIND);
     // main has no active turn yet, so the send is recorded with its thread and no turn.
     const { outboundId } = await send(token, "main's words", "main");
     const marker = `[volute:outbound:${outboundId}]`;
@@ -212,7 +212,7 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
     assert.equal(row.thread, "main");
 
     await handleMindEvent(MIND, { type: "tool_result", session: "main", content: marker });
-    const turnMain = getActiveTurnId(MIND, "main");
+    const turnMain = getActiveTurnId(MIND, "main", MIND);
     assert.ok(turnMain && turnMain !== turnBardo);
     row = await outboundRow("main's words");
     assert.equal(row.turn_id, turnMain);
@@ -222,8 +222,8 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
   it("turnStamp: a thread's own turn, the thread alone, or nothing", async () => {
     await handleMindEvent(MIND, { type: "tool_use", session: "main", content: "m" });
     await handleMindEvent(MIND, { type: "tool_use", content: "bare" });
-    const turnMain = getActiveTurnId(MIND, "main");
-    assert.ok(turnMain && getActiveTurnId(MIND));
+    const turnMain = getActiveTurnId(MIND, "main", MIND);
+    assert.ok(turnMain && getActiveTurnId(MIND, undefined, MIND));
 
     assert.deepEqual(turnStamp(MIND, "main"), { turnId: turnMain, thread: "main" });
     assert.deepEqual(turnStamp(MIND, "#quiet"), { thread: "#quiet" });
@@ -245,7 +245,7 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
         content: "m",
       });
       assert.ok(turnId);
-      await completeTurn(MIND, "main"); // the done lands before the echo runs
+      await completeTurn(MIND, "main", MIND); // the done lands before the echo runs
       const events: MindEvent[] = [];
       const unsub = subscribeMind(MIND, (e) => events.push(e));
       try {
@@ -282,7 +282,7 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
     } finally {
       unsub();
     }
-    const turnMain = getActiveTurnId(MIND, "main");
+    const turnMain = getActiveTurnId(MIND, "main", MIND);
     const outbound = events.filter((e) => e.type === "outbound");
     assert.deepEqual(
       outbound.map((e) => e.turnId),
@@ -299,7 +299,7 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
   it('a "*" thread is no thread: it can\'t claim the sessionless turn', async () => {
     const token = await setup();
     await handleMindEvent(MIND, { type: "tool_use", content: "bare" });
-    assert.ok(getActiveTurnId(MIND));
+    assert.ok(getActiveTurnId(MIND, undefined, MIND));
     await send(token, "star", "*");
     const row = await outboundRow("star");
     assert.equal(row.turn_id, null);
@@ -310,9 +310,9 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
   it("a variant never borrows its parent's turn on a shared thread name, or the reverse", async () => {
     await setup();
     await addVariant(VARIANT, MIND, 4173, "/tmp/attr-variant", "attr-branch");
-    // The parent's `main` turn: the variant's own `main` shares its key.
+    // The parent's `main` turn: the variant's own `main` is the same thread name.
     await handleMindEvent(MIND, { type: "tool_use", session: "main", content: "p" });
-    const parentTurn = getActiveTurnId(MIND, "main");
+    const parentTurn = getActiveTurnId(MIND, "main", MIND);
     assert.ok(parentTurn);
 
     assert.deepEqual(turnStamp(MIND, "main", MIND), { turnId: parentTurn, thread: "main" });
@@ -331,37 +331,36 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
     assert.equal(ext.turn_id, null, "not the parent's turn");
     assert.equal(ext.thread, "main");
 
-    // A variant send awaiting its marker: the variant's tool_result lands on the parent's
-    // turn key, and must not claim the send into the parent's turn.
+    // A variant send awaiting its marker: the variant's tool_result opens the variant's own
+    // turn beside the parent's (#1177), and claims the send there — never the parent's.
     const early = await recordOutbound(VARIANT, "@x", "variant early", { thread: "main" });
-    await handleMindEvent(
+    const { turnId: variantTurn } = await handleMindEvent(
       MIND,
       { type: "tool_result", session: "main", content: `[volute:outbound:${early}]` },
       VARIANT,
     );
+    assert.ok(variantTurn);
+    assert.notEqual(variantTurn, parentTurn);
     const db = await getDb();
-    let row = await db.select().from(mindHistory).where(eq(mindHistory.id, early!)).get();
-    assert.equal(row!.turn_id, null);
-
-    // Once the variant's own turn exists on that key, its marker claims its own send.
-    await completeTurn(MIND, "main");
-    await handleMindEvent(MIND, { type: "tool_use", session: "main", content: "v" }, VARIANT);
-    const variantTurn = getActiveTurnId(MIND, "main");
-    await handleMindEvent(
-      MIND,
-      { type: "tool_result", session: "main", content: `[volute:outbound:${early}]` },
-      VARIANT,
-    );
-    row = await db.select().from(mindHistory).where(eq(mindHistory.id, early!)).get();
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, early!)).get();
     assert.equal(row!.turn_id, variantTurn);
-    assert.deepEqual(turnStamp(MIND, "main", MIND), { thread: "main" }, "nor the reverse");
+
+    // Each stamps its own turn; the parent's is still running, untouched.
+    assert.equal(getActiveTurnId(MIND, "main", MIND), parentTurn);
+    assert.deepEqual(turnStamp(MIND, "main", VARIANT), { turnId: variantTurn, thread: "main" });
+    assert.deepEqual(turnStamp(MIND, "main", MIND), { turnId: parentTurn, thread: "main" });
+
+    // The parent's turn ending leaves the variant's running, and the reverse.
+    await completeTurn(MIND, "main", MIND);
+    assert.deepEqual(turnStamp(MIND, "main", MIND), { thread: "main" });
+    assert.deepEqual(turnStamp(MIND, "main", VARIANT), { turnId: variantTurn, thread: "main" });
   });
 
   it("an external send recorded via POST /:name/history is stamped exactly too", async () => {
     const token = await setup();
     await handleMindEvent(MIND, { type: "tool_use", session: "#bardo", content: "b" });
-    const turnBardo = getActiveTurnId(MIND, "#bardo");
-    await createTurn(MIND); // another sibling, sessionless
+    const turnBardo = getActiveTurnId(MIND, "#bardo", MIND);
+    await createTurn(MIND, undefined, MIND); // another sibling, sessionless
 
     const path = `/api/v1/minds/${MIND}/history`;
     let res = await post(path, token, { channel: "discord:x/y", content: "ext bardo" }, "#bardo");
