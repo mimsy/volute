@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -23,6 +24,7 @@ import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   findMind,
   mindDir,
+  readAllMinds,
   removeMind,
   voluteSystemDir,
 } from "../packages/daemon/src/lib/mind/registry.js";
@@ -142,6 +144,14 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     // Clean up test mind
     await cleanupMind();
 
+    // Stop every mind the daemon still runs — the spirit it auto-started included —
+    // while it is up to do it. Mind servers are spawned detached, so a daemon that
+    // dies without its own shutdown leaves them running as orphans, and those break
+    // later runs machine-wide (#1363).
+    for (const entry of await readAllMinds()) {
+      await daemonRequest(`/api/v1/minds/${entry.name}/stop`, { method: "POST" }).catch(() => {});
+    }
+
     // Kill daemon
     if (daemon && !daemon.killed) {
       daemon.kill("SIGTERM");
@@ -155,7 +165,37 @@ describe("daemon e2e", { timeout: 420000 }, () => {
         }, 5000);
       });
     }
+
+    // The signal may not have reached the tsx-spawned daemon itself (see
+    // waitForPortFree); reap it. Then reap any mind server of this run's that still
+    // listens — only those whose cwd is inside this run's VOLUTE_HOME.
+    await waitForPortFree(PORT, 5000).catch((err) => process.stderr.write(`[test] ${err}\n`));
+    // lsof reports the resolved path (/private/tmp on macOS).
+    const home = realpathSync(process.env.VOLUTE_HOME!);
+    for (const entry of await readAllMinds()) {
+      for (const pid of listeningPids(entry.port)) {
+        if (!processCwd(pid)?.startsWith(`${home}/`)) continue;
+        process.stderr.write(`[test] reaping ${entry.name} server (pid ${pid}) left running\n`);
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+      }
+    }
   });
+
+  function processCwd(pid: number): string | undefined {
+    try {
+      const out = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
+        encoding: "utf-8",
+      });
+      return out
+        .split("\n")
+        .find((l) => l.startsWith("n"))
+        ?.slice(1);
+    } catch {
+      return undefined;
+    }
+  }
 
   async function cleanupMind() {
     try {

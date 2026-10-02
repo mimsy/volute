@@ -9,6 +9,7 @@ import {
 } from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { startMindFull, wakeMind } from "../packages/daemon/src/lib/daemon/mind-service.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import { restartOntoMerge } from "../packages/daemon/src/lib/mind/merge-restart.js";
 import {
   addMind,
   findMind,
@@ -248,6 +249,29 @@ describe("version notice for minds started after boot", () => {
     } finally {
       mgr.startMind = origStart;
     }
+  });
+
+  it("is sent, once, when an upgrade starts a mind that was stopped (#1365)", async () => {
+    const name = await mind({ running: false });
+    writeState({ lastNotifiedVersion: "0.0.1" });
+    await notifyVersionUpdate();
+    assert.equal((await versionNotices(name)).length, 0, "not running at boot");
+
+    const manager = {
+      isUpOrRecovering: () => false,
+      stopMind: async () => {},
+      startMind: async () => {},
+      setPendingContext: () => {},
+    };
+    // Upgraded twice: the second start finds the record and says nothing more.
+    for (let run = 0; run < 2; run++) {
+      await restartOntoMerge(manager, name, { type: "upgraded" }, { isAsleep: () => false });
+      for (let i = 0; i < 100 && (await versionNotices(name)).length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal((await versionNotices(name)).length, 1);
   });
 
   it("tells a mind back from a long sleep every release it missed, newest first", async () => {
