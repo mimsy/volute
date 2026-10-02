@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { access, readdir, readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import log from "./logger.js";
 
 /**
@@ -9,9 +9,10 @@ import log from "./logger.js";
  * Under Linux user isolation the leader is `runuser`, which answers a SIGTERM of
  * its own by forwarding it, sleeping 2s and SIGKILLing its child. A group SIGTERM
  * reaches it, so every mind got 2s to shut down whatever grace the caller allowed
- * (#1364). With `spareLeader` the SIGTERM goes to the leader's descendants in the
- * group instead, found by walking `/proc/<pid>/task/<tid>/children`; runuser then
- * just exits when its child does.
+ * (#1364). With `spareLeader` the SIGTERM goes to every other member of the group
+ * instead, found by scanning `/proc/<pid>/stat` for the group id — which also
+ * finds a member that was reparented away from the leader (a `nohup … &` worker);
+ * runuser then just exits when its child does.
  */
 
 const plog = log.child("process-group");
@@ -23,6 +24,9 @@ const defaultKill: Kill = (pid, signal) => process.kill(pid, signal);
 export type Member = { pid: number; start: string };
 
 export type GroupOpts = { procDir?: string; kill?: Kill };
+
+/** How many `/proc/<pid>/stat` reads a scan has in flight at once. */
+const SCAN_CONCURRENCY = 64;
 
 /** The process is gone: its /proc entry, or the process itself. */
 function isGone(err: unknown): boolean {
@@ -48,14 +52,33 @@ async function readStat(
   return { pgrp: Number(fields[2]), start: fields[19] };
 }
 
-/** Whether `member` is still the process it was, in group `pgid`. */
-async function stillMember(procDir: string, pgid: number, member: Member): Promise<boolean> {
-  const now = await readStat(procDir, member.pid);
-  return now?.pgrp === pgid && now.start === member.start;
+/**
+ * The members of process group `pgid`, other than `exclude`, from a scan of every
+ * `/proc/<pid>/stat`. Linux only: throws when `/proc` can't be read.
+ */
+export async function groupMembers(
+  pgid: number,
+  opts: { procDir?: string; exclude?: number } = {},
+): Promise<Member[]> {
+  const procDir = opts.procDir ?? "/proc";
+  const pids = (await readdir(procDir))
+    .filter((e) => /^\d+$/.test(e))
+    .map(Number)
+    .filter((pid) => pid !== opts.exclude);
+  const members: Member[] = [];
+  for (let i = 0; i < pids.length; i += SCAN_CONCURRENCY) {
+    const batch = pids.slice(i, i + SCAN_CONCURRENCY);
+    const stats = await Promise.all(batch.map((pid) => readStat(procDir, pid)));
+    batch.forEach((pid, j) => {
+      const stat = stats[j];
+      if (stat?.pgrp === pgid) members.push({ pid, start: stat.start });
+    });
+  }
+  return members;
 }
 
-/** The direct children of `pid`, across its threads; [] once it has exited. */
-async function childrenOf(procDir: string, pid: number): Promise<number[]> {
+/** The direct children of `pid`, across its threads; [] once it has exited. Linux only. */
+export async function childrenOf(pid: number, procDir = "/proc"): Promise<Member[]> {
   let tids: string[];
   try {
     tids = await readdir(`${procDir}/${pid}/task`);
@@ -65,153 +88,133 @@ async function childrenOf(procDir: string, pid: number): Promise<number[]> {
   }
   const lists = await Promise.all(
     tids.map(async (tid) => {
-      const task = `${procDir}/${pid}/task/${tid}`;
       try {
-        return await readFile(`${task}/children`, "utf-8");
+        return await readFile(`${procDir}/${pid}/task/${tid}/children`, "utf-8");
       } catch (err) {
-        if (!isGone(err)) throw err;
-        // A thread that exited, or a kernel without CONFIG_PROC_CHILDREN — which
-        // would read as "no children" and quietly signal nothing. Tell them apart.
-        try {
-          await access(`${task}/stat`);
-        } catch {
-          return "";
-        }
-        throw new Error(`${task}/children is missing (kernel without CONFIG_PROC_CHILDREN?)`);
+        if (isGone(err)) return "";
+        throw err;
       }
     }),
   );
-  return lists.flatMap((l) => l.split(" ").filter(Boolean).map(Number));
+  const pids = lists.flatMap((l) => l.split(" ").filter(Boolean).map(Number));
+  const stats = await Promise.all(pids.map((p) => readStat(procDir, p)));
+  return pids.flatMap((p, i) => {
+    const stat = stats[i];
+    return stat ? [{ pid: p, start: stat.start }] : [];
+  });
+}
+
+/** Whether the process `pid` is `runuser` — the supervisor a stop must signal past. */
+export async function isRunuser(pid: number, procDir = "/proc"): Promise<boolean> {
+  try {
+    return (await readFile(`${procDir}/${pid}/comm`, "utf-8")).trim() === "runuser";
+  } catch {
+    return false;
+  }
 }
 
 /**
- * The processes in group `pgid` among `roots` and all their descendants, other
- * than `exclude`. Linux only: throws when `/proc` can't be walked.
+ * Signal each process that is still itself (same start time, and same group when
+ * `pgid` is given). ESRCH is fine; anything else is logged.
  */
-export async function groupDescendants(
-  pgid: number,
-  roots: number[],
-  opts: { procDir?: string; exclude?: number } = {},
-): Promise<Member[]> {
-  const procDir = opts.procDir ?? "/proc";
-  await access(procDir); // no /proc at all is a failure, not an empty group
-  const seen = new Set<number>();
-  const members: Member[] = [];
-  let frontier = roots;
-  while (frontier.length) {
-    frontier = frontier.filter((pid) => !seen.has(pid));
-    for (const pid of frontier) seen.add(pid);
-    const [stats, children] = await Promise.all([
-      Promise.all(frontier.map((pid) => readStat(procDir, pid))),
-      Promise.all(frontier.map((pid) => childrenOf(procDir, pid))),
-    ]);
-    frontier.forEach((pid, i) => {
-      const stat = stats[i];
-      if (stat?.pgrp === pgid && pid !== opts.exclude) members.push({ pid, start: stat.start });
-    });
-    frontier = children.flat();
-  }
-  return members;
-}
-
-/** Signal each member that is still itself; ESRCH is fine, anything else is logged. */
-async function signalMembers(
-  pgid: number,
+export async function signalEach(
   members: Member[],
   signal: NodeJS.Signals,
-  procDir: string,
-  kill: Kill,
+  opts: GroupOpts & { pgid?: number } = {},
 ): Promise<void> {
+  const kill = opts.kill ?? defaultKill;
+  const procDir = opts.procDir ?? "/proc";
   for (const member of members) {
     try {
-      if (await stillMember(procDir, pgid, member)) kill(member.pid, signal);
+      const now = await readStat(procDir, member.pid);
+      if (!now || now.start !== member.start) continue;
+      if (opts.pgid !== undefined && now.pgrp !== opts.pgid) continue;
+      kill(member.pid, signal);
     } catch (err) {
-      if (!isGone(err)) {
-        plog.warn(`${signal} to pid ${member.pid} (group ${pgid}) failed`, log.errorData(err));
-      }
+      if (!isGone(err)) plog.warn(`${signal} to pid ${member.pid} failed`, log.errorData(err));
     }
   }
 }
 
+/** `kill(-pgid, signal)`; false when the group is gone, logged on any other failure. */
+function signalGroup(pgid: number, signal: NodeJS.Signals, kill: Kill): boolean {
+  try {
+    kill(-pgid, signal);
+    return true;
+  } catch (err) {
+    if (!isGone(err)) plog.warn(`${signal} to process group ${pgid} failed`, log.errorData(err));
+    return !isGone(err);
+  }
+}
+
 /**
- * SIGTERM a process group for a graceful stop. `gone` when there was no group left
- * to signal; `members` are the processes signalled past a spared leader, or null
- * when the whole group was signalled. Never throws: a failure is logged, and the
- * caller's SIGKILL deadline is the backstop for it.
+ * SIGTERM a process group for a graceful stop; resolves `"gone"` when there was
+ * nothing left to signal. Never throws: a failure is logged, and the caller's
+ * SIGKILL deadline is the backstop for it.
  *
- * Without a `/proc` to walk (or with nothing below the leader), the whole group is
- * signalled, which is all a non-spared stop does anyway.
+ * With `spareLeader`, every member but the leader is signalled individually. A
+ * group signal is used when `/proc` can't be scanned (logged), or when only the
+ * leader is left. `leaderExited` says the leader has been reaped, so its id no
+ * longer pins the group: then a group signal is sent only while the scan still
+ * finds a member holding it, and nothing at all when it finds none.
  */
 export async function terminateGroup(
   pgid: number,
-  opts: GroupOpts & { spareLeader: boolean },
-): Promise<{ gone: boolean; members: Member[] | null }> {
+  opts: GroupOpts & { spareLeader: boolean; leaderExited?: boolean },
+): Promise<"signalled" | "gone"> {
   const kill = opts.kill ?? defaultKill;
   const procDir = opts.procDir ?? "/proc";
-  if (opts.spareLeader) {
+  if (opts.spareLeader || opts.leaderExited) {
     let members: Member[] | null = null;
     try {
-      members = await groupDescendants(pgid, [pgid], { procDir, exclude: pgid });
-    } catch (err) {
-      plog.warn(`could not walk process group ${pgid}; signalling the whole group`, {
+      members = await groupMembers(pgid, {
         procDir,
-        ...log.errorData(err),
+        exclude: opts.spareLeader ? pgid : undefined,
       });
+    } catch (err) {
+      if (opts.spareLeader) {
+        plog.warn(`could not scan process group ${pgid}; signalling the whole group`, {
+          procDir,
+          ...log.errorData(err),
+        });
+      }
     }
-    if (members?.length) {
-      await signalMembers(pgid, members, "SIGTERM", procDir, kill);
-      return { gone: false, members };
+    if (members?.length && opts.spareLeader) {
+      await signalEach(members, "SIGTERM", { procDir, kill, pgid });
+      return "signalled";
     }
+    if (members && !members.length && opts.leaderExited) return "gone";
   }
-  try {
-    kill(-pgid, "SIGTERM");
-    return { gone: false, members: null };
-  } catch (err) {
-    if (isGone(err)) return { gone: true, members: null };
-    plog.warn(`SIGTERM to process group ${pgid} failed`, log.errorData(err));
-    return { gone: false, members: null };
-  }
+  return signalGroup(pgid, "SIGTERM", kill) ? "signalled" : "gone";
 }
 
 /**
- * SIGKILL what is left of a group at its deadline. While the leader lives its id
- * pins the group, so the group is signalled whole. Once it has exited the id may
- * be reused, so only the processes known from the SIGTERM — and their
- * descendants still in the group, which catches anything they forked since —
- * are signalled, each re-verified by start time. If none remain, nothing is sent.
+ * SIGKILL what is left of a group at its deadline: the whole group, while a scan
+ * finds any member still holding its id (which is what makes the group signal
+ * safe), and nothing when it finds none. Without `/proc`, only while the leader —
+ * unreaped, so still pinning the id — is known to be alive.
  */
-async function sweepGroup(
+async function killRemainder(
   pgid: number,
-  opts: GroupOpts & { leaderAlive: boolean; members: Member[] | null },
+  opts: GroupOpts & { leaderAlive: boolean },
 ): Promise<void> {
   const kill = opts.kill ?? defaultKill;
-  const procDir = opts.procDir ?? "/proc";
-  if (opts.leaderAlive) {
-    try {
-      kill(-pgid, "SIGKILL");
-    } catch (err) {
-      if (!isGone(err)) plog.warn(`SIGKILL to process group ${pgid} failed`, log.errorData(err));
-    }
-    return;
-  }
-  if (!opts.members?.length) return;
+  let anyLeft = opts.leaderAlive;
   try {
-    const alive = [];
-    for (const m of opts.members) if (await stillMember(procDir, pgid, m)) alive.push(m.pid);
-    const left = await groupDescendants(pgid, alive, { procDir });
-    await signalMembers(pgid, left, "SIGKILL", procDir, kill);
-  } catch (err) {
-    plog.warn(`could not walk process group ${pgid} to SIGKILL what is left`, log.errorData(err));
+    anyLeft = (await groupMembers(pgid, { procDir: opts.procDir })).length > 0;
+  } catch {
+    // No /proc: go by the leader.
   }
+  if (anyLeft) signalGroup(pgid, "SIGKILL", kill);
 }
 
 /**
  * Stop a process group: SIGTERM it ({@link terminateGroup}), wait up to `graceMs`
  * for its leader to exit, and SIGKILL what is left at the deadline
- * ({@link sweepGroup}). Resolves when the leader has exited or the deadline has
- * passed; after a clean exit, the deadline's sweep still runs in the background,
- * for a process (an SDK subprocess still flushing, a straggler forked after the
- * walk) that outlives its leader.
+ * ({@link killRemainder}). Resolves when the leader has exited or the deadline has
+ * passed; after a clean exit the deadline's check still runs in the background,
+ * for a process (an SDK subprocess still flushing, a straggler) that outlives
+ * its leader.
  *
  * `leader` is the spawned child, or — for a group this daemon didn't spawn, such
  * as a previous daemon's orphan — its pid, whose exit is then polled for.
@@ -223,29 +226,28 @@ export async function stopGroup(
   const pgid = typeof leader === "number" ? leader : leader.pid;
   if (!pgid) return;
   const kill = opts.kill ?? defaultKill;
-  const procDir = opts.procDir ?? "/proc";
-  const leaderGone = await leaderExitWatch(leader, procDir, kill);
-  const { gone, members } = await terminateGroup(pgid, opts);
-  if (gone) return leaderGone.cancel();
-  // The grace starts once the SIGTERM is out, not before the walk that sends it.
+  const watch = await leaderExitWatch(leader, opts.procDir ?? "/proc", kill);
+  const result = await terminateGroup(pgid, { ...opts, leaderExited: watch.done() });
+  if (result === "gone") return watch.cancel();
+  // The grace starts once the SIGTERM is out, not before the scan that sends it.
   const deadlineAt = Date.now() + opts.graceMs;
-
   let deadline: NodeJS.Timeout | undefined;
   await Promise.race([
-    leaderGone.exited,
+    watch.exited,
     new Promise<void>((resolve) => {
       deadline = setTimeout(resolve, opts.graceMs);
     }),
   ]);
   clearTimeout(deadline);
-  leaderGone.cancel();
-  const sweep = (leaderAlive: boolean) => sweepGroup(pgid, { procDir, kill, members, leaderAlive });
-  if (!leaderGone.done()) {
-    await sweep(true);
+  watch.cancel();
+  if (!watch.done()) {
+    await killRemainder(pgid, { ...opts, leaderAlive: true });
     return;
   }
-  if (!members?.length) return;
-  const late = setTimeout(() => void sweep(false), Math.max(0, deadlineAt - Date.now()));
+  const late = setTimeout(
+    () => void killRemainder(pgid, { ...opts, leaderAlive: false }),
+    Math.max(0, deadlineAt - Date.now()),
+  );
   late.unref();
 }
 

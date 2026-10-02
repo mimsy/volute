@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { resolve } from "node:path";
 import { buildMindBaseEnv } from "./mind-env.js";
+import { trackChild } from "./tracked-children.js";
 
 /**
  * Run a host binary on no mind's behalf, returning its stdout. Not `util/exec.ts`:
@@ -10,7 +11,7 @@ import { buildMindBaseEnv } from "./mind-env.js";
  */
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((res, rej) => {
-    execFile(
+    const child = execFile(
       cmd,
       args,
       { env: { ...buildMindBaseEnv(), PATH: FIND_PATH } },
@@ -23,6 +24,7 @@ function run(cmd: string, args: string[]): Promise<string> {
         }
       },
     );
+    trackChild(child, { group: false, supervised: false });
   });
 }
 

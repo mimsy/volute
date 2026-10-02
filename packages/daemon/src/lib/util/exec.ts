@@ -1,7 +1,8 @@
 import { type ChildProcess, execFile as execFileCb, execFileSync, spawn } from "node:child_process";
 import { wrapForIsolation } from "../mind/isolation.js";
 import { buildMindBaseEnv } from "./mind-env.js";
-import { stopGroup, terminateGroup } from "./process-group.js";
+import { terminateGroup } from "./process-group.js";
+import { trackChild } from "./tracked-children.js";
 
 /**
  * Grace between SIGTERM and SIGKILL for a timed-out child's process group —
@@ -116,7 +117,7 @@ export async function exec(
         }
       },
     );
-    track(child, { group: false, spareLeader: supervised });
+    trackChild(child, { group: false, supervised });
     if (options?.stdin !== undefined && child.stdin) {
       // Discard stdin stream errors. EPIPE here means the child exited without
       // reading its input, which is legitimate — a hook may not want stdin at all —
@@ -134,43 +135,6 @@ export async function exec(
       child.stdin.end(options.stdin);
     }
   });
-}
-
-/**
- * Children of {@link exec} still running, so a daemon shutdown can stop them with
- * a grace rather than leave them to the service manager. Under the system unit's
- * `KillMode=mixed` only the daemon gets the stop's SIGTERM, and whatever it leaves
- * behind is SIGKILLed the moment it exits — a scheduled script or hook mid-write,
- * a git commit mid-index.
- */
-const inFlight = new Map<ChildProcess, { group: boolean; spareLeader: boolean }>();
-
-function track(child: ChildProcess, how: { group: boolean; spareLeader: boolean }): void {
-  inFlight.set(child, how);
-  child.once("exit", () => inFlight.delete(child));
-  child.once("error", () => inFlight.delete(child));
-}
-
-/**
- * Stop every in-flight {@link exec} child at daemon shutdown: SIGTERM, then up to
- * `graceMs` for it to exit, then SIGKILL. A timed child leads its own group and is
- * stopped as one, past a `runuser` leader (#1364). An untimed one (git, npm) shares
- * the daemon's group, so it is signalled alone — under user isolation that is its
- * runuser, which relays the SIGTERM and allows it 2s.
- */
-export async function stopExecChildren(graceMs: number): Promise<void> {
-  await Promise.all(
-    [...inFlight].map(async ([child, { group, spareLeader }]) => {
-      if (group) return stopGroup(child, { spareLeader, graceMs });
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-      child.kill("SIGTERM");
-      let timer: NodeJS.Timeout | undefined;
-      await Promise.race([exited, new Promise<void>((r) => (timer = setTimeout(r, graceMs)))]);
-      clearTimeout(timer);
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    }),
-  );
 }
 
 /**
@@ -225,7 +189,7 @@ function execTimed(
       detached: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    track(child, { group: true, spareLeader: !!options.spareLeader });
+    trackChild(child, { group: true, supervised: !!options.spareLeader });
 
     let stdout = "";
     let stderr = "";

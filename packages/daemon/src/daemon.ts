@@ -46,10 +46,10 @@ import {
   syncBuiltinSkills,
 } from "./lib/skills.js";
 import { reportStaleApiPaths } from "./lib/template/stale-api-paths.js";
-import { stopExecChildren } from "./lib/util/exec.js";
 import { cleanExpiredLogs } from "./lib/util/history-cleanup.js";
 import log from "./lib/util/logger.js";
 import { RotatingLog } from "./lib/util/rotating-log.js";
+import { stopTrackedChildren } from "./lib/util/tracked-children.js";
 import { initWebhook } from "./lib/webhook.js";
 import { startApiKeyRefresh, stopApiKeyRefresh } from "./web/api/system.js";
 import app from "./web/app.js";
@@ -692,9 +692,10 @@ export async function startDaemon(opts: {
       // In-flight scripts, hooks and git/npm get the same grace as the minds, in
       // parallel: under the system unit's KillMode=mixed, anything still running
       // when the daemon exits is SIGKILLed (#1364).
+      const mindsStopped = Promise.resolve(safe("manager.stopAll", () => manager.stopAll()));
       await Promise.all([
-        safe("manager.stopAll", () => manager.stopAll()),
-        safe("stopExecChildren", () => stopExecChildren(5000)),
+        mindsStopped,
+        safe("stopTrackedChildren", () => stopTrackedChildren(5000, mindsStopped)),
       ]);
       safe("clearCrashAttempts", () => manager.clearCrashAttempts());
       // The listener goes last, after every mind has been reaped. It cannot go

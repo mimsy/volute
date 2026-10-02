@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
-import type { ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, describe, it } from "node:test";
-import { exec, stopExecChildren } from "../packages/daemon/src/lib/util/exec.js";
+import { exec } from "../packages/daemon/src/lib/util/exec.js";
 import log from "../packages/daemon/src/lib/util/logger.js";
 import {
-  groupDescendants,
+  childrenOf,
+  groupMembers,
+  isRunuser,
   stopGroup,
   terminateGroup,
 } from "../packages/daemon/src/lib/util/process-group.js";
+import {
+  stopTrackedChildren,
+  trackChild,
+} from "../packages/daemon/src/lib/util/tracked-children.js";
 
 const tempDirs: string[] = [];
 const tempDir = (prefix: string) => {
@@ -40,26 +46,26 @@ function writeStat(dir: string, pid: number, p: FakeProc): void {
 function fakeProc(procs: Record<number, FakeProc>): string {
   const dir = tempDir("fake-proc-");
   for (const [key, p] of Object.entries(procs)) {
-    const pid = Number(key);
     const task = resolve(dir, key, "task", key);
     mkdirSync(task, { recursive: true });
-    writeStat(dir, pid, p);
-    writeFileSync(resolve(task, "stat"), "");
+    writeStat(dir, Number(key), p);
+    writeFileSync(resolve(dir, key, "comm"), `${p.comm}\n`);
     writeFileSync(resolve(task, "children"), (p.children ?? []).map((c) => `${c} `).join(""));
   }
+  mkdirSync(resolve(dir, "self"));
+  mkdirSync(resolve(dir, "77")); // a pid that exited mid-scan: no stat
   return dir;
 }
 
 /** The usual isolated mind: runuser leads, node below it, the SDK below node. */
 const mindTree = (): Record<number, FakeProc> => ({
   100: { comm: "runuser", pgrp: 100, children: [101] },
-  101: { comm: "node", pgrp: 100, children: [102, 300] },
+  101: { comm: "node", pgrp: 100, children: [102] },
   // comm can hold spaces and parens; fields are counted from the last ')'
   102: { comm: "claude (sdk) 7 9", pgrp: 100 },
-  // setsid'd away: walked through, but not in the group
-  300: { comm: "detached", pgrp: 300, children: [301] },
-  301: { comm: "grandchild", pgrp: 100 },
-  // in the group but not below the leader — not reachable by the walk
+  // a `nohup … &` worker reparented to init, still in the mind's group
+  301: { comm: "worker", pgrp: 100 },
+  // another group entirely
   400: { comm: "unrelated", pgrp: 999 },
 });
 
@@ -89,10 +95,9 @@ const fakeChild = (pid: number) => {
   return child;
 };
 
-describe("groupDescendants", () => {
-  it("walks the leader's descendants and keeps those in its group", async () => {
-    const proc = fakeProc(mindTree());
-    const members = await groupDescendants(100, [100], { procDir: proc, exclude: 100 });
+describe("groupMembers", () => {
+  it("finds every process in the group, reparented ones included", async () => {
+    const members = await groupMembers(100, { procDir: fakeProc(mindTree()), exclude: 100 });
     assert.deepEqual(
       members.map((m) => m.pid).sort((a, b) => a - b),
       [101, 102, 301],
@@ -100,10 +105,24 @@ describe("groupDescendants", () => {
     assert.equal(members.find((m) => m.pid === 101)?.start, "101");
   });
 
-  it("refuses to read a missing children file as 'no children'", async () => {
-    const proc = fakeProc({ 100: { comm: "runuser", pgrp: 100, children: [101] } });
-    rmSync(resolve(proc, "100", "task", "100", "children"));
-    await assert.rejects(groupDescendants(100, [100], { procDir: proc }), /CONFIG_PROC_CHILDREN/);
+  it("throws when /proc can't be read, or a stat can't for a reason other than exit", async () => {
+    await assert.rejects(groupMembers(100, { procDir: "/nonexistent-proc" }));
+    const proc = fakeProc({ 100: { comm: "node", pgrp: 100 } });
+    mkdirSync(resolve(proc, "55", "stat"), { recursive: true }); // EISDIR
+    await assert.rejects(groupMembers(100, { procDir: proc }), /EISDIR/);
+  });
+});
+
+describe("childrenOf / isRunuser", () => {
+  it("lists a process's live children and recognises runuser", async () => {
+    const proc = fakeProc({
+      ...mindTree(),
+      100: { comm: "runuser", pgrp: 100, children: [101, 88] },
+    });
+    assert.deepEqual(await childrenOf(100, proc), [{ pid: 101, start: "101" }]);
+    assert.equal(await isRunuser(100, proc), true);
+    assert.equal(await isRunuser(101, proc), false);
+    assert.equal(await isRunuser(12345, proc), false);
   });
 });
 
@@ -111,10 +130,9 @@ describe("terminateGroup", () => {
   it("signals the mind's processes and spares the runuser supervisor (#1364)", async () => {
     // runuser SIGKILLs its child 2s after it is itself SIGTERMed, so a stop must
     // never signal it — nor the group, which would include it.
-    const proc = fakeProc(mindTree());
     const { sent, kill } = recorder();
-    const r = await terminateGroup(100, { spareLeader: true, procDir: proc, kill });
-    assert.equal(r.gone, false);
+    const r = await terminateGroup(100, { spareLeader: true, procDir: fakeProc(mindTree()), kill });
+    assert.equal(r, "signalled");
     assert.deepEqual(sent.sort(byPid), [
       [101, "SIGTERM"],
       [102, "SIGTERM"],
@@ -122,7 +140,7 @@ describe("terminateGroup", () => {
     ]);
   });
 
-  it("skips a pid that was reused since the walk", async () => {
+  it("skips a pid that was reused since the scan", async () => {
     const proc = fakeProc(mindTree());
     const sent: number[] = [];
     const kill = (pid: number) => {
@@ -143,41 +161,57 @@ describe("terminateGroup", () => {
   });
 
   it("falls back to the group when only the supervisor is left", async () => {
-    const proc = fakeProc({ 100: { comm: "runuser", pgrp: 100 } });
     const { sent, kill } = recorder();
+    const proc = fakeProc({ 100: { comm: "runuser", pgrp: 100 } });
     await terminateGroup(100, { spareLeader: true, procDir: proc, kill });
     assert.deepEqual(sent, [[-100, "SIGTERM"]]);
   });
 
-  it("falls back to the group, and says so, when /proc can't be walked", async () => {
+  it("falls back to the group, and says so, when /proc can't be scanned", async () => {
     const logs = captureLogs();
     try {
       const { sent, kill } = recorder();
       await terminateGroup(100, { spareLeader: true, procDir: "/nonexistent-proc", kill });
       assert.deepEqual(sent, [[-100, "SIGTERM"]]);
-      assert.ok(logs.lines.some((l) => l.includes("could not walk process group 100")));
+      assert.ok(logs.lines.some((l) => l.includes("could not scan process group 100")));
     } finally {
       logs.restore();
     }
   });
 
+  it("sends nothing for a reaped leader whose group has no members left", async () => {
+    // Nothing holds the id any more, so a group signal could reach a new group.
+    const { sent, kill } = recorder();
+    const proc = fakeProc({ 400: { comm: "unrelated", pgrp: 999 } });
+    for (const spareLeader of [true, false]) {
+      const r = await terminateGroup(100, { spareLeader, leaderExited: true, procDir: proc, kill });
+      assert.equal(r, "gone");
+    }
+    assert.deepEqual(sent, []);
+  });
+
+  it("signals the group of a reaped leader while a member still holds it", async () => {
+    const { sent, kill } = recorder();
+    const proc = fakeProc({ 301: { comm: "worker", pgrp: 100 } });
+    await terminateGroup(100, { spareLeader: false, leaderExited: true, procDir: proc, kill });
+    assert.deepEqual(sent, [[-100, "SIGTERM"]]);
+  });
+
   it("reports a group that is already gone", async () => {
     const { kill } = recorder(() => errno("ESRCH"));
-    assert.equal((await terminateGroup(100, { spareLeader: false, kill })).gone, true);
+    assert.equal(await terminateGroup(100, { spareLeader: false, kill }), "gone");
   });
 
   it("logs a failure other than ESRCH and keeps signalling the rest", async () => {
     const logs = captureLogs();
     try {
-      const proc = fakeProc(mindTree());
       const { sent, kill } = recorder((pid) => (pid === 101 ? errno("EPERM") : undefined));
-      await terminateGroup(100, { spareLeader: true, procDir: proc, kill });
+      await terminateGroup(100, { spareLeader: true, procDir: fakeProc(mindTree()), kill });
       assert.deepEqual(sent.sort(byPid), [
         [102, "SIGTERM"],
         [301, "SIGTERM"],
       ]);
-      assert.ok(logs.lines.some((l) => l.includes("SIGTERM to pid 101 (group 100) failed")));
-      assert.ok(!logs.lines.some((l) => l.includes("pid 102")), "ESRCH would be silent");
+      assert.ok(logs.lines.some((l) => l.includes("SIGTERM to pid 101 failed")));
     } finally {
       logs.restore();
     }
@@ -185,34 +219,34 @@ describe("terminateGroup", () => {
 });
 
 describe("stopGroup", () => {
-  it("sends no SIGKILL on a clean exit, and at the deadline kills only survivors", async () => {
+  it("sends no SIGKILL on a clean exit, and at the deadline kills the group only if it has members", async () => {
     const proc = fakeProc(mindTree());
     const child = fakeChild(100);
     const { sent, kill } = recorder();
     const stopped = stopGroup(child, { spareLeader: true, graceMs: 150, procDir: proc, kill });
     await delay(10);
-    // node and runuser exit; the SDK subprocess (102) is still flushing.
-    rmSync(resolve(proc, "101"), { recursive: true });
+    // runuser and node exit; the SDK subprocess (102) is still flushing.
+    for (const pid of [100, 101, 301]) rmSync(resolve(proc, String(pid)), { recursive: true });
     child.emit("exit", 0);
     const exitedAt = Date.now();
     await stopped;
     assert.ok(Date.now() - exitedAt < 100, "a clean exit does not wait out the grace");
     assert.ok(!sent.some(([, sig]) => sig === "SIGKILL"), "nothing SIGKILLed on exit");
     await delay(250);
-    // The straggler that outlived the deadline, individually — never the group.
-    assert.deepEqual(sent.filter(([, sig]) => sig === "SIGKILL").sort(byPid), [
-      [102, "SIGKILL"],
-      [301, "SIGKILL"],
-    ]);
+    // 102 still holds the group's id, which makes the group signal safe.
+    assert.deepEqual(
+      sent.filter(([, sig]) => sig === "SIGKILL"),
+      [[-100, "SIGKILL"]],
+    );
   });
 
-  it("sends nothing at the deadline when everything has gone", async () => {
+  it("sends nothing at the deadline when the whole group has gone", async () => {
     const proc = fakeProc(mindTree());
     const child = fakeChild(100);
     const { sent, kill } = recorder();
     const stopped = stopGroup(child, { spareLeader: true, graceMs: 50, procDir: proc, kill });
     await delay(10);
-    for (const pid of [101, 102, 301]) rmSync(resolve(proc, String(pid)), { recursive: true });
+    for (const pid of [100, 101, 102, 301]) rmSync(resolve(proc, String(pid)), { recursive: true });
     child.emit("exit", 0);
     await stopped;
     await delay(120);
@@ -271,24 +305,63 @@ describe("stopGroup", () => {
   });
 });
 
-describe("stopExecChildren", () => {
+describe("stopTrackedChildren", () => {
+  /** A real `sh` that records the SIGTERM it gets, once it is up. */
+  async function trapping(dir: string, name: string, timed: boolean) {
+    const script = `trap 'echo term >> "${dir}/${name}"; exit 0' TERM; touch "${dir}/${name}-up"; sleep 30 & wait`;
+    let child: ChildProcess | null = null;
+    const done = timed
+      ? exec("sh", ["-c", script], { timeout: 60_000 })
+      : new Promise<void>((resolve) => {
+          child = spawn("sh", ["-c", script], { stdio: "ignore" });
+          child.on("exit", () => resolve());
+        });
+    done.catch(() => {});
+    while (!existsSync(resolve(dir, `${name}-up`))) await delay(10);
+    return { done, child: child as ChildProcess | null };
+  }
+
   it("SIGTERMs an in-flight timed child at daemon shutdown and waits for it", async () => {
     const dir = tempDir("exec-shutdown-");
-    const marker = resolve(dir, "got-term");
-    const running = exec(
-      "sh",
-      ["-c", `trap 'echo term > "${marker}"; exit 0' TERM; touch "${dir}/up"; sleep 30 & wait`],
-      { timeout: 60_000 },
-    );
-    running.catch(() => {});
-    while (!existsSync(resolve(dir, "up"))) await delay(10);
+    const { done } = await trapping(dir, "timed", true);
     const started = Date.now();
-    await stopExecChildren(5_000);
-    assert.ok(existsSync(marker), "the script ran its SIGTERM handler");
+    await stopTrackedChildren(5_000);
+    assert.ok(existsSync(resolve(dir, "timed")), "the script ran its SIGTERM handler");
     assert.ok(
       Date.now() - started < 4_000,
       "a script that exits on SIGTERM isn't held to the grace",
     );
-    await running;
+    await done;
+  });
+
+  it("also stops a child registered while the shutdown is under way", async () => {
+    const dir = tempDir("exec-shutdown-");
+    const first = await trapping(dir, "first", true);
+    let shutdownDone!: () => void;
+    const rest = new Promise<void>((r) => (shutdownDone = r));
+    const stopping = stopTrackedChildren(5_000, rest);
+    const late = await trapping(dir, "late", false);
+    trackChild(late.child!, { group: false, supervised: false });
+    shutdownDone();
+    await stopping;
+    await Promise.all([first.done, late.done]);
+    assert.ok(existsSync(resolve(dir, "first")));
+    assert.equal(readFileSync(resolve(dir, "late"), "utf-8").trim(), "term");
+  });
+
+  it("signals an untimed supervised child's own children, not the supervisor", async () => {
+    const dir = tempDir("exec-shutdown-");
+    const { child, done } = await trapping(dir, "sup", false);
+    await delay(50); // let sh fork the sleep
+    trackChild(child!, { group: false, supervised: true });
+    await stopTrackedChildren(5_000);
+    await done;
+    if (process.platform === "linux") {
+      // The sleep below took the SIGTERM; sh — standing in for runuser — did not.
+      assert.equal(existsSync(resolve(dir, "sup")), false);
+    } else {
+      // No /proc: the child itself is signalled, as runuser would relay it.
+      assert.ok(existsSync(resolve(dir, "sup")));
+    }
   });
 });

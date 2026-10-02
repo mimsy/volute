@@ -47,6 +47,7 @@ import { exec, gitExec } from "./util/exec.js";
 import log from "./util/logger.js";
 import { buildMindBaseEnv } from "./util/mind-env.js";
 import { PathTraversalError } from "./util/paths.js";
+import { trackChild } from "./util/tracked-children.js";
 import { voluteRoot } from "./util/volute-root.js";
 
 const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
@@ -856,14 +857,15 @@ async function removeMindTree(dir: string, rel: string, owner: MindFileOwner | n
     await rm(target, { recursive: true, force: true });
     return;
   }
-  await new Promise<void>((resolveRm, rejectRm) =>
-    execFile(
+  await new Promise<void>((resolveRm, rejectRm) => {
+    const child = execFile(
       "rm",
       ["-rf", "--", target],
       { uid: owner.uid, gid: owner.gid, env: buildMindBaseEnv() },
       (err) => (err ? rejectRm(err) : resolveRm()),
-    ),
-  );
+    );
+    trackChild(child, { group: false, supervised: false });
+  });
 }
 
 /** Remove an installed skill's directory from a mind ({@link removeMindTree}). */

@@ -31,7 +31,7 @@ import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { buildMindBaseEnv, type IsolationMode } from "../util/mind-env.js";
-import { stopGroup } from "../util/process-group.js";
+import { isRunuser, stopGroup } from "../util/process-group.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
 import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
@@ -396,7 +396,7 @@ export class MindManager {
             if (stdout.includes("server.ts")) {
               mlog.warn(`killing stale mind process ${stalePid} for ${name}`);
               await stopGroup(stalePid, {
-                spareLeader: await wrapSupervises(name),
+                spareLeader: await isRunuser(stalePid),
                 graceMs: STOP_GRACE_MS,
               });
             } else {
@@ -420,7 +420,7 @@ export class MindManager {
       });
       if (res.ok) {
         mlog.warn(`killing orphan process on port ${port}`);
-        await killProcessOnPort(port, await wrapSupervises(name));
+        await killProcessOnPort(port);
       }
     } catch {
       // Port not in use — good
@@ -1196,40 +1196,42 @@ export class MindManager {
   }
 }
 
-async function killProcessOnPort(port: number, spareLeader: boolean): Promise<void> {
-  try {
-    const { stdout } = await execFileAsync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
-    const groups = new Set<number>();
-    for (const line of stdout.trim().split("\n").filter(Boolean)) {
-      const pid = parseInt(line, 10);
-      // Find the process group to stop supervisors/wrappers too
-      try {
-        const { stdout: psOut } = await execFileAsync("ps", ["-p", String(pid), "-o", "pgid="]);
-        const pgid = parseInt(psOut.trim(), 10);
-        if (pgid > 1) {
-          groups.add(pgid);
-          continue;
-        }
-      } catch {}
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {}
+async function killProcessOnPort(port: number): Promise<void> {
+  const listeners = async () => {
+    try {
+      const { stdout } = await execFileAsync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
+      return stdout.trim().split("\n").filter(Boolean).map(Number);
+    } catch {
+      return []; // lsof exits 1 when nothing listens
     }
-    await Promise.all(
-      [...groups].map((pgid) => stopGroup(pgid, { spareLeader, graceMs: STOP_GRACE_MS })),
-    );
-  } catch {
-    // lsof may fail if no process on port — expected
+  };
+  const groups = new Set<number>();
+  for (const pid of await listeners()) {
+    // Find the process group to stop supervisors/wrappers too
+    try {
+      const { stdout: psOut } = await execFileAsync("ps", ["-p", String(pid), "-o", "pgid="]);
+      const pgid = parseInt(psOut.trim(), 10);
+      if (pgid > 1) {
+        groups.add(pgid);
+        continue;
+      }
+    } catch {}
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {}
   }
-}
-
-/**
- * Whether the isolation wrap this daemon uses for `name` is supervised — the best
- * answer for an orphan a previous daemon started, which the same wrap launched
- * unless the isolation config changed in between.
- */
-async function wrapSupervises(name: string): Promise<boolean> {
-  return (await wrapForIsolation("true", [], name))[2];
+  await Promise.all(
+    [...groups].map(async (pgid) =>
+      // Supervised is read off the process itself: an orphan from a previous
+      // daemon was started by whatever wrap that daemon used.
+      stopGroup(pgid, { spareLeader: await isRunuser(pgid), graceMs: STOP_GRACE_MS }),
+    ),
+  );
+  // The new server binds this port next: wait, bounded, for it to come free.
+  const deadline = Date.now() + STOP_GRACE_MS;
+  while (Date.now() < deadline && (await listeners()).length) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 let instance: MindManager | null = null;

@@ -129,7 +129,7 @@ describe("MindManager.stopMind signals", () => {
       const mgr = new MindManager() as AnyMgr;
       mgr.minds.set(name, { child, port: 4993, supervised });
       const p = mgr.stopMind(name);
-      await delay(50); // withLock + the group walk
+      await delay(50); // withLock + the group scan
       (process as AnyMgr).kill = origKill;
       process.kill(-pgid, "SIGKILL"); // end it for real, as the stub didn't
       await p;
@@ -144,7 +144,7 @@ describe("MindManager.stopMind signals", () => {
   it("SIGTERMs an unsupervised mind's group, and no SIGKILL follows its exit", async () => {
     const { sent, logs, pgid } = await stopTracked(false);
     assert.deepEqual(sent, [[-pgid, "SIGTERM"]]);
-    assert.ok(!logs.some((l) => l.includes("could not walk")), "no walk for an unsupervised stop");
+    assert.ok(!logs.some((l) => l.includes("could not scan")), "no scan for an unsupervised stop");
   });
 
   it("signals a runuser-supervised mind past its leader (#1364)", async () => {
@@ -156,9 +156,9 @@ describe("MindManager.stopMind signals", () => {
       assert.ok(sent[0][0] > 0);
       assert.equal(sent[0][1], "SIGTERM");
     } else {
-      // No /proc to walk: the group fallback, and the log saying so.
+      // No /proc to scan: the group fallback, and the log saying so.
       assert.deepEqual(sent, [[-pgid, "SIGTERM"]]);
-      assert.ok(logs.some((l) => l.includes(`could not walk process group ${pgid}`)));
+      assert.ok(logs.some((l) => l.includes(`could not scan process group ${pgid}`)));
     }
   });
 });
