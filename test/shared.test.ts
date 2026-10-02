@@ -30,6 +30,7 @@ import {
   pagesPullAndMerge,
   pagesRepoDir,
   pagesStatus,
+  REFUSALS,
   reclaimGitDir,
   removePagesWorktree,
   worktreeGitDir,
@@ -1135,6 +1136,52 @@ describe("pages collaborative repo", () => {
       assert.ok(Number(year) > 2001, `the commit borrowed a stale author date (${year})`);
     });
 
+    it("publishes what the mind staged after finishing a rebase itself (#1335)", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, gitDir } = await diverged("self-staged", "page.md", true);
+      const isolation = nonOwnerIsolation();
+      assert.equal((await pagesPull(b, dirB, dataDir, isolation)).conflicts, true);
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      mindGit(wtB, "add", "page.md");
+      mindGit(wtB, "-c", "core.editor=true", "rebase", "--continue");
+      assert.ok(existsSync(resolve(gitDir, "CHERRY_PICK_HEAD")), "the simulation is off");
+
+      // Staged over the leftover: git status calls it a cherry-pick, but it's the mind's.
+      writeFileSync(resolve(wtB, "next.md"), "next\n");
+      mindGit(wtB, "add", "next.md");
+      assert.match(git(wtB, "status"), /cherry-pick/);
+      const result = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.equal(git(pagesRepoDir(dataDir), "show", "main:next.md"), "next");
+      assert.equal(git(pagesRepoDir(dataDir), "show", "main:page.md"), "version A and B");
+      assert.deepEqual(leftovers(gitDir), []);
+    });
+
+    it("leaves a cherry-pick the mind started over a leftover alone (#1335)", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, gitDir } = await diverged("pick-over", "page.md", true);
+      const isolation = nonOwnerIsolation();
+      assert.equal((await pagesPull(b, dirB, dataDir, isolation)).conflicts, true);
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      mindGit(wtB, "add", "page.md");
+      mindGit(wtB, "-c", "core.editor=true", "rebase", "--continue");
+      const stale = readFileSync(resolve(gitDir, "CHERRY_PICK_HEAD"), "utf-8");
+
+      // B's original commit, replayed again: it conflicts with its own rebased copy.
+      writeFileSync(resolve(wtB, "page.md"), "something else\n");
+      mindGit(wtB, "commit", "-qam", "else");
+      assert.throws(() => mindGit(wtB, "cherry-pick", stale.trim()));
+      const pick = readFileSync(resolve(gitDir, "CHERRY_PICK_HEAD"), "utf-8");
+      writeFileSync(resolve(wtB, "page.md"), "picked\n");
+      mindGit(wtB, "add", "page.md");
+
+      const refused = await pagesPull(b, dirB, dataDir, isolation);
+      assert.equal(refused.ok, false);
+      assert.match(refused.message ?? "", /a cherry-pick you started/);
+      assert.equal(readFileSync(resolve(gitDir, "CHERRY_PICK_HEAD"), "utf-8"), pick);
+      assert.match(git(wtB, "status", "--porcelain"), /^M {2}page\.md/m);
+    });
+
     /** B's publish stopped on a conflict in page.md, as the mind will find it. */
     async function stoppedPublish(tag: string) {
       const d = await diverged(tag, "page.md", true);
@@ -1224,6 +1271,312 @@ describe("pages collaborative repo", () => {
       });
     }
 
+    /** B's branch has `git cherry-pick main` stopped on a conflict in page.md. */
+    async function ownPickStopped(tag: string) {
+      const d = await diverged(tag, "page.md", true);
+      assert.throws(() => mindGit(d.wtB, "cherry-pick", "main"));
+      return { ...d, isolation: nonOwnerIsolation() };
+    }
+
+    it("publishes a cherry-pick the mind stopped with --quit, keeping its changes", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, gitDir, isolation } = await ownPickStopped("quit");
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      mindGit(wtB, "add", "page.md");
+      const refused = await pagesPull(b, dirB, dataDir, isolation);
+      assert.match(refused.message ?? "", /`git cherry-pick --continue`/);
+      assert.match(refused.message ?? "", /`git cherry-pick --quit`, which keeps/);
+
+      // The way out it was given keeps the staged resolution, and publishing commits it.
+      mindGit(wtB, "cherry-pick", "--quit");
+      const replayed = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.doesNotMatch(replayed.message ?? "", /you started/);
+      assert.equal(git(pagesRepoDir(dataDir), "show", `${b}:page.md`), "version A and B");
+      // B's own first commit still meets main's on the way, as any publish of it would.
+      assert.equal(replayed.conflicts, true, JSON.stringify(replayed));
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      mindGit(wtB, "add", "page.md");
+      const result = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.equal(onMain("page.md"), "version A and B");
+      assert.deepEqual(leftovers(gitDir), []);
+    });
+
+    it("never commits a conflict a --quit left unresolved", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, isolation } = await ownPickStopped("quit-unresolved");
+      const head = git(wtB, "rev-parse", "HEAD");
+      mindGit(wtB, "cherry-pick", "--quit");
+      assert.match(git(wtB, "status", "--porcelain"), /^(UU|AA) page\.md/m);
+
+      const unresolved = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.equal(unresolved.ok, false);
+      assert.match(unresolved.message ?? "", /still marked as conflicted: page\.md/);
+      assert.equal(git(wtB, "rev-parse", "HEAD"), head, "nothing committed");
+      assert.equal(onMain("page.md"), "version A");
+    });
+
+    it("publishes a merge the mind ended with --quit, with what it changed in it", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, gitDir } = await diverged("merge-quit", "page.md", true);
+      const isolation = nonOwnerIsolation();
+      assert.throws(() => mindGit(wtB, "merge", "main"));
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      writeFileSync(resolve(wtB, "extra.md"), "made during the merge\n");
+      mindGit(wtB, "add", "page.md", "extra.md");
+      const refused = await pagesPull(b, dirB, dataDir, isolation);
+      assert.match(refused.message ?? "", /then end it with `git merge --quit`/);
+
+      mindGit(wtB, "merge", "--quit");
+      // B's own commit meets main's on the way, as any publish of it would.
+      const replayed = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.equal(replayed.conflicts, true, JSON.stringify(replayed));
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      mindGit(wtB, "add", "page.md");
+      const result = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.equal(onMain("page.md"), "version A and B");
+      assert.equal(onMain("extra.md"), "made during the merge");
+      assert.deepEqual(leftovers(gitDir), []);
+    });
+
+    /** Commit `files` straight onto main, as if published long ago. */
+    function onMainAlready(files: Record<string, string>) {
+      const repo = pagesRepoDir(dataDir);
+      for (const [f, text] of Object.entries(files)) writeFileSync(resolve(repo, f), text);
+      git(repo, "add", ...Object.keys(files));
+      git(repo, "-c", "user.name=x", "-c", "user.email=x@x", "commit", "-qm", "earlier");
+    }
+
+    const BLOCK = "<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n";
+    // Long enough that git still sees plain.md renamed once a block is added to it.
+    const PLAIN = "plain\n".repeat(30);
+
+    for (const [label, shape] of [
+      ["committed by the mind", (wt: string) => writeFileSync(resolve(wt, "git.md"), BLOCK)],
+      [
+        "with CRLF line ends",
+        (wt: string) => writeFileSync(resolve(wt, "git.md"), BLOCK.replace(/\n/g, "\r\n")),
+      ],
+      [
+        "in a page renamed as it was added to",
+        (wt: string) => {
+          mindGit(wt, "mv", "plain.md", "git.md");
+          writeFileSync(resolve(wt, "git.md"), `${PLAIN}${BLOCK}`);
+        },
+      ],
+      [
+        "beside an example the page already showed",
+        (wt: string) => writeFileSync(resolve(wt, "example.md"), `${BLOCK}text\n${BLOCK}`),
+      ],
+    ] as const) {
+      it(`never publishes a conflict ${label}`, async (t) => {
+        t.mock.method(console, "warn", () => {});
+        await ensurePagesRepo(dataDir);
+        onMainAlready({ "plain.md": PLAIN, "example.md": `${BLOCK}text\n` });
+        const { b, dirB, wtB } = await diverged(`block-${label.split(" ")[1]}`, "page.md", false);
+        const isolation = nonOwnerIsolation();
+        assert.ok((await pagesPull(b, dirB, dataDir, isolation)).ok);
+        shape(wtB);
+        // Committed past every earlier check, as auto-commit or `--continue` would.
+        mindGit(wtB, "add", "-A");
+        mindGit(wtB, "commit", "-qm", "auto-commit");
+        const main = git(pagesRepoDir(dataDir), "rev-parse", "main");
+        if (label.includes("renamed")) {
+          const status = git(pagesRepoDir(dataDir), "diff", "--name-status", `main...${b}`);
+          assert.match(status, /^R\d+\s+plain\.md\s+git\.md$/m, "git sees the rename");
+        }
+
+        for (const publish of [pagesPullAndMerge, pagesMerge]) {
+          const refused = await publish(b, dirB, dataDir, "B", isolation);
+          assert.equal(refused.ok, false);
+          assert.match(refused.message ?? "", /have a conflict in them .*: (git|example)\.md/);
+          assert.equal(git(pagesRepoDir(dataDir), "rev-parse", "main"), main, "nothing merged");
+        }
+      });
+    }
+
+    it("publishes a page that showed a conflict, moved to a new name", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      await ensurePagesRepo(dataDir);
+      onMainAlready({ "example.md": `${BLOCK}${"some text\n".repeat(20)}` });
+      const { b, dirB, wtB } = await diverged("block-moved", "page.md", false);
+      const isolation = nonOwnerIsolation();
+      assert.ok((await pagesPull(b, dirB, dataDir, isolation)).ok);
+      mindGit(wtB, "mv", "example.md", "moved.md");
+      mindGit(wtB, "commit", "-qm", "move");
+      const result = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.match(onMain("moved.md"), /^=======$/m);
+    });
+
+    it("refuses what's too large to check for conflicts, with a reason", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB } = await diverged("block-huge", "page.md", false);
+      writeFileSync(resolve(wtB, "huge.md"), "=======\n".repeat(2_200_000));
+      const main = git(pagesRepoDir(dataDir), "rev-parse", "main");
+      const refused = await pagesPullAndMerge(b, dirB, dataDir, "B", nonOwnerIsolation());
+      assert.equal(refused.ok, false);
+      assert.match(refused.message ?? "", /too large to check for conflict markers/);
+      assert.equal(git(pagesRepoDir(dataDir), "rev-parse", "main"), main, "nothing merged");
+    });
+
+    it("reads a page as text for conflicts, whatever .gitattributes says", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      await ensurePagesRepo(dataDir);
+      onMainAlready({ ".gitattributes": "*.md -diff\n" });
+      const { b, dirB, wtB } = await diverged("block-attrs", "page.md", false);
+      const isolation = nonOwnerIsolation();
+      assert.ok((await pagesPull(b, dirB, dataDir, isolation)).ok);
+      writeFileSync(resolve(wtB, "git.md"), BLOCK);
+      mindGit(wtB, "add", "git.md");
+      mindGit(wtB, "commit", "-qm", "auto-commit");
+      const refused = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.match(refused.message ?? "", /have a conflict in them .*: git\.md/);
+    });
+
+    it("publishes edits to a page that already showed a conflict, and indented ones", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      await ensurePagesRepo(dataDir);
+      onMainAlready({ "example.md": `${BLOCK}text\n` });
+      const { b, dirB, wtB } = await diverged("block-ok", "page.md", false);
+      const isolation = nonOwnerIsolation();
+      writeFileSync(resolve(wtB, "example.md"), `${BLOCK}more text\n`);
+      writeFileSync(resolve(wtB, "git.md"), BLOCK.replace(/^/gm, "    "));
+      const result = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.match(onMain("example.md"), /^more text$/m);
+    });
+    it("names the operation by git's record of it, not a leftover head beside it", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const pick = await ownPickStopped("label-pick");
+      writeFileSync(resolve(pick.gitDir, "REVERT_HEAD"), git(pick.wtB, "rev-parse", "HEAD"));
+      writeFileSync(resolve(pick.wtB, "page.md"), "version A and B\n");
+      mindGit(pick.wtB, "add", "page.md");
+      const picking = await pagesPull(pick.b, pick.dirB, dataDir, pick.isolation);
+      assert.match(picking.message ?? "", /a cherry-pick you started/);
+
+      // A revert of B's commit under a later edit of the same line, beside a stale pick head.
+      const rev = await diverged("label-revert", "page.md", true);
+      writeFileSync(resolve(rev.wtB, "page.md"), "version C\n");
+      mindGit(rev.wtB, "commit", "-qam", "C");
+      writeFileSync(resolve(rev.gitDir, "CHERRY_PICK_HEAD"), git(rev.wtB, "rev-parse", "HEAD"));
+      assert.throws(() => mindGit(rev.wtB, "revert", "--no-edit", "HEAD~1"));
+      writeFileSync(resolve(rev.wtB, "page.md"), "version C, B reverted\n");
+      mindGit(rev.wtB, "add", "page.md");
+      const reverting = await pagesPull(rev.b, rev.dirB, dataDir, nonOwnerIsolation());
+      assert.match(reverting.message ?? "", /a revert you started/);
+      assert.match(reverting.message ?? "", /`git revert --continue`/);
+    });
+    it("refuses a worktree taken off the mind's branch, as by `git rebase --quit`", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, publish } = await stoppedPublish("rebase-quit");
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      mindGit(wtB, "add", "page.md");
+      const tip = git(pagesRepoDir(dataDir), "rev-parse", b);
+      mindGit(wtB, "rebase", "--quit");
+
+      // What `--quit` leaves still reads as the rebase's last pick, which is named first.
+      const picking = await publish();
+      assert.match(picking.message ?? "", /a cherry-pick you started/);
+      mindGit(wtB, "cherry-pick", "--quit");
+      const refused = await publish();
+      assert.equal(refused.ok, false);
+      assert.match(refused.message ?? "", new RegExp(`isn't on your branch \\(${b}\\)`));
+      assert.equal(git(pagesRepoDir(dataDir), "rev-parse", b), tip, "branch untouched");
+      assert.equal(onMain("page.md"), "version A");
+      assert.equal(git(wtB, "show", ":page.md"), "version A and B", "the mind's index kept");
+      assert.equal((await pagesPull(b, dirB, dataDir, nonOwnerIsolation())).ok, false);
+    });
+
+    it("never finishes a rebase the mind stopped off its branch", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, gitDir } = await diverged("detached-rebase", "page.md", true);
+      const isolation = nonOwnerIsolation();
+      const tip = git(pagesRepoDir(dataDir), "rev-parse", b);
+      mindGit(wtB, "switch", "-q", "--detach");
+      writeFileSync(resolve(wtB, "page.md"), "version D\n");
+      mindGit(wtB, "commit", "-qam", "D");
+      assert.throws(() => mindGit(wtB, "rebase", "main"));
+      writeFileSync(resolve(wtB, "page.md"), "version A and D\n");
+      mindGit(wtB, "add", "page.md");
+
+      for (const publish of [pagesPullAndMerge, pagesMerge]) {
+        const refused = await publish(b, dirB, dataDir, "B", isolation);
+        assert.match(refused.message ?? "", new RegExp(`isn't on your branch \\(${b}\\)`));
+      }
+      assert.equal(git(pagesRepoDir(dataDir), "rev-parse", b), tip, "branch untouched");
+      assert.equal(onMain("page.md"), "version A");
+      assert.match(git(wtB, "status"), /rebas/, "still the mind's rebase");
+
+      // As told: `git switch` refuses mid-rebase, so the rebase is finished first.
+      const refused = await pagesPull(b, dirB, dataDir, isolation);
+      assert.match(refused.message ?? "", /finish it first .*`git rebase --continue`/);
+      assert.throws(() => mindGit(wtB, "switch", "-q", b));
+      // Each stop resolved and published again, as the mind would, then `--continue`.
+      for (let i = 0; existsSync(resolve(gitDir, "rebase-merge")) && i < 3; i++) {
+        writeFileSync(resolve(wtB, "page.md"), "version A and D\n");
+        mindGit(wtB, "add", "page.md");
+        await pagesPull(b, dirB, dataDir, isolation);
+        try {
+          mindGit(wtB, "-c", "core.editor=true", "rebase", "--continue");
+        } catch {}
+      }
+      assert.ok(!existsSync(resolve(gitDir, "rebase-merge")), "the mind's rebase finished");
+      const after = await pagesPull(b, dirB, dataDir, isolation);
+      assert.match(after.message ?? "", /isn't on your branch/);
+      assert.doesNotMatch(after.message ?? "", /finish it first/);
+      mindGit(wtB, "switch", "-q", b);
+    });
+
+    it("names a cherry-pick started off the branch before the way back", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB } = await diverged("detached-pick", "page.md", false);
+      const isolation = nonOwnerIsolation();
+      mindGit(wtB, "switch", "-q", "--detach");
+      for (const v of ["one", "two"]) {
+        writeFileSync(resolve(wtB, "x.md"), `${v}\n`);
+        mindGit(wtB, "add", "x.md");
+        mindGit(wtB, "commit", "-qm", v);
+      }
+      const commits = git(wtB, "rev-list", "--reverse", `${b}..HEAD`).split("\n");
+      assert.throws(() => mindGit(wtB, "cherry-pick", commits[0]));
+      writeFileSync(resolve(wtB, "x.md"), "three\n");
+      mindGit(wtB, "add", "x.md");
+
+      // Each refusal's advice, followed as given, leads to the next and then through.
+      const picking = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.match(picking.message ?? "", /a cherry-pick you started/);
+      mindGit(wtB, "-c", "core.editor=true", "cherry-pick", "--continue");
+      const off = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.match(off.message ?? "", /isn't on your branch/);
+      const noted = git(wtB, "rev-list", "--reverse", `${b}..HEAD`).split("\n");
+      mindGit(wtB, "switch", "-q", b);
+      mindGit(wtB, "cherry-pick", ...noted);
+      const result = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.equal(onMain("x.md"), "three");
+    });
+
+    it("gets a commit made off the branch published the way the refusal says", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB } = await diverged("detached-commit", "page.md", false);
+      const isolation = nonOwnerIsolation();
+      mindGit(wtB, "switch", "-q", "--detach");
+      writeFileSync(resolve(wtB, "kept.md"), "made off the branch\n");
+      mindGit(wtB, "add", "kept.md");
+      mindGit(wtB, "commit", "-qm", "kept");
+      const refused = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.match(refused.message ?? "", /note each commit first/);
+
+      // As told: note it, switch back, cherry-pick it, publish again.
+      const commit = git(wtB, "rev-parse", "HEAD");
+      mindGit(wtB, "switch", "-q", b);
+      mindGit(wtB, "cherry-pick", commit);
+      const result = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.equal(onMain("kept.md"), "made off the branch");
+    });
     it("clears the CHERRY_PICK_HEAD a finished cherry-pick of the mind's leaves", async (t) => {
       t.mock.method(console, "warn", () => {});
       const { b, dirB, wtB, gitDir } = await diverged("own-finished", "page.md", false);
@@ -1247,6 +1600,46 @@ describe("pages collaborative repo", () => {
       assert.doesNotMatch(git(wtB, "status"), /cherry-pick/);
     });
 
+    // A way out that discards the mind's staged or uncommitted work is never offered
+    // (#1335): every refusal a mind can be given, checked as the words it would read.
+    it("offers no way out that discards the mind's changes", () => {
+      const R = REFUSALS;
+      const files = ["page.md", "other.md"];
+      const refusals = [
+        R.stoppedOnConflict(files),
+        R.markersMidRebase(files),
+        R.rebaseUnfinished("error: something"),
+        ...(["am", "merge", "cherry-pick", "revert"] as const).map(R.operationInProgress),
+        R.unresolvedConflicts(files),
+        R.conflictInBranch(files),
+        R.TOO_LARGE_TO_CHECK,
+        R.notOnBranch("some-mind"),
+        R.notOnBranch("some-mind", true),
+        R.hardLinked(files),
+        R.UNVERIFIED_WORKTREE,
+        R.refusedWorktree("some-mind", Object.assign(new Error("gone"), { code: "ENOENT" })),
+        R.refusedWorktree("some-mind", new Error("a symlink")),
+      ].map((r) => r.message);
+      assert.equal(refusals.length, Object.keys(R).length + 5, "every refusal, every variant");
+      const discards =
+        /reset --hard|checkout -- \.|checkout -f|restore \.|clean -f|switch -f|--discard-changes/;
+      for (const said of refusals) {
+        assert.doesNotMatch(said, discards, said);
+        // `--abort` only alongside what it discards.
+        for (const sentence of said.split(/(?<=\.) /).filter((x) => x.includes("--abort"))) {
+          assert.match(sentence, /discards every edit/, sentence);
+        }
+        // A switch leaves commits made off the branch behind: they're noted first.
+        const switching = said.indexOf("git switch");
+        const noted = said.indexOf("note each commit");
+        if (switching >= 0) assert.ok(noted >= 0 && noted < said.lastIndexOf("git switch"), said);
+      }
+      // A pick is finished with `--continue`; a merge ends with `--quit`, never a commit.
+      const [merge, revert] = [R.operationInProgress("merge"), R.operationInProgress("revert")];
+      assert.match(revert.message, /`git revert --continue`/);
+      assert.match(merge.message, /`git merge --quit`/);
+      assert.match(merge.message, /Don't commit the merge/);
+    });
     it("refuses a git am in progress instead of finishing it as a rebase", async (t) => {
       t.mock.method(console, "warn", () => {});
       const { b, dirB, gitDir } = await diverged("am", "page.md", false);
@@ -1255,7 +1648,7 @@ describe("pages collaborative repo", () => {
       writeFileSync(resolve(gitDir, "rebase-apply", "applying"), "");
       const result = await pagesPull(b, dirB, dataDir, nonOwnerIsolation());
       assert.equal(result.ok, false);
-      assert.match(result.message ?? "", /`git am --continue`.*`git am --abort`/);
+      assert.match(result.message ?? "", /`git am --continue`.*`git am --quit`/);
       assert.ok(existsSync(resolve(gitDir, "rebase-apply", "applying")));
       rmSync(resolve(gitDir, "rebase-apply"), { recursive: true });
     });

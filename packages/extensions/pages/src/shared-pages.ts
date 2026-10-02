@@ -95,6 +95,8 @@ type GitOpts = { cwd: string; asMind?: { name: string; home: string } };
  * pages lock it holds, forever.
  */
 const GIT_TIMEOUT_MS = 120_000;
+/** The most output a git call may return; past it the call fails. */
+const GIT_MAX_OUTPUT = 16 * 1024 * 1024;
 
 /**
  * Run a git command. Adds safe.directory when isolation is enabled, and a committer
@@ -121,7 +123,7 @@ async function gitExec(args: string[], opts: GitOpts, isolation?: IsolationInfo)
     env.HOME = opts.asMind.home;
   }
   return new Promise((resolve, reject) => {
-    const execOpts = { cwd: opts.cwd, env, timeout: GIT_TIMEOUT_MS };
+    const execOpts = { cwd: opts.cwd, env, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_OUTPUT };
     execFileCb(cmd, argv, execOpts, (err, stdout, stderr) => {
       if (err) {
         const e = err as Error & { stderr?: string; stdout?: string };
@@ -140,11 +142,11 @@ async function gitExec(args: string[], opts: GitOpts, isolation?: IsolationInfo)
  * a small regular file — never through a symlink, never a FIFO that would block the
  * daemon, never a device that reads forever.
  */
-function readPointerFile(path: string): string {
+function readPointerFile(path: string, max = 4096): string {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || st.size > 4096) throw new Error(`${path} is not a git pointer file`);
+    if (!st.isFile() || st.size > max) throw new Error(`${path} is not a git pointer file`);
     const buf = Buffer.alloc(st.size);
     readSync(fd, buf, 0, st.size, 0);
     return buf.toString("utf-8").trim();
@@ -535,6 +537,37 @@ function inGitDir(gitDir: string, name: string): boolean {
   }
 }
 
+/** A small file git keeps in the gitdir, read as `readPointerFile` does, or null. */
+function readGitDirFile(gitDir: string, name: string): string | null {
+  try {
+    return readPointerFile(resolve(gitDir, name), 1 << 16);
+  } catch {
+    return null;
+  }
+}
+
+/** The branch the worktree is on, or the one a stopped rebase will return to. */
+function branchOf(gitDir: string, rebasing: boolean): string | null {
+  if (!rebasing) return readGitDirFile(gitDir, "HEAD")?.match(/^ref: (\S+)$/)?.[1] ?? null;
+  return (
+    readGitDirFile(gitDir, "rebase-merge/head-name") ??
+    readGitDirFile(gitDir, "rebase-apply/head-name")
+  );
+}
+
+/**
+ * Whether the pick the mind is in is a revert, by git's own record: the todo list of
+ * a multi-commit one, else the one head a single pick leaves. With both heads there
+ * (one a leftover), the message git drafted says which.
+ */
+function pickingRevert(gitDir: string): boolean {
+  const todo = readGitDirFile(gitDir, "sequencer/todo");
+  if (todo !== null) return /^(revert|r)\s/.test(todo);
+  const [cherry, revert] = [inGitDir(gitDir, "CHERRY_PICK_HEAD"), inGitDir(gitDir, "REVERT_HEAD")];
+  if (cherry !== revert) return revert;
+  return /^This reverts commit [0-9a-f]+/m.test(readGitDirFile(gitDir, "MERGE_MSG") ?? "");
+}
+
 function rebaseInProgress(gitDir: string): boolean {
   return inGitDir(gitDir, "rebase-merge") || inGitDir(gitDir, "rebase-apply");
 }
@@ -573,12 +606,20 @@ async function inspectWorktree(
   const busy = (op: WorktreeOp) => ({ op, unmerged, dropped: [] });
   if (inGitDir(gitDir, "rebase-apply/applying")) return busy("am");
   if (rebaseInProgress(gitDir)) return busy("rebase");
-  const picking = inGitDir(gitDir, "REVERT_HEAD") ? "revert" : "cherry-pick";
+  const picking = pickingRevert(gitDir) ? "revert" : "cherry-pick";
   if (inGitDir(gitDir, "sequencer")) return busy(picking);
   // Git deletes MERGE_HEAD as a file, not a ref, so the mind's own git clears it.
   if (inGitDir(gitDir, "MERGE_HEAD")) return busy("merge");
+  // A pick head without MERGE_MSG is a leftover, not a pick in progress (#1335). A
+  // stopped pick writes MERGE_MSG, and every way of ending one (commit, `--continue`,
+  // `--skip`, `--abort`, `--quit`, a finished rebase) deletes it, a plain file the
+  // mind's git can delete, while the head stays (checked on git 2.39 and 2.50). So
+  // the mind's own changes staged over a leftover publish. The head's age can't say
+  // more: git leaves a pseudoref unwritten when the value is unchanged, so picking the
+  // very commit a leftover names keeps the leftover's mtime.
   const pickHead = inGitDir(gitDir, "CHERRY_PICK_HEAD") || inGitDir(gitDir, "REVERT_HEAD");
-  if (pickHead && (unmerged.length > 0 || (await hasStagedChanges(git, isolation)))) {
+  const stopped = pickHead && inGitDir(gitDir, "MERGE_MSG");
+  if (stopped && (unmerged.length > 0 || (await hasStagedChanges(git, isolation)))) {
     return busy(picking);
   }
   return { op: null, unmerged, dropped: dropGitDirRefs(gitDir, FINISHED_OP_REFS) };
@@ -816,6 +857,19 @@ async function findMultiplyLinkedFiles(git: GitOpts, isolation?: IsolationInfo):
   return [...found].sort();
 }
 
+/** What a mind is told when files it would commit are hard links. */
+function hardLinked(files: string[]): Refusal {
+  const list = files.map((f) => `  ${f}`).join("\n");
+  return {
+    ok: false,
+    message:
+      `Nothing was committed. These files in pages/_system have a second name on disk (a hard link):\n${list}\n` +
+      "Shared pages are committed by the daemon, which reads a file's contents with its own privileges, " +
+      "so a hard-linked file can't be published. Replace each with an ordinary copy " +
+      "(e.g. `cp <file> <file>.tmp && mv <file>.tmp <file>`) and try again.",
+  };
+}
+
 /**
  * Stage whatever the mind has left uncommitted in its worktree, or refuse.
  *
@@ -840,15 +894,7 @@ async function stagePendingChanges(
     console.warn(
       `[pages] refused to commit ${mindName}'s worktree: hard-linked ${linked.join(", ")}`,
     );
-    const list = linked.map((f) => `  ${f}`).join("\n");
-    return {
-      ok: false,
-      message:
-        `Nothing was committed. These files in pages/_system have a second name on disk (a hard link):\n${list}\n` +
-        "Shared pages are committed by the daemon, which reads a file's contents with its own privileges, " +
-        "so a hard-linked file can't be published. Replace each with an ordinary copy " +
-        "(e.g. `cp <file> <file>.tmp && mv <file>.tmp <file>`) and try again.",
-    };
+    return hardLinked(linked);
   }
 
   const status = (await gitExec(["status", "--porcelain"], git, isolation)).trim();
@@ -895,7 +941,9 @@ function stoppedOnConflict(files: string[]): Refusal {
       "recovers: first check those files have no <<<<<<< markers left, since once the " +
       "rebase is through, publishing no longer looks for them. To set the rebase aside " +
       "instead, `git rebase --abort` puts your branch back as it was (with the same " +
-      "packed-refs.lock errors), and the next publish meets this conflict again.",
+      "packed-refs.lock errors), but it also discards every edit made in pages/_system " +
+      "since the rebase stopped, so copy out any you want to keep first. The next publish " +
+      "meets this conflict again.",
   };
 }
 
@@ -972,18 +1020,7 @@ async function finishStoppedRebase(
   const staged = await stagePendingChanges(mindName, git, isolation);
   if (typeof staged !== "boolean") return staged;
   const marked = await filesWithMarkers(git, isolation);
-  if (marked.length > 0) {
-    return {
-      ok: false,
-      conflicts: true,
-      message:
-        "Nothing was published. Your pages are being rebased onto main, and these files in " +
-        `pages/_system still have conflict markers (<<<<<<<) in them: ${marked.join(", ")}. ` +
-        "Edit each to what it should say, then publish again. Or, to set the rebase aside, " +
-        "`git rebase --abort` puts your branch back as it was (git prints errors about " +
-        "packed-refs.lock as it does), and the next publish meets the same conflict.",
-    };
-  }
+  if (marked.length > 0) return markersMidRebase(marked);
   dropGitDirRefs(gitDir, ["CHERRY_PICK_HEAD"]);
   try {
     await gitExec(["-c", "core.editor=true", "rebase", "--continue"], git, isolation);
@@ -991,44 +1028,128 @@ async function finishStoppedRebase(
     // A later commit of the mind's can stop on a conflict of its own.
     const next = rebaseInProgress(gitDir) ? await unmergedFiles(git, isolation) : [];
     if (next.length > 0) return stoppedOnConflict(next);
-    return {
-      ok: false,
-      message:
-        "Nothing was published. Your pages are being rebased onto main, and the rebase " +
-        `couldn't be finished. Git said:\n${gitSaid(err)}\n` +
-        "`git status` in pages/_system shows where it stands. Publish again once that's sorted.",
-    };
+    return rebaseUnfinished(gitSaid(err));
   }
   dropGitDirRefs(gitDir, FINISHED_OP_REFS);
   return null;
 }
 
-/** What a mind is told when a git operation it started is still in progress. */
-function operationInProgress(op: Exclude<WorktreeOp, "rebase">): Refusal {
-  if (op === "am") {
-    return {
-      ok: false,
-      message:
-        "Nothing was published: a `git am` you started in pages/_system is still in " +
-        "progress, and publishing would commit it half-done. Finish it with " +
-        "`git am --continue`, or drop it with `git am --abort`, then publish again.",
-    };
-  }
-  const drop =
-    op === "merge"
-      ? "`git merge --abort`"
-      : `\`git ${op} --quit\` then \`git reset --hard HEAD\`, which also discards your ` +
-        "uncommitted changes there. Git prints errors about packed-refs.lock along the way: " +
-        "it can't delete its bookkeeping refs in this repo, and the next publish clears them";
+/** What a mind is told when its resolution of a stopped rebase still has markers in it. */
+function markersMidRebase(files: string[]): Refusal {
   return {
     ok: false,
+    conflicts: true,
     message:
-      `Nothing was published: a ${op} you started in pages/_system is still in progress, and ` +
-      "publishing would commit it half-done. Finish it (resolve the conflicts, `git add`, " +
-      `then \`git commit\`) or drop it (${drop}). Then publish again.`,
+      "Nothing was published. Your pages are being rebased onto main, and these files in " +
+      `pages/_system still have conflict markers (<<<<<<<) in them: ${files.join(", ")}. ` +
+      "Edit each to what it should say, then publish again. Or, to set the rebase aside, " +
+      "`git rebase --abort` puts your branch back as it was (git prints errors about " +
+      "packed-refs.lock as it does), but it also discards every edit made in " +
+      "pages/_system since the rebase stopped, so copy out any you want to keep first. " +
+      "The next publish meets the same conflict.",
   };
 }
 
+/** What a mind is told when finishing its stopped rebase failed for a reason git gave. */
+function rebaseUnfinished(said: string): Refusal {
+  return {
+    ok: false,
+    message:
+      "Nothing was published. Your pages are being rebased onto main, and the rebase " +
+      `couldn't be finished. Git said:\n${said}\n` +
+      "`git status` in pages/_system shows where it stands. Publish again once that's sorted.",
+  };
+}
+
+/**
+ * What a mind is told when a git operation it started is still in progress. Every
+ * way out keeps the mind's changes, never a reset that would discard them (#1335). A
+ * merge is ended with `--quit`, not committed: publishing rebases the branch onto
+ * main, and a rebase drops merge commits along with whatever was changed in them.
+ */
+function operationInProgress(op: Exclude<WorktreeOp, "rebase">): Refusal {
+  const keeps =
+    "which keeps everything it changed as your own uncommitted edits, for publishing to commit";
+  const finish =
+    op === "am"
+      ? "`git am --continue`"
+      : `resolve the conflicts, \`git add\`, then \`git ${op} --continue\``;
+  const ways =
+    op === "merge"
+      ? "Resolve the conflicts and `git add` them, then end it with `git merge --quit`, " +
+        `${keeps}. Don't commit the merge: publishing rebases your branch onto main, which ` +
+        "drops merge commits along with what was changed in them"
+      : `Finish it (${finish}), or stop it with \`git ${op} --quit\`, ${keeps}`;
+  const what = op === "am" ? "`git am`" : `a ${op}`;
+  return {
+    ok: false,
+    message:
+      `Nothing was published: ${what} you started in pages/_system is still in progress, ` +
+      `and publishing would commit it half-done. ${ways}. Git may print errors about ` +
+      "packed-refs.lock as it does: it can't delete its bookkeeping refs in this repo, and " +
+      "the next publish clears them. Then publish again.",
+  };
+}
+
+/** What a mind is told when its index still holds conflicts no operation is waiting on. */
+function unresolvedConflicts(files: string[]): Refusal {
+  return {
+    ok: false,
+    conflicts: true,
+    message:
+      "Nothing was published: these files in pages/_system are still marked as conflicted: " +
+      `${files.join(", ")}. Edit each to what it should say (removing the <<<<<<< ======= ` +
+      ">>>>>>> markers) and `git add` it, then publish again.",
+  };
+}
+
+/** What a mind is told when what it would publish adds a conflict git left in a file. */
+function conflictInBranch(files: string[]): Refusal {
+  return {
+    ok: false,
+    conflicts: true,
+    message:
+      "Nothing was published: these files in pages/_system have a conflict in them (the " +
+      `<<<<<<< ======= >>>>>>> lines a git conflict leaves): ${files.join(", ")}. Edit each ` +
+      "to what it should say, then publish again. If a page is meant to show those lines, " +
+      "indent them.",
+  };
+}
+
+/** What a mind is told when what it would publish can't be checked for conflicts. */
+const TOO_LARGE_TO_CHECK: Refusal = {
+  ok: false,
+  message:
+    "Nothing was published: your changes in pages/_system are too large to check for " +
+    "conflict markers (over 16 MB of changes to files with ======= lines in them), and " +
+    "they aren't sent unchecked. Making those files smaller gets them through.",
+};
+
+/**
+ * What a mind is told when pages/_system isn't on its own branch. A rebase it started
+ * there is finished first, not quit: the commits it hadn't replayed yet would be
+ * left behind where `git log` doesn't show them.
+ */
+function notOnBranch(branch: string, rebasing = false): Refusal {
+  const finishFirst = rebasing
+    ? "A rebase you started there is still in progress, and `git switch` refuses until " +
+      "it's done: finish it first (resolve the conflicts, `git add`, then " +
+      "`git rebase --continue`, which prints errors about packed-refs.lock that the next " +
+      "publish clears). "
+    : "";
+  return {
+    ok: false,
+    message:
+      `Nothing was published: pages/_system isn't on your branch (${branch}), so what's ` +
+      `there isn't what publishing would send. ${finishFirst}` +
+      "`git status` there shows where it is. If you " +
+      "committed anything there, note each commit first (`git log --oneline` lists them). " +
+      `Then \`git switch ${branch}\`: if git says that would overwrite your uncommitted ` +
+      "changes, it refuses and changes nothing, so copy those files out, switch, and put " +
+      "them back. Bring each commit you noted back with `git cherry-pick <commit>`, then " +
+      "publish again.",
+  };
+}
 /** What a mind is told when its worktree's gitdir can't be vouched for. */
 const UNVERIFIED_WORKTREE: Refusal = {
   ok: false,
@@ -1036,6 +1157,21 @@ const UNVERIFIED_WORKTREE: Refusal = {
     "Nothing was done: pages/_system's .git doesn't lead to its place in the shared pages " +
     "repo, so its state can't be checked. Move pages/_system aside and restart to provision " +
     "a fresh worktree (your files stay in the copy you moved), then try again.",
+};
+
+/** Every refusal a mind can be given about its worktree's git state, for tests to read. */
+export const REFUSALS = {
+  refusedWorktree,
+  hardLinked,
+  stoppedOnConflict,
+  markersMidRebase,
+  rebaseUnfinished,
+  operationInProgress,
+  unresolvedConflicts,
+  conflictInBranch,
+  TOO_LARGE_TO_CHECK,
+  notOnBranch,
+  UNVERIFIED_WORKTREE,
 };
 
 /**
@@ -1051,11 +1187,23 @@ async function settleWorktree(
   const gitDir = worktreeGitDir(dir, git.cwd);
   if (!gitDir) return { refused: UNVERIFIED_WORKTREE };
   const { op, unmerged } = await inspectWorktree(gitDir, git, isolation);
-  if (op === "rebase") {
+  // Anything in progress other than a rebase is named first, and conflicts it left:
+  // `git switch`, the way back to the branch, refuses while either is there.
+  if (op && op !== "rebase") return { refused: operationInProgress(op) };
+  const rebasing = op === "rebase";
+  if (!rebasing && unmerged.length > 0) return { refused: unresolvedConflicts(unmerged) };
+  // A rebase runs detached, and is finished only onto the branch it returns to. A
+  // commit anywhere else would land off the branch that publishing sends and resets,
+  // as after a `git rebase --quit`.
+  if (branchOf(gitDir, rebasing) !== `refs/heads/${mindName}`) {
+    // Not ours to finish, but the mind's own `--continue` fails for good on the
+    // CHERRY_PICK_HEAD it can't delete once its resolution is staged or committed.
+    if (rebasing && unmerged.length === 0) dropGitDirRefs(gitDir, ["CHERRY_PICK_HEAD"]);
+    return { refused: notOnBranch(mindName, rebasing) };
+  }
+  if (rebasing) {
     const refused = await finishStoppedRebase(mindName, gitDir, git, unmerged, isolation);
     if (refused) return { refused };
-  } else if (op) {
-    return { refused: operationInProgress(op) };
   }
   return { gitDir };
 }
@@ -1100,6 +1248,47 @@ async function pullIntoWorktree(
 }
 
 /**
+ * Files to which the mind's branch adds a whole conflict (a `<<<<<<<`, `=======` and
+ * `>>>>>>>` line, in order, all added), whatever committed it: publishing, the mind,
+ * auto-commit or `git rebase --continue` (#1335). Only added lines count, so a page
+ * that already showed a conflict can't hide a new one, while one moved to a new name
+ * isn't mistaken for one. Every file is read as text, whatever a `.gitattributes` the
+ * mind published says. Only files whose diff touches a `=======` line are diffed in
+ * full. Null when that diff is too large to read, so it can't be checked.
+ */
+async function conflictsAdded(
+  dir: string,
+  branch: string,
+  isolation?: IsolationInfo,
+): Promise<string[] | null> {
+  const args = ["diff", "--text", "--no-textconv", "--no-color", "--no-ext-diff", "-U0"];
+  let out: string;
+  try {
+    out = await gitExec([...args, "-G^=======", `main...${branch}`], { cwd: dir }, isolation);
+  } catch (err) {
+    if ((err as { code?: unknown }).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return null;
+    throw err;
+  }
+  const marks = [/^<{7}( .*)?\r?$/, /^={7}\r?$/, /^>{7}( .*)?\r?$/];
+  const found = new Set<string>();
+  let [file, header, next] = ["", false, 0];
+  for (const line of out.split("\n")) {
+    if (line.startsWith("diff --git ")) [file, header, next] = ["", true, 0];
+    else if (header) {
+      if (line.startsWith("+++ "))
+        file = line
+          .slice(4)
+          .replace(/^"?b\//, "")
+          .replace(/"$/, "");
+      if (line.startsWith("@@")) header = false;
+    } else if (line.startsWith("+") && marks[next].test(line.slice(1))) {
+      next = (next + 1) % marks.length;
+      if (next === 0) found.add(file);
+    }
+  }
+  return [...found];
+}
+/**
  * Squash-merge a mind's branch into main, then reset the mind's branch.
  */
 export async function pagesMerge(
@@ -1130,6 +1319,9 @@ export async function pagesMerge(
     if (!diff) {
       return { ok: true, message: "Nothing to publish" };
     }
+    const conflicted = await conflictsAdded(dir, mindName, isolation);
+    if (!conflicted) return TOO_LARGE_TO_CHECK;
+    if (conflicted.length > 0) return conflictInBranch(conflicted);
 
     // Squash-merge into main
     try {
@@ -1255,6 +1447,9 @@ export async function pagesPullAndMerge(
     if (!diff) {
       return { ok: true, message: "Nothing to publish" };
     }
+    const conflicted = await conflictsAdded(dir, mindName, isolation);
+    if (!conflicted) return TOO_LARGE_TO_CHECK;
+    if (conflicted.length > 0) return conflictInBranch(conflicted);
 
     // Squash-merge into main
     try {
