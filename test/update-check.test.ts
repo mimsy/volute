@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
@@ -10,6 +11,7 @@ import {
   getCurrentVersion,
   isNewer,
 } from "../packages/daemon/src/lib/update-check.js";
+import { voluteManifest } from "../packages/daemon/src/lib/util/volute-root.js";
 
 describe("isNewer", () => {
   it("detects newer major version", () => {
@@ -82,6 +84,44 @@ describe("getCurrentVersion", () => {
     );
     assert.equal(repoPkg.name, "volute");
     assert.equal(getCurrentVersion(), repoPkg.version);
+  });
+});
+
+describe("voluteManifest (#1314)", () => {
+  const repoRoot = resolve(import.meta.dirname, "..");
+
+  it("resolves the package root from the built dist and from the dev source tree", () => {
+    const root = (dir?: string) => voluteManifest(dir)?.root;
+    assert.equal(root(resolve(repoRoot, "dist")), repoRoot);
+    assert.equal(root(resolve(repoRoot, "packages/daemon/src/lib/util")), repoRoot);
+    assert.equal(root(), repoRoot, "the module's own location resolves in dev");
+  });
+
+  it("finds only a package root named volute, never an unrelated directory further up", () => {
+    const tmp = mkdtempSync(resolve(tmpdir(), "volute-root-"));
+    try {
+      // An unrelated project with its own CHANGELOG.md, at the dev-layout depth above dist/.
+      writeFileSync(resolve(tmp, "package.json"), JSON.stringify({ name: "other" }));
+      writeFileSync(resolve(tmp, "CHANGELOG.md"), "## [0.0.1]\n");
+      const pkgRoot = resolve(tmp, "a/b/c/volute");
+      mkdirSync(resolve(pkgRoot, "dist"), { recursive: true });
+      assert.equal(
+        voluteManifest(resolve(pkgRoot, "dist")),
+        null,
+        "no volute package.json shipped",
+      );
+      // The Electron bundle and the npm package both put package.json beside dist/.
+      writeFileSync(
+        resolve(pkgRoot, "package.json"),
+        JSON.stringify({ name: "volute", version: "1.2.3" }),
+      );
+      assert.deepEqual(voluteManifest(resolve(pkgRoot, "dist")), {
+        root: pkgRoot,
+        version: "1.2.3",
+      });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 

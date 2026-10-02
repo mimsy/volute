@@ -3,6 +3,7 @@ node_modules
 test
 src
 *.md
+!CHANGELOG.md
 tsup.config.ts
 tsconfig*.json
 biome.json

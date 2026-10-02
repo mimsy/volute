@@ -19,6 +19,10 @@ extraResources:
     to: trayTemplate.png
   - from: resources/trayTemplate@2x.png
     to: trayTemplate@2x.png
+  - from: ../../package.json
+    to: package.json
+  - from: ../../CHANGELOG.md
+    to: CHANGELOG.md
   - from: ../../dist/
     to: dist/
     filter:
