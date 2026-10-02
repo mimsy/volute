@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.66.3](https://github.com/mimsy/volute/compare/volute-v0.66.2...volute-v0.66.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **scheduler:** keep a fire due this minute when a cron is edited; make the skip-only test clock-independent ([#1300](https://github.com/mimsy/volute/issues/1300)) ([7dbd27c](https://github.com/mimsy/volute/commit/7dbd27c5020012beab9f0d74b049ada131ddf886))
+* **security:** contain pages worktrees, run their git as the mind, and lock down the shared repo ([#1307](https://github.com/mimsy/volute/issues/1307)) ([d0c0fdb](https://github.com/mimsy/volute/commit/d0c0fdbd2aeb7320eb157a9534c4b548b3878181))
+* **security:** run skills git as the mind; give imported minds a skill merge base ([#1308](https://github.com/mimsy/volute/issues/1308)) ([d18e325](https://github.com/mimsy/volute/commit/d18e32510663596de9f95bcf61605a45dea24ef4))
+* **security:** run the remaining daemon git in mind repos as the mind, and contain template-switch home writes ([#1303](https://github.com/mimsy/volute/issues/1303)) ([8eb3d80](https://github.com/mimsy/volute/commit/8eb3d8030bac84cfceb04e6afbf2706ecec15700))
+* **upgrade:** hold crash recovery through the upgrade's and join's merge and install ([#1301](https://github.com/mimsy/volute/issues/1301)) ([c548909](https://github.com/mimsy/volute/commit/c5489097fa15866ab9b0f9452ab1deb43a751c08))
+
 ## [0.66.2](https://github.com/mimsy/volute/compare/volute-v0.66.1...volute-v0.66.2) (2026-10-02)
 
 
