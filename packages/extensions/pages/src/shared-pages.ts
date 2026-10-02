@@ -922,6 +922,13 @@ async function commitPendingChanges(
 }
 
 /**
+ * How every shared refusal names the way to publish again. Written out in full: a plain
+ * `volute pages publish` only publishes personal pages, and a mind told just to
+ * "publish again" ran that and believed its commons changes had gone out.
+ */
+const PUBLISH_SHARED = '`volute pages publish --shared "<note>"`';
+
+/**
  * What a mind is told when its rebase onto main stopped on a conflict. The rebase is
  * left stopped, so `git status` in pages/_system shows the same thing (#1330).
  */
@@ -933,13 +940,14 @@ function stoppedOnConflict(files: string[]): Refusal {
       "Nothing was published. Your pages are being rebased onto main, and the rebase " +
       `stopped on a conflict in pages/_system: ${files.join(", ")}. In pages/_system, ` +
       "edit each of those files to what it should say (removing the <<<<<<< ======= >>>>>>> " +
-      "markers) and `git add` it, then publish again: publishing commits the rest of your " +
-      "changes and finishes the rebase. `git status` will suggest `git rebase --continue`; " +
-      "that's git's generic hint, so publish again instead: git can't delete its own " +
-      "bookkeeping refs in this repo, so it prints errors about packed-refs.lock and can " +
-      "leave the rebase half-finished. If you already ran it, publishing again still " +
-      "recovers: first check those files have no <<<<<<< markers left, since once the " +
-      "rebase is through, publishing no longer looks for them. To set the rebase aside " +
+      `markers) and \`git add\` it, then publish again with ${PUBLISH_SHARED}: publishing ` +
+      "commits the rest of your changes and finishes the rebase. `git status` will suggest " +
+      "`git rebase --continue`; that's git's generic hint, so publish again instead: git " +
+      "can't delete its own bookkeeping refs in this repo, so it prints errors about " +
+      "packed-refs.lock and can leave the rebase half-finished. If you already ran it, " +
+      "publishing again still recovers: first check those files have no <<<<<<< lines left. " +
+      "Once the rebase is through, publishing still refuses a whole <<<<<<< ======= >>>>>>> " +
+      "conflict left in a file, but a single stray marker line gets through. To set the rebase aside " +
       "instead, `git rebase --abort` puts your branch back as it was (with the same " +
       "packed-refs.lock errors), but it also discards every edit made in pages/_system " +
       "since the rebase stopped, so copy out any you want to keep first. The next publish " +
@@ -1042,7 +1050,8 @@ function markersMidRebase(files: string[]): Refusal {
     message:
       "Nothing was published. Your pages are being rebased onto main, and these files in " +
       `pages/_system still have conflict markers (<<<<<<<) in them: ${files.join(", ")}. ` +
-      "Edit each to what it should say, then publish again. Or, to set the rebase aside, " +
+      `Edit each to what it should say, then publish again with ${PUBLISH_SHARED}. Or, to ` +
+      "set the rebase aside, " +
       "`git rebase --abort` puts your branch back as it was (git prints errors about " +
       "packed-refs.lock as it does), but it also discards every edit made in " +
       "pages/_system since the rebase stopped, so copy out any you want to keep first. " +
@@ -1057,7 +1066,8 @@ function rebaseUnfinished(said: string): Refusal {
     message:
       "Nothing was published. Your pages are being rebased onto main, and the rebase " +
       `couldn't be finished. Git said:\n${said}\n` +
-      "`git status` in pages/_system shows where it stands. Publish again once that's sorted.",
+      "`git status` in pages/_system shows where it stands. Once that's sorted, publish " +
+      `again with ${PUBLISH_SHARED}.`,
   };
 }
 
@@ -1087,7 +1097,7 @@ function operationInProgress(op: Exclude<WorktreeOp, "rebase">): Refusal {
       `Nothing was published: ${what} you started in pages/_system is still in progress, ` +
       `and publishing would commit it half-done. ${ways}. Git may print errors about ` +
       "packed-refs.lock as it does: it can't delete its bookkeeping refs in this repo, and " +
-      "the next publish clears them. Then publish again.",
+      `the next publish clears them. Then publish again with ${PUBLISH_SHARED}.`,
   };
 }
 
@@ -1099,7 +1109,7 @@ function unresolvedConflicts(files: string[]): Refusal {
     message:
       "Nothing was published: these files in pages/_system are still marked as conflicted: " +
       `${files.join(", ")}. Edit each to what it should say (removing the <<<<<<< ======= ` +
-      ">>>>>>> markers) and `git add` it, then publish again.",
+      `>>>>>>> markers) and \`git add\` it, then publish again with ${PUBLISH_SHARED}.`,
   };
 }
 
@@ -1111,7 +1121,8 @@ function conflictInBranch(files: string[]): Refusal {
     message:
       "Nothing was published: these files in pages/_system have a conflict in them (the " +
       `<<<<<<< ======= >>>>>>> lines a git conflict leaves): ${files.join(", ")}. Edit each ` +
-      "to what it should say, then publish again. If a page is meant to show those lines, " +
+      `to what it should say, then publish again with ${PUBLISH_SHARED}. If a page is meant ` +
+      "to show those lines, " +
       "indent them.",
   };
 }
@@ -1147,7 +1158,7 @@ function notOnBranch(branch: string, rebasing = false): Refusal {
       `Then \`git switch ${branch}\`: if git says that would overwrite your uncommitted ` +
       "changes, it refuses and changes nothing, so copy those files out, switch, and put " +
       "them back. Bring each commit you noted back with `git cherry-pick <commit>`, then " +
-      "publish again.",
+      `publish again with ${PUBLISH_SHARED}.`,
   };
 }
 /** What a mind is told when its worktree's gitdir can't be vouched for. */
@@ -1568,13 +1579,45 @@ export function isPageFile(f: string): boolean {
   return f.endsWith(".html") || f.endsWith(".md");
 }
 
+/**
+ * Whether the mind's pages/_system has changes a shared publish would send: uncommitted
+ * edits, or commits main doesn't have. For plain publish to mention, since it never
+ * sends them. False without asking git when there's no worktree there (a bare `_system`
+ * dir would have git walk up into the mind's home repo), or when its gitdir can't be
+ * vouched for: a `.git` the mind planted brings its own config, and git outside user
+ * isolation runs as the daemon.
+ */
+export async function hasUnpublishedSharedChanges(
+  mindName: string,
+  mindDir: string,
+  dataDir: string,
+  isolation?: IsolationInfo,
+): Promise<boolean> {
+  if (!existsSync(resolve(worktreePath(mindDir), ".git"))) return false;
+  try {
+    const wt = await mindWorktree(mindName, mindDir, isolation);
+    if (!worktreeGitDir(pagesRepoDir(dataDir), wt.cwd)) return false;
+    const status = await gitExec(["--no-optional-locks", "status", "--porcelain"], wt, isolation);
+    if (status.trim()) return true;
+    return !!(await gitExec(["diff", "--name-only", "main...HEAD"], wt, isolation)).trim();
+  } catch (err) {
+    log.warn("can't check pages/_system for unpublished changes", {
+      mind: mindName,
+      ...logger.errorData(err),
+    });
+    return false;
+  }
+}
+
 /** Show files in the mind's shared pages worktree with draft/published status. */
 export async function pagesStatus(
   mindName: string,
   mindDir: string,
+  dataDir: string,
   isolation?: IsolationInfo,
 ): Promise<string> {
   const wt = await mindWorktree(mindName, mindDir, isolation);
+  if (!worktreeGitDir(pagesRepoDir(dataDir), wt.cwd)) throw new Error(UNVERIFIED_WORKTREE.message);
 
   // Get files on main and files on the mind's branch (including uncommitted)
   const errors: Error[] = [];

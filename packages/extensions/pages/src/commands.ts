@@ -32,6 +32,7 @@ import {
 } from "./publish.js";
 import {
   collectPageFiles,
+  hasUnpublishedSharedChanges,
   isolationFrom,
   isPageFile,
   pagesLog,
@@ -602,7 +603,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     publish: {
       description: "Publish all pages (copy to public snapshot)",
-      args: [{ name: "message", description: "Commit message for shared publish" }],
+      args: [{ name: "message", description: "Note for a shared publish (--shared only)" }],
       flags: {
         remote: { type: "boolean", description: "Also publish to volute.systems" },
         shared: { type: "boolean", description: "Publish to shared pages repository" },
@@ -740,6 +741,17 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         const remote = flags.remote as boolean;
 
+        // A message only means something to a shared publish. Taking one here and
+        // publishing personal pages let a mind believe it had shared its work.
+        if (args.message?.trim()) {
+          return {
+            error:
+              "Nothing was published: a message is only used with --shared, to publish " +
+              'pages/_system to the commons: volute pages publish --shared "<note>". ' +
+              "To publish your personal pages, run volute pages publish with no message.",
+          };
+        }
+
         const mindDir = await ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
@@ -751,12 +763,20 @@ export function createCommands(): Record<string, ExtensionCommand> {
         }
         const { diff, fileCount, snapshotDir } = published;
 
+        const port = process.env.VOLUTE_DAEMON_PORT || "1618";
         let output = `Published ${fileCount} files`;
         const parts: string[] = [];
         if (diff.added.length > 0) parts.push(`${diff.added.length} new`);
         if (diff.updated.length > 0) parts.push(`${diff.updated.length} updated`);
         if (diff.removed.length > 0) parts.push(`${diff.removed.length} removed`);
         if (parts.length > 0) output += ` (${parts.join(", ")})`;
+        output +=
+          ` to your personal pages (http://localhost:${port}/ext/pages/public/${mindName}/). ` +
+          "Shared pages in pages/_system publish separately with --shared.";
+        if (await hasUnpublishedSharedChanges(mindName, mindDir, ctx.dataDir, isolationFrom(ctx))) {
+          output +=
+            '\npages/_system has unpublished changes — publish them with volute pages publish --shared "<note>".';
+        }
 
         if (remote) {
           const config = ctx.getSystemsConfig();
@@ -857,7 +877,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
           try {
-            const status = await pagesStatus(mindName, mindDir, isolationFrom(ctx));
+            const status = await pagesStatus(mindName, mindDir, ctx.dataDir, isolationFrom(ctx));
             return { output: status };
           } catch (err) {
             return { error: `Failed to check shared status: ${(err as Error).message}` };
