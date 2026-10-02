@@ -126,6 +126,27 @@ describe("mind profile avatar", () => {
     assert.notEqual(config?.profile?.avatar, "../../../etc/passwd");
   });
 
+  // GET /avatar refuses a link at the name, so PATCH must too — or the avatar counts as
+  // set (seed readiness) yet never displays.
+  it("rejects a symlinked or hard-linked avatar with a clear reason", async () => {
+    const app = createApp();
+    const home = join(mindDir(testMindName), "home");
+    rmSync(join(home, "sym.png"), { force: true });
+    symlinkSync(join(home, "top-avatar.png"), join(home, "sym.png"));
+    rmSync(join(home, "hard.png"), { force: true });
+    linkSync(join(home, "top-avatar.png"), join(home, "hard.png"));
+    try {
+      for (const avatar of ["sym.png", "hard.png"]) {
+        const res = await patchProfile(app, { avatar });
+        assert.equal(res.status, 400, avatar);
+        assert.match((await res.json()).error, /regular file/);
+      }
+    } finally {
+      rmSync(join(home, "sym.png"), { force: true });
+      rmSync(join(home, "hard.png"), { force: true });
+    }
+  });
+
   it("rejects a nonexistent file", async () => {
     const app = createApp();
     const res = await patchProfile(app, { avatar: "images/missing.png" });

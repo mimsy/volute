@@ -493,6 +493,18 @@ export async function notifySpiritSystemChange(): Promise<void> {
 const MAX_PRESERVED_BYTES = 16 * 1024 * 1024;
 
 /**
+ * Run one file step of syncSpiritTemplate, logging a failure instead of throwing: one
+ * link the spirit planted (refused by the mind-file helpers) must not keep it offline.
+ */
+async function syncStep(what: string, fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    slog.warn(`spirit template sync: skipped ${what}`, log.errorData(err));
+  }
+}
+
+/**
  * Copy a daemon-owned template tree into `rel` in the spirit's dir, file by file through
  * {@link replaceMindFile}: a link the spirit planted at a file is replaced, never written
  * through, and one at a directory on the way refuses. Like `cpSync`, files already there
@@ -542,12 +554,14 @@ export async function syncSpiritTemplate(): Promise<void> {
     const newComposed = composeTemplate(templatesRoot, expectedTemplate);
     const newSrc = resolve(newComposed.composedDir, "src");
     if (existsSync(newSrc)) {
-      await copyTreeIntoSpirit(newSrc, dir, "src", owner);
+      await syncStep("src/", () => copyTreeIntoSpirit(newSrc, dir, "src", owner));
     }
     // Render + copy new package.json and re-install
     const newPkg = renderComposedPackageJson(newComposed.composedDir, spiritName);
     if (newPkg) {
-      await replaceMindFile(dir, "package.json", readFileSync(newPkg), { owner });
+      await syncStep("package.json", () =>
+        replaceMindFile(dir, "package.json", readFileSync(newPkg), { owner }),
+      );
       await npmInstallAsMind(dir, spiritName);
     }
     // Update DB template
@@ -591,17 +605,17 @@ export async function syncSpiritTemplate(): Promise<void> {
   if (existsSync(srcDir)) {
     const composedSrc = resolve(composedDir, "src");
     if (existsSync(composedSrc)) {
-      await copyTreeIntoSpirit(composedSrc, dir, "src", owner);
+      await syncStep("src/", () => copyTreeIntoSpirit(composedSrc, dir, "src", owner));
     }
   }
 
   // The spirit owns its SOUL.md — seed it only if missing, never overwrite.
   // System name/description reach the spirit through system.json + the
   // startup-context hook instead (see writeSpiritSystemJson).
-  await seedSpiritSoulIfMissing(dir, owner);
+  await syncStep("SOUL.md", () => seedSpiritSoulIfMissing(dir, owner));
   const doctrineExisted = existsSync(resolve(dir, "home/SPIRIT.md"));
-  await writeSpiritDoctrine(dir, owner);
-  await writeSpiritSystemJson(dir, owner);
+  await syncStep("SPIRIT.md", () => writeSpiritDoctrine(dir, owner));
+  await syncStep("system.json", () => writeSpiritSystemJson(dir, owner));
 
   // Migration moment for spirits created before SPIRIT.md existed: tell them once.
   // MIND_LEVEL_THREAD (not the default "main") so it drains into whichever thread
@@ -619,7 +633,9 @@ export async function syncSpiritTemplate(): Promise<void> {
 
   // Sync spirit model from global config
   const spiritModel = getSpiritModel();
-  if (spiritModel) await writeSpiritModel(dir, template, spiritModel, owner);
+  if (spiritModel) {
+    await syncStep("config.json model", () => writeSpiritModel(dir, template, spiritModel, owner));
+  }
 
   // Re-install if package.json changed or node_modules is missing (self-healing)
   const composedPkg = renderComposedPackageJson(composedDir, spiritName);
@@ -632,7 +648,9 @@ export async function syncSpiritTemplate(): Promise<void> {
     const currentContent = current?.text ?? "";
     if (composedContent !== currentContent || nodeModulesMissing) {
       if (composedContent !== currentContent) {
-        await replaceMindFile(dir, "package.json", composedContent, { owner });
+        await syncStep("package.json", () =>
+          replaceMindFile(dir, "package.json", composedContent, { owner }),
+        );
       }
       await npmInstallAsMind(dir, spiritName);
     }
@@ -642,7 +660,7 @@ export async function syncSpiritTemplate(): Promise<void> {
 
   // Restore preserved files
   for (const [p, content] of preserved) {
-    await writeMindFile(dir, p, content, { owner });
+    await syncStep(p, () => writeMindFile(dir, p, content, { owner }));
   }
 
   // Ensure all spirit skills are installed (handles upgrades when new skills are added)

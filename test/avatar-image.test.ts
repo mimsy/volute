@@ -15,9 +15,11 @@ import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import {
   addMind,
+  addSpirit,
   mindDir,
   removeMind,
   voluteHome,
+  voluteSystemDir,
 } from "../packages/daemon/src/lib/mind/registry.js";
 import {
   AVATAR_CONTEXT_DIM,
@@ -153,6 +155,38 @@ describe("readMindAvatar", () => {
       symlinkSync(outside, resolve(home, "avatar.png"));
       await assert.rejects(readMindAvatar(name), /not a regular file/);
     });
+  });
+
+  it("does not read an avatar it could not render", async () => {
+    await withMind(async (name, home) => {
+      writeFileSync(
+        resolve(home, ".config/volute.json"),
+        JSON.stringify({ profile: { avatar: "avatar.txt" } }),
+      );
+      // A FIFO would refuse if read; an unsupported type returns before the read.
+      execFileSync("mkfifo", [resolve(home, "avatar.txt")]);
+      assert.equal(await readMindAvatar(name), null);
+    });
+  });
+
+  // The spirit lives outside the minds dir: its avatar is found through its registry dir.
+  it("reads the avatar of a mind whose dir is not under the minds dir", async () => {
+    const name = `avatar-spirit-${Date.now()}`;
+    const dir = resolve(voluteSystemDir(), name);
+    try {
+      mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+      writeFileSync(
+        resolve(dir, "home/.config/volute.json"),
+        JSON.stringify({ profile: { avatar: "avatar.png" } }),
+      );
+      const png = await makePng(16);
+      writeFileSync(resolve(dir, "home/avatar.png"), png);
+      await addSpirit(name, 4393, "claude", dir);
+      assert.deepEqual((await readMindAvatar(name))?.data, png);
+    } finally {
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("refuses a FIFO without blocking", async () => {

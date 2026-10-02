@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { extname, relative, resolve } from "node:path";
 import { mindFileOwner } from "../mind/isolation.js";
 import { readMindFileBytes, writeMindFile } from "../mind/mind-file-write.js";
-import { getBaseName, mindDir, readAllMinds, voluteHome } from "../mind/registry.js";
+import { findMind, getBaseName, mindDir, readAllMinds, voluteHome } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import log from "./logger.js";
 import { safeResolveWithinBase } from "./paths.js";
@@ -160,14 +160,17 @@ export async function migrateAvatarSizes(): Promise<void> {
  * Read a mind's avatar (the `profile.avatar` its volute.json names) through the
  * mind-file helpers: the mind owns that tree and the daemon may be root, so a link,
  * hard link or FIFO it planted refuses (throws) rather than redirecting or hanging the
- * read. Null when no avatar is configured, it names a path outside home/, or the file
- * is absent.
+ * read. Null when no avatar is configured, it names a path outside home/, the file is
+ * absent, or it could not be rendered anyway (an unsupported format, no sharp).
  */
 export async function readMindAvatar(name: string): Promise<{ path: string; data: Buffer } | null> {
-  const dir = mindDir(name);
+  // The registry's dir, not mindDir(): the spirit lives outside the minds dir.
+  const dir = (await findMind(name))?.dir ?? mindDir(name);
   const avatar = readVoluteConfig(dir)?.profile?.avatar;
   const avatarPath = avatar && safeResolveWithinBase(resolve(dir, "home"), avatar);
   if (!avatarPath) return null;
+  // Nothing renderAvatarBlock would drop unread is worth reading.
+  if (!MIME_BY_EXT[extname(avatarPath).toLowerCase()] || !(await loadSharp())) return null;
   const data = await readMindFileBytes(dir, relative(dir, avatarPath), {
     owner: await mindFileOwner(await getBaseName(name)),
     maxBytes: MAX_AVATAR_READ_BYTES,

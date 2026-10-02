@@ -21,7 +21,16 @@ const MAX_READ_BYTES = 1024 * 1024;
 export class MindFileRefusedError extends Error {}
 
 /** A read refused because the file is over its cap — the refusal a caller may answer 413. */
-export class MindFileTooLargeError extends MindFileRefusedError {}
+export class MindFileTooLargeError extends MindFileRefusedError {
+  /** The file's size, as far as it was seen (fstat, or the bytes read past the cap). */
+  constructor(
+    path: string,
+    cap: number,
+    readonly size: number,
+  ) {
+    super(`refusing to read ${path}: larger than ${cap} bytes`);
+  }
+}
 
 /*
  * Reading and writing a mind's files from the daemon, which is root under user isolation,
@@ -161,7 +170,8 @@ async function readCappedBytes(
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let len = 0;
-  let want = Math.min((await handle.stat()).size, cap) + 1;
+  const statSize = (await handle.stat()).size;
+  let want = Math.min(statSize, cap) + 1;
   for (;;) {
     const chunk = Buffer.alloc(Math.min(want, cap + 1 - len));
     const { bytesRead } = await handle.read(chunk, 0, chunk.length, len);
@@ -169,7 +179,7 @@ async function readCappedBytes(
     chunks.push(chunk.subarray(0, bytesRead));
     len += bytesRead;
     if (len > cap) {
-      throw new MindFileTooLargeError(`refusing to read ${path}: larger than ${cap} bytes`);
+      throw new MindFileTooLargeError(path, cap, Math.max(statSize, len));
     }
     want = 64 * 1024;
   }
@@ -392,9 +402,7 @@ export function readMindFileSync(path: string): string {
       throw new MindFileRefusedError(`refusing ${path}: not a regular file with a single link`);
     }
     if (st.size > MAX_READ_BYTES) {
-      throw new MindFileTooLargeError(
-        `refusing to read ${path}: larger than ${MAX_READ_BYTES} bytes`,
-      );
+      throw new MindFileTooLargeError(path, MAX_READ_BYTES, st.size);
     }
     return readFileSync(fd, "utf-8");
   } finally {

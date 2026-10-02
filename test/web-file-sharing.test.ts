@@ -461,6 +461,7 @@ describe("web file-sharing routes", () => {
       truncateSync(big, 50 * 1024 * 1024 + 1);
       const res = await send("big.bin");
       assert.equal(res.status, 413, await res.clone().text());
+      assert.match((await res.json()).error, /File too large \(50(\.0)? MB, max 50(\.0)? MB\)/);
       assert.deepEqual(listPending("fs-receiver"), []);
     });
 

@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, rmSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { isLocalMind } from "@volute/api/user-type";
@@ -973,8 +973,19 @@ const app = new Hono<AuthEnv>()
         if (!avatarPath) {
           return c.json({ error: "Avatar path must be inside the mind's home directory" }, 400);
         }
-        if (!existsSync(avatarPath)) {
+        const st = lstatSync(avatarPath, { throwIfNoEntry: false });
+        if (!st) {
           return c.json({ error: `Avatar file not found: ${relative(homeDir, avatarPath)}` }, 400);
+        }
+        // The avatar is served through the mind-file helpers, which refuse a link at the
+        // name: one accepted here would count as set and never display.
+        if (!st.isFile() || st.nlink !== 1) {
+          return c.json(
+            {
+              error: `Avatar must be a regular file, not a link or directory: ${relative(homeDir, avatarPath)}`,
+            },
+            400,
+          );
         }
         avatar = relative(homeDir, avatarPath);
       }

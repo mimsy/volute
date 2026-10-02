@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -24,6 +25,7 @@ import {
   seedSpiritSoulIfMissing,
   spiritDir,
   syncSpiritTemplate,
+  writeSpiritModel,
   writeSpiritSystemJson,
 } from "../packages/daemon/src/lib/mind/spirit.js";
 import {
@@ -181,6 +183,31 @@ describe("syncSpiritTemplate and links the spirit planted", () => {
     for (const p of ["home/SPIRIT.md", "home/.config/system.json", "src/server.ts"]) {
       assert.ok(lstatSync(resolve(dir, p)).isFile(), `${p} is a regular file again`);
     }
+  });
+
+  // One refused step must not take the spirit offline: the sync logs it and carries on.
+  it("finishes the sync when a planted directory link refuses the src/ copy", async () => {
+    const dir = await seedSpiritProject();
+    outside = mkdtempSync(join(tmpdir(), "spirit-outside-"));
+    rmSync(resolve(dir, "src"), { recursive: true });
+    symlinkSync(outside, resolve(dir, "src"));
+    rmSync(resolve(dir, "home/SPIRIT.md"), { force: true });
+
+    await syncSpiritTemplate();
+
+    assert.deepEqual(readdirSync(outside), [], "nothing written through the link");
+    assert.ok(existsSync(resolve(dir, "home/SPIRIT.md")), "later steps still ran");
+  });
+
+  it("writeSpiritModel refuses a linked config.json rather than writing through it", async () => {
+    const dir = await seedSpiritProject();
+    outside = mkdtempSync(join(tmpdir(), "spirit-outside-"));
+    writeFileSync(join(outside, "config.json"), "{}");
+    rmSync(resolve(dir, "home/.config/config.json"), { force: true });
+    symlinkSync(join(outside, "config.json"), resolve(dir, "home/.config/config.json"));
+
+    await assert.rejects(writeSpiritModel(dir, "claude", "claude-sonnet-5", null), /regular file/);
+    assert.equal(readFileSync(join(outside, "config.json"), "utf-8"), "{}");
   });
 
   it("neither reads through nor hangs on a planted MEMORY.md", async () => {

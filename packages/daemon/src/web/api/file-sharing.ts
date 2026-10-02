@@ -83,7 +83,12 @@ const app = new Hono<AuthEnv>()
         });
       } catch (err) {
         if (err instanceof MindFileTooLargeError) {
-          return c.json({ error: `File too large (max ${formatFileSize(MAX_FILE_SIZE)})` }, 413);
+          return c.json(
+            {
+              error: `File too large (${formatFileSize(err.size)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+            },
+            413,
+          );
         }
         if (err instanceof PathTraversalError) {
           return c.json({ error: `Invalid file path: ${body.filePath}` }, 400);

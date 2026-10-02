@@ -10,8 +10,9 @@ const app = new Hono()
 
     for (const entry of await readRegistry()) {
       try {
+        // entry.dir: the spirit lives outside the minds dir.
         const pubKey = await getPublicKey(
-          mindDir(entry.name),
+          entry.dir ?? mindDir(entry.name),
           await mindFileOwner(await getBaseName(entry.name)),
         );
         if (!pubKey) continue;
