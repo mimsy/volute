@@ -5,6 +5,7 @@ import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
 import {
   getActiveTurnId,
   getActiveTurnOwner,
+  isConnectionRefused,
   linkRowsToTurn,
   normalizeThread,
 } from "../daemon/turn-tracker.js";
@@ -686,6 +687,7 @@ export async function deliverBatch(
     let ok = false;
     let rejected = false;
     let posting = false;
+    let refused = false;
     let entered: EnteredTurn | undefined;
     try {
       entered = await entering;
@@ -736,6 +738,9 @@ export async function deliverBatch(
           interrupt: false,
           replyInstructions: resolveDeliveryMode(config, session).replyInstructions,
         }),
+      }).catch((err) => {
+        refused = isConnectionRefused(err);
+        throw err;
       });
       ok = res.ok;
       rejected = !res.ok;
@@ -751,7 +756,13 @@ export async function deliverBatch(
       const riderRows =
         (await riders?.settle(ok ? "acked" : rejected ? "rejected" : "failed", entered?.turnId)) ??
         [];
-      const outcome = ok ? "acked" : rejected ? "rejected" : posting ? "failed" : "unsent";
+      const outcome = ok
+        ? "acked"
+        : rejected
+          ? "rejected"
+          : posting && !refused
+            ? "failed"
+            : "unsent";
       manager?.endDirect(baseName, session, mindName, deliveryId, entered, outcome, [
         ...riderRows,
         ...known(),

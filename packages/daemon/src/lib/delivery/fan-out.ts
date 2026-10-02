@@ -51,13 +51,26 @@ export interface FanOutResult {
   gatedRecipients: string[];
 }
 
+/**
+ * Whether a mind takes deliveries now: running, sleeping or waking (they route through the
+ * sleep queue), or waiting out a crash backoff — its delivery waits in the queue for the
+ * restart rather than being dropped as "not running" (#1114). A mind whose process stops or
+ * crashes mid-wake stops waking with it (#1097), so from then on it is skipped like any
+ * other stopped mind. `target` is the process delivered to, when it differs (a variant).
+ */
+export function receivesDeliveries(username: string, target = username): boolean {
+  return (
+    getMindManager().isUpOrRecovering(target) ||
+    getSleepManagerIfReady()?.isQueueingInbound(username) === true
+  );
+}
+
 export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
   const participants = opts.participants ?? (await getParticipants(opts.conversationId));
   const mindParticipants = participants.filter(isLocalMind);
   const participantNames = participants.map((p) => p.username);
   const isDM = opts.isDM ?? participants.length === 2;
 
-  const manager = getMindManager();
   const sm = getSleepManagerIfReady();
 
   // Registry names, read once per fan-out (a scan of the small `minds` table —
@@ -94,14 +107,10 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
       .catch((err) => log.warn("fan-out: failed to report send failure", log.errorData(err)));
   };
 
-  // Include running minds AND sleeping-or-waking minds (they route through the sleep
-  // queue), and minds waiting out a crash backoff — their delivery waits in the queue
-  // for the restart rather than being dropped as "not running" (#1114). A mind whose process stops or crashes mid-wake stops waking with it (#1097),
-  // so from then on it is skipped here like any other stopped mind.
   const targetMinds = mindParticipants
     .map((ap) => {
       const key = opts.targetName ? opts.targetName(ap.username) : ap.username;
-      if (manager.isUpOrRecovering(key) || sm?.isQueueingInbound(ap.username)) return ap.username;
+      if (receivesDeliveries(ap.username, key)) return ap.username;
       if (ap.username !== opts.senderName) {
         // This is the load-bearing silent drop in delivery: a stopped participant simply
         // never receives the message. Make it traceable (#434) — but only for minds that

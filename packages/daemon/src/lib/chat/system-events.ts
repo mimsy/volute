@@ -15,7 +15,12 @@ import {
 } from "drizzle-orm";
 import { getSpiritName } from "../config/setup.js";
 import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
-import { linkRowsToTurn, openDeliveredTurn, unlinkRefused } from "../daemon/turn-tracker.js";
+import {
+  isConnectionRefused,
+  linkRowsToTurn,
+  openDeliveredTurn,
+  unlinkRefused,
+} from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { getRoutingConfig, resolveEventRoute } from "../delivery/delivery-router.js";
 import { sinceNoteFor } from "../delivery/since-last-here.js";
@@ -445,6 +450,8 @@ async function postEventEnvelope(
     return { turnId: opened?.turnId, joined: opened?.created === false, afterRiders: carried };
   } catch (err) {
     elog.warn(`failed to POST event ${event.id} to ${mind}`, log.errorData(err));
+    // A refused connection reached nothing: taken back like a refusal (#1327).
+    refused = isConnectionRefused(err);
     return false;
   } finally {
     // A turn it opened goes, if the mind refused it — not if the POST failed to answer, when

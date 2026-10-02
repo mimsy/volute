@@ -504,6 +504,16 @@ export async function linkReportsToTurn(
 }
 
 /**
+ * A POST whose connection was refused: nothing listened on the mind's port, so the mind
+ * never got it — the same as one never sent, and its turn is taken back. Unlike a POST that
+ * failed to answer (a reset, a timeout), which the mind may have read and be running (#1327).
+ * Unlike an HTTP rejection too, which the mind did receive: a refused fold has not been read.
+ */
+export function isConnectionRefused(err: unknown): boolean {
+  return (err as { cause?: { code?: unknown } } | undefined)?.cause?.code === "ECONNREFUSED";
+}
+
+/**
  * Take back a delivery the mind refused — a definite rejection, never a POST that merely
  * failed to answer, which the mind may be running. Its own rows leave `turnId`; if this
  * delivery opened the turn (`created`) and nothing else is in it, the turn goes too. The
