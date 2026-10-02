@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +10,10 @@ import {
   removeBridgeConfig,
   setBridgeConfig,
 } from "../packages/daemon/src/lib/bridges/bridges.js";
-import { BridgeManager } from "../packages/daemon/src/lib/daemon/bridge-manager.js";
+import {
+  BridgeManager,
+  processStartTime,
+} from "../packages/daemon/src/lib/daemon/bridge-manager.js";
 import {
   DaemonShuttingDownError,
   MindManager,
@@ -468,9 +472,10 @@ describe("crash recovery wiring", () => {
 
     it("a stop kills a bridge an earlier daemon left running", async () => {
       const mgr = newBridgeManager();
+      mgr.processIdentity = async () => "started-then";
       const pidPath = mgr.bridgePidPath("leftover");
       mkdirSync(dirname(pidPath), { recursive: true });
-      writeFileSync(pidPath, "424244");
+      writeFileSync(pidPath, JSON.stringify({ pid: 424244, start: "started-then" }));
       const realKill = process.kill;
       const kills: number[] = [];
       process.kill = ((pid: number) => {
@@ -608,18 +613,27 @@ setInterval(() => {}, 1000);`,
       });
 
       let orphanPidKept = false;
-      async function orphanLogs(kill: (pid: number) => void): Promise<string[]> {
+      /**
+       * Run killOrphanBridge over a PID file holding `contents`, with the OS reporting
+       * `start` as pid 424242's start time (null: no such process).
+       */
+      async function orphanLogs(
+        kill: (pid: number) => void,
+        contents = JSON.stringify({ pid: 424242, start: "started-then" }),
+        start: string | null = "started-then",
+      ): Promise<string[]> {
         const mgr = newBridgeManager();
+        mgr.processIdentity = async () => start;
         const pidPath = mgr.bridgePidPath("orphan");
         mkdirSync(dirname(pidPath), { recursive: true });
-        writeFileSync(pidPath, "424242");
+        writeFileSync(pidPath, contents);
         const from = capturedLogs.length;
         process.kill = ((pid: number) => {
           kill(pid);
           return true;
         }) as typeof process.kill;
         try {
-          mgr.killOrphanBridge("orphan");
+          await mgr.killOrphanBridge("orphan");
         } finally {
           process.kill = realKill;
         }
@@ -642,7 +656,7 @@ setInterval(() => {}, 1000);`,
           return true;
         }) as typeof process.kill;
         try {
-          mgr.killOrphanBridge("orphan");
+          await mgr.killOrphanBridge("orphan");
         } finally {
           process.kill = realKill;
         }
@@ -672,6 +686,79 @@ setInterval(() => {}, 1000);`,
         const logs = await orphanLogs(() => {});
         assert.deepEqual(logs, ["killed orphan bridge orphan (pid 424242)"]);
         assert.equal(orphanPidKept, false);
+      });
+
+      const notSignalled = (kills: number[], logs: string[], warned: boolean) => {
+        assert.deepEqual(kills, [], "signalled a process it couldn't confirm");
+        assert.deepEqual(
+          logs,
+          warned
+            ? [
+                "not signalling pid 424242 from bridge orphan's PID file: it can't be confirmed as that bridge",
+              ]
+            : [],
+        );
+        assert.equal(orphanPidKept, false, "kept a PID file naming someone else's pid");
+      };
+
+      it("never signals a reused pid: its start time isn't the bridge's (#1360)", async () => {
+        const kills: number[] = [];
+        const logs = await orphanLogs((pid) => kills.push(pid), undefined, "started-later");
+        notSignalled(kills, logs, true);
+      });
+
+      it("never signals a pid from a PID file with no start time (an older daemon's)", async () => {
+        const kills: number[] = [];
+        const logs = await orphanLogs((pid) => kills.push(pid), "424242", "started-then");
+        notSignalled(kills, logs, true);
+      });
+
+      it("removes the PID file quietly when its process is gone", async () => {
+        const kills: number[] = [];
+        const logs = await orphanLogs((pid) => kills.push(pid), undefined, null);
+        notSignalled(kills, logs, false);
+      });
+
+      it("signals a real leftover whose start time matches, and not one whose doesn't", async () => {
+        const sleeper = spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
+        try {
+          const start = await processStartTime(sleeper.pid!);
+          assert.ok(start, "no start time for a live process");
+          const mgr = newBridgeManager();
+          const pidPath = mgr.bridgePidPath("orphan");
+          mkdirSync(dirname(pidPath), { recursive: true });
+
+          writeFileSync(pidPath, JSON.stringify({ pid: sleeper.pid, start: `${start}x` }));
+          await mgr.killOrphanBridge("orphan");
+          assert.equal(existsSync(pidPath), false);
+          await delay(300); // time for a stray signal's exit to arrive
+          assert.equal(sleeper.exitCode, null);
+          assert.equal(sleeper.signalCode, null, "signalled a pid whose start time differs");
+
+          const exited = new Promise((r) => sleeper.once("exit", r));
+          writeFileSync(pidPath, JSON.stringify({ pid: sleeper.pid, start }));
+          await mgr.killOrphanBridge("orphan");
+          await exited;
+          assert.equal(sleeper.signalCode, "SIGTERM");
+          assert.equal(await processStartTime(sleeper.pid!), null);
+        } finally {
+          if (sleeper.exitCode === null && sleeper.signalCode === null) sleeper.kill("SIGKILL");
+        }
+      });
+
+      it("records the spawned bridge's start time in its PID file", async () => {
+        const marker = resolve(fixtureDir, "identity-spawns.txt");
+        const mgr = newBridgeManager();
+        mgr.resolveBuiltinBridge = () =>
+          writeFixture("identity", marker, "setInterval(() => {}, 1000);");
+        try {
+          await mgr.startBridge("identity", 1618);
+          const pid = mgr.bridges.get("identity").child.pid;
+          const record = JSON.parse(readFileSync(mgr.bridgePidPath("identity"), "utf-8"));
+          assert.deepEqual(record, { pid, start: await processStartTime(pid) });
+        } finally {
+          await mgr.stopBridge("identity");
+        }
       });
     });
   });
