@@ -1426,7 +1426,7 @@ describe("scheduler pause and resume keep their history without false skips (#11
     assert.equal((scheduler as any).shouldFire(dream, nowMin(), mind, new Map()), false);
     assert.deepEqual(scheduler.skipNotices, [], "a pause is not a skipped fire");
     const state = stateOf(scheduler, `${mind}:dream`);
-    assert.equal(state.slot, nowMin());
+    assert.equal(state.slot, nowMin() - 1);
     assert.equal(state.firedAt, firedAt, "the schedule's history survives the pause");
     assert.equal(state.disabled, undefined);
   });
@@ -1437,6 +1437,17 @@ describe("scheduler pause and resume keep their history without false skips (#11
     const { dream } = pauseThroughFire(scheduler, mind, 5);
 
     assert.equal((scheduler as any).shouldFire(dream, nowMin(), mind, new Map()), false);
+  });
+
+  it("a cron due in the minute it is resumed still fires", () => {
+    // Re-enabled at 09:00:02 for `0 9 * * *`, before that minute's tick: the fire is
+    // due now, not paused through.
+    const scheduler = new TestScheduler();
+    const mind = "pause-due-now-mind";
+    const { dream } = pauseThroughFire(scheduler, mind, 0);
+
+    assert.equal((scheduler as any).shouldFire(dream, nowMin(), mind, new Map()), true);
+    assert.deepEqual(scheduler.skipNotices, []);
   });
 
   it("the pause survives a daemon restart in between", async () => {

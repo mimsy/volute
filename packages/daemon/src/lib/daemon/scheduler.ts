@@ -285,11 +285,12 @@ export class Scheduler {
       if (!schedule.enabled) {
         if (!current.disabled) this.mark(key, { disabled: true });
       } else if (current.disabled) {
-        // Re-enabled: the minutes it was paused through were not missed, so start
-        // counting from now, keeping the fire history. A one-timer only needs the
-        // flag cleared — its slot is just the same-minute guard, and a past-due
-        // fireAt is still delivered late by design.
-        this.mark(key, schedule.cron ? { slot: epochMinute } : {});
+        // Re-enabled: the minutes it was paused through were not missed, so count
+        // from the minute before this one, keeping the fire history. Not this one: a
+        // cron due right now whose tick hasn't run yet is a fire, not a pause. A
+        // one-timer only needs the flag cleared — its slot is just the same-minute
+        // guard, and a past-due fireAt is still delivered late by design.
+        this.mark(key, schedule.cron ? { slot: epochMinute - 1 } : {});
         delete current.disabled;
       }
     }
