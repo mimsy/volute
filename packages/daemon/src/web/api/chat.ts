@@ -14,7 +14,7 @@ import {
 } from "../../lib/chat/spirit-availability.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
 import { fanOutToMinds } from "../../lib/delivery/fan-out.js";
-import { recordOutbound, turnStamp } from "../../lib/delivery/message-delivery.js";
+import { recordOutbound, type TurnStamp, turnStamp } from "../../lib/delivery/message-delivery.js";
 import { checkStaleSend, formatHoldNotice } from "../../lib/delivery/send-gate.js";
 import { subscribe } from "../../lib/events/conversation-events.js";
 import {
@@ -310,17 +310,13 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
   // it records the thread, and that thread's turn, directly on send. Exact or nothing:
   // when the thread has no active turn the send waits for a tool_result marker from the
   // same thread, rather than being credited to a sibling thread's turn (#1173).
-  let outboundTurnId: string | undefined;
-  let outboundThread: string | undefined;
+  let stamp: TurnStamp = {};
   let senderBase: string | undefined;
   if (senderIsMind) {
     senderBase = await getBaseName(senderName);
-    ({ turnId: outboundTurnId, thread: outboundThread } = turnStamp(
-      senderBase,
-      c.get("mindSession"),
-      senderName,
-    ));
+    stamp = turnStamp(senderBase, c.get("mindSession"), senderName);
   }
+  const { turnId: outboundTurnId, thread: outboundThread } = stamp;
 
   // Stale-send hold: if a peer posted to this conversation after this mind's turn began,
   // don't post — return a plain notice (surfaced as the send command's stdout) so the mind
@@ -362,9 +358,8 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
     const text = extractTextContent(contentBlocks);
     try {
       outboundId = await recordOutbound(senderName, channel, text, {
+        ...stamp,
         messageId: message?.id != null ? String(message.id) : undefined,
-        turnId: outboundTurnId,
-        thread: outboundThread,
       });
       // Published now, with its turn when known. A send whose thread had no turn yet is
       // published again, with the turn, when its marker links it (linkToolResultToTurn).

@@ -544,8 +544,26 @@ async function skillUndo(
           await writeMindFile(dir, rel, was.bytes, { owner, mode: was.mode, enforceMode: true });
         else await removeMindFile(dir, rel, { owner });
       }
-      await git(["rm", "-r", "-q", "-f", "--cached", "--ignore-unmatch", "--", ...staged]);
-      if (index) await git(["update-index", "-z", "--index-info"], { stdin: index });
+      // The index as it was, but for the files left: what the mind staged or committed
+      // of them meanwhile is its own too.
+      const keptSpecs = kept.map((rel) => `:(exclude,literal)${rel}`);
+      await git([
+        "rm",
+        "-r",
+        "-q",
+        "-f",
+        "--cached",
+        "--ignore-unmatch",
+        "--",
+        ...staged,
+        ...keptSpecs,
+      ]);
+      const entries = index
+        .split("\0")
+        .filter((entry) => entry && !kept.includes(entry.slice(entry.indexOf("\t") + 1)));
+      if (entries.length > 0) {
+        await git(["update-index", "-z", "--index-info"], { stdin: `${entries.join("\0")}\0` });
+      }
       // The hooks and bin the skill declared before, the update's own removed.
       reconcileSkillShims(mindName, dir, skillId, declared ?? { hooks: {}, bin: null });
       return kept;

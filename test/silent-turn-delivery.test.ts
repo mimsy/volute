@@ -5,8 +5,20 @@ import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 import { after, afterEach, before, describe, it } from "node:test";
 import { and, eq, inArray } from "drizzle-orm";
-import { createUser, getOrCreateSystemUser } from "../packages/daemon/src/lib/auth.js";
+import {
+  createUser,
+  getOrCreateMindUser,
+  getOrCreateSystemUser,
+} from "../packages/daemon/src/lib/auth.js";
 import { deliverEvent } from "../packages/daemon/src/lib/chat/system-events.js";
+import {
+  initMindManager,
+  tryGetMindManager,
+} from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import {
+  generateMindToken,
+  revokeMindToken,
+} from "../packages/daemon/src/lib/daemon/mind-tokens.js";
 import { initSpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.js";
 import { settleHeld, summarizeTurn } from "../packages/daemon/src/lib/daemon/summarizer.js";
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
@@ -33,7 +45,7 @@ import {
   recordOutbound,
   turnStamp,
 } from "../packages/daemon/src/lib/delivery/message-delivery.js";
-import { addMessage, createConversation } from "../packages/daemon/src/lib/events/conversations.js";
+import { createConversation } from "../packages/daemon/src/lib/events/conversations.js";
 import {
   type MindEvent,
   subscribe as subscribeMindEvents,
@@ -49,6 +61,7 @@ import {
   turns,
   users,
 } from "../packages/daemon/src/lib/schema.js";
+import { invalidateMindUserCache } from "../packages/daemon/src/web/middleware/auth.js";
 import { resolveEffective } from "../packages/daemon/src/web/middleware/effective-principal.js";
 
 /**
@@ -396,15 +409,34 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
           ),
         )
         .get())!;
-    const conv = await createConversation();
-    /** A send from the thread, as the chat API records it. */
-    const send = async (text: string, sender = MIND) => {
-      const stamp = turnStamp(MIND, "main", sender);
-      const message = await addMessage(conv.id, "user", sender, [{ type: "text", text }], {
-        turnId: stamp.turnId,
-      });
-      await recordOutbound(sender, "@tester", text, { ...stamp, messageId: String(message.id) });
-      return message.id;
+    if (!tryGetMindManager()) initMindManager();
+    const mindUser = await getOrCreateMindUser(MIND);
+    const human = await createUser(`${MIND}-human`, "pass");
+    const conv = await createConversation({ participantIds: [mindUser.id, human.id] });
+    const token = generateMindToken(MIND);
+    const app = (await import("../packages/daemon/src/web/app.js")).default as unknown as {
+      request: typeof fetch;
+    };
+    /** A send from the thread, through the chat API — what `volute chat send` does. */
+    const send = async (text: string) => {
+      const res = await app.request("http://localhost/api/v1/chat", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Origin: "http://localhost",
+          "Content-Type": "application/json",
+          "X-Volute-Thread": "main",
+        },
+        body: JSON.stringify({ conversationId: conv.id, message: text }),
+      } as RequestInit);
+      assert.equal(res.status, 200, await res.clone().text());
+      const row = await rowOf("outbound", text);
+      return Number(row.message_id);
+    };
+    /** A variant's send from the same thread name, as the chat API records it. */
+    const variantSend = async (text: string) => {
+      const stamp = turnStamp(MIND, "main", VARIANT);
+      await recordOutbound(VARIANT, "@tester", text, stamp);
     };
     const deliver = (content: string) =>
       deliverMessage(MIND, { channel: "@tester", sender: "tester", senderId: null, content });
@@ -436,7 +468,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     );
     const hotel = await send("HOTEL");
     assert.equal((await rowOf("outbound", "HOTEL")).turn_id, null, "sent with no turn");
-    await send("VARIANT", VARIANT);
+    await variantSend("VARIANT");
     await handleMindEvent(MIND, {
       type: "usage",
       session: "main",
@@ -479,8 +511,12 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     assert.doesNotMatch(summary!.content, /no visible output/);
     await waitFor(() => db.select().from(summaries).where(eq(summaries.period_key, t3!)).get());
     for (const t of [t1!, t2!, t3!]) await db.delete(summaries).where(eq(summaries.period_key, t));
+    revokeMindToken(MIND);
+    await db.delete(messages).where(eq(messages.conversation_id, conv.id));
     await db.delete(conversations).where(eq(conversations.id, conv.id));
     await db.delete(mindHistory).where(eq(mindHistory.mind, VARIANT));
+    await db.delete(users).where(inArray(users.id, [mindUser.id, human.id]));
+    invalidateMindUserCache(MIND);
   });
 
   it("a quiet turn whose usage lands after its done is held for it, then kept", async () => {

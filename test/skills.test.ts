@@ -1538,10 +1538,14 @@ describe("mind skill operations", () => {
       const db = await getDb();
       await db.delete(systemEvents).where(eq(systemEvents.mind, mindName));
 
-      // The mind edits the merged file as the commit runs.
-      await failCommit(`printf 'mine\\n' >> ${md}`);
+      // The mind edits the merged file as the commit runs, and stages it.
+      await failCommit(`printf 'mine\\n' >> ${md} && git add ${md}`);
 
       assert.match(readFileSync(md, "utf-8"), /mine\n$/, "its edit stands");
+      const index = await exec("git", ["show", ":home/.claude/skills/wired/SKILL.md"], {
+        cwd: mindDir,
+      });
+      assert.equal(index, readFileSync(md, "utf-8"), "staged as the mind staged it");
       const notices = await db
         .select()
         .from(systemEvents)
