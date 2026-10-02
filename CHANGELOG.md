@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.66.2](https://github.com/mimsy/volute/compare/volute-v0.66.1...volute-v0.66.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **daemon:** treat a mind in crash-recovery backoff as coming back, not down ([#1281](https://github.com/mimsy/volute/issues/1281)) ([3e49366](https://github.com/mimsy/volute/commit/3e493663e534fd1f4b4ebb07aae5ef2d23f83d01))
+* honest refusals for cross-mind history, hyphenated extension names, and failed service reloads ([#1296](https://github.com/mimsy/volute/issues/1296)) ([e88cf1c](https://github.com/mimsy/volute/commit/e88cf1c02d6d7653587c2ad34be2985c1c5f8f05))
+* **import:** keep .local/bin shims executable through import, and repair imported minds ([#1280](https://github.com/mimsy/volute/issues/1280)) ([dfa8c59](https://github.com/mimsy/volute/commit/dfa8c59af2f4a917ebddaf0e532f3c95a52044a5))
+* keep routes.json writes coherent with the schedules and accepts they belong to ([#1291](https://github.com/mimsy/volute/issues/1291)) ([c134baa](https://github.com/mimsy/volute/commit/c134baa2900a150f5a7390443707ac87a6e1d605))
+* keep the mind env through sudo under macOS user isolation ([#1275](https://github.com/mimsy/volute/issues/1275)) ([0ccb045](https://github.com/mimsy/volute/commit/0ccb0451615be65cf54c71af0402c87d800d6d7f))
+* **security:** contain the pages extension's chown roots and gitdir ([#1295](https://github.com/mimsy/volute/issues/1295)) ([09cfa9e](https://github.com/mimsy/volute/commit/09cfa9eb0ab9340f1f5f922090e7327e0c63e801))
+* **security:** keep skill copies, removals, publishes and shim cleanup inside the mind's tree ([#1292](https://github.com/mimsy/volute/issues/1292)) ([19dc38f](https://github.com/mimsy/volute/commit/19dc38f093d7c5c78e2263e39b35c44c6056b117))
+* **security:** read and write mind trees through the mind-file helpers in files/send, avatars, keys and spirit sync ([#1282](https://github.com/mimsy/volute/issues/1282)) ([d634f41](https://github.com/mimsy/volute/commit/d634f41060c38cc2d7484b0d32b84e6804e8ce09))
+* **security:** run daemon git in a mind's repo as the mind during upgrade, split and join ([#1283](https://github.com/mimsy/volute/issues/1283)) ([9c73bb1](https://github.com/mimsy/volute/commit/9c73bb1f85ecc435aa4730a15c943110a100454b))
+* **skills:** merge skill updates against what upstream shipped, and never freeze or nest a conflict ([#1297](https://github.com/mimsy/volute/issues/1297)) ([f4800b2](https://github.com/mimsy/volute/commit/f4800b20490258ffacbb1e38a2c18f46ee98b709))
+* stop losing lifecycle signals — silent turns, failed wake hooks, resumed schedules ([#1293](https://github.com/mimsy/volute/issues/1293)) ([645d788](https://github.com/mimsy/volute/commit/645d7884622eea33ab7937f951d812a7fdbd9e72))
+
 ## [0.66.1](https://github.com/mimsy/volute/compare/volute-v0.66.0...volute-v0.66.1) (2026-09-30)
 
 
