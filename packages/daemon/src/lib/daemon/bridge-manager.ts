@@ -1,14 +1,13 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { checkMissingBridgeEnv, getBridgeDef } from "../bridges/bridge-defs.js";
 import { readBridgesConfig } from "../bridges/bridges.js";
 import { readEnv, sharedEnvPath } from "../config/env.js";
 import { daemonLoopback, voluteSystemDir } from "../mind/registry.js";
-import { exec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { resolveWithinBase } from "../util/paths.js";
+import { type ProcessIdentity, processIdentity } from "../util/process-identity.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { voluteRoot } from "../util/volute-root.js";
 import { ManagerNotReadyError } from "./manager-not-ready.js";
@@ -27,28 +26,10 @@ export function resolveBuiltinBridge(
 }
 
 /**
- * When `pid` started, as the OS reports it, or null if there's no such process or it
- * can't be read. With the pid it names one process: a pid reused after a crash has a
- * different start time (#1360). Linux reads `/proc/<pid>/stat` field 22 (clock ticks
- * since boot); elsewhere `ps -o lstart=`, to the second.
+ * What a bridge's PID file records: its pid, and when it started, in which boot. A file
+ * from before #1360 holds a bare pid, and so neither.
  */
-export async function processStartTime(pid: number): Promise<string | null> {
-  try {
-    if (process.platform === "linux") {
-      const stat = await readFile(`/proc/${pid}/stat`, "utf-8");
-      // Field 2 (comm) is parenthesised and may hold spaces or parens: count from the last `)`.
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      return fields[19] || null;
-    }
-    const out = await exec("ps", ["-o", "lstart=", "-p", String(pid)], { env: { LC_ALL: "C" } });
-    return out.trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-/** What a bridge's PID file records: its pid, and the start time that identifies it. */
-type BridgePidRecord = { pid: number; start: string | null };
+type BridgePidRecord = { pid: number; start: string | null; boot: string | null };
 
 type TrackedBridge = {
   child: ChildProcess;
@@ -400,37 +381,49 @@ export class BridgeManager {
     return getBridgeDef(platform) !== null;
   }
 
-  /** Instance seam over {@link processStartTime}, so tests can stand in for the OS. */
-  private processIdentity(pid: number): Promise<string | null> {
-    return processStartTime(pid);
+  /** Instance seam over {@link processIdentity}, so tests can stand in for the OS. */
+  private processIdentity(pid: number): Promise<ProcessIdentity | null> {
+    return processIdentity(pid);
   }
 
   /**
-   * Record `child`'s pid and start time. Skipped if it has already exited: its exit
-   * handler has run, and nothing would remove the file.
+   * Record `child`'s pid, start time and boot. Skipped if it has already exited: its
+   * exit handler has run, and nothing would remove the file.
    */
   private async saveBridgePid(platform: string, child: ChildProcess): Promise<void> {
-    const start = await this.processIdentity(child.pid!);
+    const id = await this.processIdentity(child.pid!);
     if (!this.live.has(child)) return;
     const pidPath = this.bridgePidPath(platform);
     mkdirSync(dirname(pidPath), { recursive: true });
-    const record: BridgePidRecord = { pid: child.pid!, start };
+    const record: BridgePidRecord = {
+      pid: child.pid!,
+      start: id?.start ?? null,
+      boot: id?.boot ?? null,
+    };
     writeFileSync(pidPath, JSON.stringify(record));
   }
 
-  /**
-   * The PID file's record. A file from before #1360 holds a bare pid, and so no start
-   * time: nothing can confirm whose that pid is now.
-   */
   private readBridgePid(platform: string): BridgePidRecord | null {
+    const str = (v: unknown) => (typeof v === "string" ? v : null);
     try {
       const text = readFileSync(this.bridgePidPath(platform), "utf-8").trim();
-      if (!text.startsWith("{")) return { pid: parseInt(text, 10), start: null };
-      const { pid, start } = JSON.parse(text);
-      return { pid: Number(pid), start: typeof start === "string" ? start : null };
+      if (!text.startsWith("{")) return { pid: parseInt(text, 10), start: null, boot: null };
+      const { pid, start, boot } = JSON.parse(text);
+      return { pid: Number(pid), start: str(start), boot: str(boot) };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Whether the process `id` describes is this platform's bridge: its command line runs
+   * our bridge script, and the start time and boot, where recorded, are the ones it had.
+   */
+  private isOurBridge(platform: string, record: BridgePidRecord, id: ProcessIdentity): boolean {
+    const script = this.resolveBuiltinBridge(platform);
+    if (!script || (id.args !== script && !id.args.endsWith(` ${script}`))) return false;
+    if (record.start !== null && record.start !== id.start) return false;
+    return record.boot === null || record.boot === id.boot;
   }
 
   private removeBridgePid(platform: string): void {
@@ -446,8 +439,9 @@ export class BridgeManager {
   /**
    * Signal a bridge an earlier daemon left running, if the PID file still names it. The
    * daemon is root on system installs, and a pid freed by a crash can be reused by any
-   * process, so it's signalled only when its start time matches the one recorded;
-   * otherwise the file is removed and nothing is signalled (#1360).
+   * process, so it's signalled only if it is still our bridge (`isOurBridge`); otherwise
+   * the file is removed and nothing is signalled (#1360). A leader already gone isn't
+   * signalled at all, so neither is anything left in its group.
    */
   private async killOrphanBridge(platform: string): Promise<void> {
     const pidPath = this.bridgePidPath(platform);
@@ -458,14 +452,14 @@ export class BridgeManager {
       // A child we replaced that is still in its kill grace is ours, not an orphan; its
       // exit handler cleans up after it.
       if (this.ownsPid(pid)) return;
-      // Never 1: `kill(-1)` signals every process we're allowed to. No start time means
+      // Never 1: `kill(-1)` signals every process we're allowed to. No identity means
       // the process is gone: nothing to signal, as with ESRCH below.
-      const start = pid > 1 ? await this.processIdentity(pid) : null;
-      if (start !== null && start !== record?.start) {
+      const id = pid > 1 ? await this.processIdentity(pid) : null;
+      if (id && !this.isOurBridge(platform, record!, id)) {
         blog.warn(
           `not signalling pid ${pid} from bridge ${platform}'s PID file: it can't be confirmed as that bridge`,
         );
-      } else if (start !== null) {
+      } else if (id) {
         // Only ESRCH means it's gone; anything else (EPERM) means it may still be up.
         let failure: NodeJS.ErrnoException | undefined;
         for (const target of [-pid, pid]) {
