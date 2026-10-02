@@ -1,5 +1,13 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, join, relative, resolve } from "node:path";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../ai-service.js";
 import { getSpiritName, readGlobalConfig } from "../config/setup.js";
 import {
@@ -25,7 +33,13 @@ import { repairThreadBatchConfig } from "./event-routes.js";
 import { seedInitLedger } from "./init-ledger.js";
 import { mindFileOwner } from "./isolation.js";
 import { repairMechanicsDoc } from "./mechanics-doc.js";
-import type { MindFileOwner } from "./mind-file-write.js";
+import {
+  type MindFileOwner,
+  readMindFile,
+  readMindFileBytes,
+  replaceMindFile,
+  writeMindFile,
+} from "./mind-file-write.js";
 import { npmInstallAsMind } from "./npm-install.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
 import { type Schedule, updateVoluteConfig } from "./volute-config.js";
@@ -274,15 +288,25 @@ export function getSpiritModel(): string | undefined {
  * model lives. Pi needs `provider:model`; claude and codex take the bare id.
  * Returns whether the file changed.
  */
-export function writeSpiritModel(dir: string, template: string, spiritModel: string): boolean {
+export function writeSpiritModel(
+  dir: string,
+  template: string,
+  spiritModel: string,
+  owner: MindFileOwner | null,
+): Promise<boolean> {
   const modelForConfig =
     template === "pi" ? qualifyModelId(spiritModel) : unqualifyModelId(spiritModel);
-  const configPath = resolve(dir, "home/.config/config.json");
-  const mindConfig = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf-8")) : {};
-  if (mindConfig.model === modelForConfig) return false;
-  mindConfig.model = modelForConfig;
-  writeFileSync(configPath, `${JSON.stringify(mindConfig, null, 2)}\n`);
-  return true;
+  return writeMindFile(
+    dir,
+    "home/.config/config.json",
+    (current) => {
+      const mindConfig = current ? JSON.parse(current) : {};
+      if (mindConfig.model === modelForConfig) return null;
+      mindConfig.model = modelForConfig;
+      return `${JSON.stringify(mindConfig, null, 2)}\n`;
+    },
+    { owner },
+  );
 }
 
 let creationInProgress = false;
@@ -332,8 +356,8 @@ export async function ensureSpiritProject(): Promise<void> {
 
     // Write spirit SOUL.md (its own from here on) and the synced system context.
     writeFileSync(resolve(dir, "home/SOUL.md"), getSpiritSoul());
-    writeSpiritDoctrine(dir);
-    writeSpiritSystemJson(dir);
+    await writeSpiritDoctrine(dir, null);
+    await writeSpiritSystemJson(dir, null);
 
     // Write routes.json for per-conversation sessions
     const routesPath = resolve(dir, "home/.config/routes.json");
@@ -342,7 +366,7 @@ export async function ensureSpiritProject(): Promise<void> {
     const routesContent = { rules: [{ channel: "*", thread: "${channel}" }], default: "main" };
     writeFileSync(routesPath, `${JSON.stringify(routesContent, null, 2)}\n`);
 
-    if (spiritModel) writeSpiritModel(dir, template, spiritModel);
+    if (spiritModel) await writeSpiritModel(dir, template, spiritModel, null);
 
     // npm install — must succeed before DB registration
     await exec("npm", ["install"], { cwd: dir, env: hostNpmEnv() });
@@ -410,33 +434,32 @@ export async function ensureSpiritProject(): Promise<void> {
   }
 }
 
-/** Path to the spirit's system context file (name + description). */
-function spiritSystemJsonPath(dir: string): string {
-  return resolve(dir, "home/.config/system.json");
-}
+/** The spirit's system context file (name + description), relative to its dir. */
+const SPIRIT_SYSTEM_JSON = "home/.config/system.json";
 
 /**
  * Write the spirit's system context (name + description) to home/.config/system.json.
  * The startup-context hook reads this so the current system identity reaches the
  * spirit without rewriting its (self-owned) SOUL.md.
  */
-export function writeSpiritSystemJson(dir: string): void {
+export async function writeSpiritSystemJson(
+  dir: string,
+  owner: MindFileOwner | null,
+): Promise<void> {
   const config = readGlobalConfig();
-  const path = spiritSystemJsonPath(dir);
-  mkdirSync(resolve(path, ".."), { recursive: true });
   const data = { name: config.name ?? "Volute", description: config.description };
-  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
+  await replaceMindFile(dir, SPIRIT_SYSTEM_JSON, `${JSON.stringify(data, null, 2)}\n`, { owner });
 }
 
 /**
  * Write the initial spirit SOUL.md only if it's missing (self-healing). Once it
  * exists, it belongs to the spirit — never overwrite it. Returns true if written.
  */
-export function seedSpiritSoulIfMissing(dir: string): boolean {
-  const soulPath = resolve(dir, "home/SOUL.md");
-  if (existsSync(soulPath)) return false;
-  writeFileSync(soulPath, getSpiritSoul());
-  return true;
+export function seedSpiritSoulIfMissing(
+  dir: string,
+  owner: MindFileOwner | null,
+): Promise<boolean> {
+  return writeMindFile(dir, "home/SOUL.md", getSpiritSoul(), { owner, create: "if-absent" });
 }
 
 /**
@@ -451,7 +474,7 @@ export async function notifySpiritSystemChange(): Promise<void> {
   const dir = spiritDir();
   if (!existsSync(dir)) return;
 
-  writeSpiritSystemJson(dir);
+  await writeSpiritSystemJson(dir, await mindFileOwner(spiritName));
 
   const config = readGlobalConfig();
   const name = config.name ?? "Volute";
@@ -464,6 +487,28 @@ export async function notifySpiritSystemChange(): Promise<void> {
     meta: { subtype: "identity-change" },
     body: `The host updated this system's identity: you're now the spirit of ${name}${desc}. Your SOUL.md is yours — update it if you'd like it to reflect this.`,
   });
+}
+
+/** Largest file syncSpiritTemplate carries across the src/ copy (MEMORY.md, cursors). */
+const MAX_PRESERVED_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Copy a daemon-owned template tree into `rel` in the spirit's dir, file by file through
+ * {@link replaceMindFile}: a link the spirit planted at a file is replaced, never written
+ * through, and one at a directory on the way refuses. Like `cpSync`, files already there
+ * that the template lacks are left alone.
+ */
+async function copyTreeIntoSpirit(
+  from: string,
+  dir: string,
+  rel: string,
+  owner: MindFileOwner | null,
+): Promise<void> {
+  for (const entry of readdirSync(from, { withFileTypes: true, recursive: true })) {
+    if (!entry.isFile()) continue;
+    const src = join(entry.parentPath, entry.name);
+    await replaceMindFile(dir, join(rel, relative(from, src)), readFileSync(src), { owner });
+  }
 }
 
 /**
@@ -479,6 +524,9 @@ export async function syncSpiritTemplate(): Promise<void> {
 
   const dir = spiritDir();
   if (!existsSync(dir)) return;
+  // The spirit's tree is its own, and the daemon may be root: the reads and writes below
+  // go through the mind-file helpers, so nothing it plants redirects them (#1264).
+  const owner = await mindFileOwner(spiritName);
 
   const templatesRoot = findTemplatesRoot();
 
@@ -493,12 +541,12 @@ export async function syncSpiritTemplate(): Promise<void> {
     const newComposed = composeTemplate(templatesRoot, expectedTemplate);
     const newSrc = resolve(newComposed.composedDir, "src");
     if (existsSync(newSrc)) {
-      cpSync(newSrc, resolve(dir, "src"), { recursive: true });
+      await copyTreeIntoSpirit(newSrc, dir, "src", owner);
     }
     // Render + copy new package.json and re-install
     const newPkg = renderComposedPackageJson(newComposed.composedDir, spiritName);
     if (newPkg) {
-      cpSync(newPkg, resolve(dir, "package.json"));
+      await replaceMindFile(dir, "package.json", readFileSync(newPkg), { owner });
       await npmInstallAsMind(dir, spiritName);
     }
     // Update DB template
@@ -529,9 +577,11 @@ export async function syncSpiritTemplate(): Promise<void> {
   const preservePaths = ["home/MEMORY.md", ".mind/session-cursors.json"];
   const preserved = new Map<string, Buffer>();
   for (const p of preservePaths) {
-    const full = resolve(dir, p);
-    if (existsSync(full)) {
-      preserved.set(p, readFileSync(full));
+    try {
+      const content = await readMindFileBytes(dir, p, { owner, maxBytes: MAX_PRESERVED_BYTES });
+      if (content) preserved.set(p, content);
+    } catch (err) {
+      slog.warn(`not preserving spirit ${p}`, log.errorData(err));
     }
   }
 
@@ -540,17 +590,17 @@ export async function syncSpiritTemplate(): Promise<void> {
   if (existsSync(srcDir)) {
     const composedSrc = resolve(composedDir, "src");
     if (existsSync(composedSrc)) {
-      cpSync(composedSrc, srcDir, { recursive: true });
+      await copyTreeIntoSpirit(composedSrc, dir, "src", owner);
     }
   }
 
   // The spirit owns its SOUL.md — seed it only if missing, never overwrite.
   // System name/description reach the spirit through system.json + the
   // startup-context hook instead (see writeSpiritSystemJson).
-  seedSpiritSoulIfMissing(dir);
+  await seedSpiritSoulIfMissing(dir, owner);
   const doctrineExisted = existsSync(resolve(dir, "home/SPIRIT.md"));
-  writeSpiritDoctrine(dir);
-  writeSpiritSystemJson(dir);
+  await writeSpiritDoctrine(dir, owner);
+  await writeSpiritSystemJson(dir, owner);
 
   // Migration moment for spirits created before SPIRIT.md existed: tell them once.
   // MIND_LEVEL_THREAD (not the default "main") so it drains into whichever thread
@@ -568,18 +618,20 @@ export async function syncSpiritTemplate(): Promise<void> {
 
   // Sync spirit model from global config
   const spiritModel = getSpiritModel();
-  if (spiritModel) writeSpiritModel(dir, template, spiritModel);
+  if (spiritModel) await writeSpiritModel(dir, template, spiritModel, owner);
 
   // Re-install if package.json changed or node_modules is missing (self-healing)
   const composedPkg = renderComposedPackageJson(composedDir, spiritName);
-  const currentPkg = resolve(dir, "package.json");
   const nodeModulesMissing = !existsSync(resolve(dir, "node_modules"));
   if (composedPkg) {
     const composedContent = readFileSync(composedPkg, "utf-8");
-    const currentContent = existsSync(currentPkg) ? readFileSync(currentPkg, "utf-8") : "";
+    // Anything unreadable there (a link the spirit planted) reads as different, so it is
+    // replaced with the template's.
+    const current = await readMindFile(dir, "package.json", { owner }).catch(() => null);
+    const currentContent = current?.text ?? "";
     if (composedContent !== currentContent || nodeModulesMissing) {
       if (composedContent !== currentContent) {
-        cpSync(composedPkg, currentPkg);
+        await replaceMindFile(dir, "package.json", composedContent, { owner });
       }
       await npmInstallAsMind(dir, spiritName);
     }
@@ -589,9 +641,7 @@ export async function syncSpiritTemplate(): Promise<void> {
 
   // Restore preserved files
   for (const [p, content] of preserved) {
-    const full = resolve(dir, p);
-    mkdirSync(resolve(full, ".."), { recursive: true });
-    writeFileSync(full, content);
+    await writeMindFile(dir, p, content, { owner });
   }
 
   // Ensure all spirit skills are installed (handles upgrades when new skills are added)
@@ -718,6 +768,6 @@ When helping humans create minds:
 }
 
 /** Write (or overwrite) the daemon-owned home/SPIRIT.md. */
-export function writeSpiritDoctrine(dir: string): void {
-  writeFileSync(resolve(dir, "home/SPIRIT.md"), getSpiritDoctrine());
+export async function writeSpiritDoctrine(dir: string, owner: MindFileOwner | null): Promise<void> {
+  await replaceMindFile(dir, "home/SPIRIT.md", getSpiritDoctrine(), { owner });
 }

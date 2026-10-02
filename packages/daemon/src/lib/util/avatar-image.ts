@@ -91,8 +91,8 @@ async function downscaled(sharp: any, data: Buffer): Promise<Buffer | null> {
   return image.resize(AVATAR_DIM, AVATAR_DIM, { fit: "cover" }).toFormat(meta.format).toBuffer();
 }
 
-/** Largest pre-resize avatar the migration will read back from a mind. */
-const MAX_MIGRATED_AVATAR_BYTES = 16 * 1024 * 1024;
+/** Largest pre-resize avatar the daemon will read back from a mind. */
+const MAX_AVATAR_READ_BYTES = 16 * 1024 * 1024;
 
 /**
  * One-time daemon-startup migration: downscale oversized avatars uploaded
@@ -144,7 +144,7 @@ export async function migrateAvatarSizes(): Promise<void> {
       const owner = await mindFileOwner(await getBaseName(mind.name));
       const data = await readMindFileBytes(dir, rel, {
         owner,
-        maxBytes: MAX_MIGRATED_AVATAR_BYTES,
+        maxBytes: MAX_AVATAR_READ_BYTES,
       });
       const out = data && (await downscaled(sharp, data));
       if (out && (await writeMindFile(dir, rel, out, { owner, create: false }))) {
@@ -157,17 +157,37 @@ export async function migrateAvatarSizes(): Promise<void> {
 }
 
 /**
- * Read an avatar file and render it as a `[text, image]` block pair for inlining
- * into a mind's context, resized to AVATAR_CONTEXT_DIM.
+ * Read a mind's avatar (the `profile.avatar` its volute.json names) through the
+ * mind-file helpers: the mind owns that tree and the daemon may be root, so a link,
+ * hard link or FIFO it planted refuses (throws) rather than redirecting or hanging the
+ * read. Null when no avatar is configured, it names a path outside home/, or the file
+ * is absent.
+ */
+export async function readMindAvatar(name: string): Promise<{ path: string; data: Buffer } | null> {
+  const dir = mindDir(name);
+  const avatar = readVoluteConfig(dir)?.profile?.avatar;
+  const avatarPath = avatar && safeResolveWithinBase(resolve(dir, "home"), avatar);
+  if (!avatarPath) return null;
+  const data = await readMindFileBytes(dir, relative(dir, avatarPath), {
+    owner: await mindFileOwner(await getBaseName(name)),
+    maxBytes: MAX_AVATAR_READ_BYTES,
+  });
+  return data && { path: avatarPath, data };
+}
+
+/**
+ * Render an avatar image as a `[text, image]` block pair for inlining into a mind's
+ * context, resized to AVATAR_CONTEXT_DIM. `filePath` names the format by its extension.
  *
  * Returns null (omitting the avatar entirely) when the format is unsupported,
  * sharp is unavailable, or the resized block would still exceed
  * MAX_AVATAR_BLOCK_BYTES. Inlining an unbounded image into every participant's
  * context is strictly worse than showing no avatar, so we drop the pair rather
- * than fall back to the original bytes. File-read errors propagate to the caller.
+ * than fall back to the original bytes.
  */
 export async function renderAvatarBlock(
   filePath: string,
+  data: Buffer,
   label: string,
 ): Promise<AvatarBlock[] | null> {
   const ext = extname(filePath).toLowerCase();
@@ -177,7 +197,6 @@ export async function renderAvatarBlock(
   const sharp = await loadSharp();
   if (!sharp) return null;
 
-  const data = await readFile(filePath);
   let imageData: Buffer;
   try {
     imageData = await sharp(data, { animated: true })

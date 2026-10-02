@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { linkSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -16,6 +25,7 @@ import {
   MAX_AVATAR_BLOCK_BYTES,
   migrateAvatarSizes,
   normalizeAvatar,
+  readMindAvatar,
   renderAvatarBlock,
 } from "../packages/daemon/src/lib/util/avatar-image.js";
 import { fileEtag, isNotModified } from "../packages/daemon/src/lib/util/http-cache.js";
@@ -64,7 +74,7 @@ describe("renderAvatarBlock", () => {
     const path = resolve(dir, "render-big.png");
     writeFileSync(path, await makePng(1024));
 
-    const blocks = await renderAvatarBlock(path, "someone");
+    const blocks = await renderAvatarBlock(path, readFileSync(path), "someone");
     assert.ok(blocks);
     assert.equal(blocks.length, 2);
     assert.deepEqual(blocks[0], {
@@ -87,7 +97,7 @@ describe("renderAvatarBlock", () => {
     mkdirSync(dir, { recursive: true });
     const path = resolve(dir, "render-note.txt");
     writeFileSync(path, "not an image");
-    assert.equal(await renderAvatarBlock(path, "someone"), null);
+    assert.equal(await renderAvatarBlock(path, readFileSync(path), "someone"), null);
   });
 
   it("returns null (omits the image) when a supported-extension file is not a real image", async () => {
@@ -99,7 +109,57 @@ describe("renderAvatarBlock", () => {
     mkdirSync(dir, { recursive: true });
     const path = resolve(dir, "render-corrupt.png");
     writeFileSync(path, "this is not a png");
-    assert.equal(await renderAvatarBlock(path, "someone"), null);
+    assert.equal(await renderAvatarBlock(path, readFileSync(path), "someone"), null);
+  });
+});
+
+// The daemon reads a mind's avatar into every participant's context, as root under user
+// isolation, from a tree the mind owns: a link it planted must not redirect the read,
+// nor a FIFO hang it (#1264).
+describe("readMindAvatar", () => {
+  async function withMind(fn: (name: string, home: string) => Promise<void>) {
+    const name = `avatar-read-${Date.now()}`;
+    await addMind(name, 4392);
+    const dir = mindDir(name);
+    const home = resolve(dir, "home");
+    try {
+      mkdirSync(resolve(home, ".config"), { recursive: true });
+      writeFileSync(
+        resolve(home, ".config/volute.json"),
+        JSON.stringify({ profile: { avatar: "avatar.png" } }),
+      );
+      await fn(name, home);
+    } finally {
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("reads a regular avatar file", async () => {
+    await withMind(async (name, home) => {
+      const png = await makePng(32);
+      writeFileSync(resolve(home, "avatar.png"), png);
+      const avatar = await readMindAvatar(name);
+      assert.ok(avatar);
+      assert.deepEqual(avatar.data, png);
+      assert.equal(avatar.path, resolve(home, "avatar.png"));
+    });
+  });
+
+  it("refuses a symlink at the name", async () => {
+    await withMind(async (name, home) => {
+      const outside = resolve(home, "..", "secret.png");
+      writeFileSync(outside, "secret");
+      symlinkSync(outside, resolve(home, "avatar.png"));
+      await assert.rejects(readMindAvatar(name), /not a regular file/);
+    });
+  });
+
+  it("refuses a FIFO without blocking", async () => {
+    await withMind(async (name, home) => {
+      execFileSync("mkfifo", [resolve(home, "avatar.png")]);
+      await assert.rejects(readMindAvatar(name), /not a regular file/);
+    });
   });
 });
 

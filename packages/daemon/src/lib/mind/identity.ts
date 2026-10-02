@@ -1,9 +1,7 @@
 import { createHash, generateKeyPairSync, sign, verify } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { readSystemsConfig } from "../config/systems-config.js";
 import log from "../util/logger.js";
-import { writeMindFile } from "./mind-file-write.js";
+import { type MindFileOwner, readMindFile, writeMindFile } from "./mind-file-write.js";
 import {
   readVoluteConfig,
   UnparseableConfigError,
@@ -43,24 +41,33 @@ export async function generateIdentity(
   return { publicKeyPem: publicKey, privateKeyPem: privateKey };
 }
 
-/** Read the private key PEM from disk */
-export function getPrivateKey(mindDir: string): string | null {
-  const config = readVoluteConfig(mindDir);
-  const relPath = config?.identity?.privateKey;
+/**
+ * Read a key named by volute.json's `identity`. The path is the mind's to set and the
+ * tree is the mind's, while the daemon may be root: read through the mind-file helpers,
+ * so a path out of the mind dir, a link or a FIFO refuses (throws). Null when no key is
+ * configured or the file is absent.
+ */
+async function readIdentityKey(
+  mindDir: string,
+  which: "privateKey" | "publicKey",
+  owner: MindFileOwner | null,
+): Promise<string | null> {
+  const relPath = readVoluteConfig(mindDir)?.identity?.[which];
   if (!relPath) return null;
-  const fullPath = resolve(mindDir, relPath);
-  if (!existsSync(fullPath)) return null;
-  return readFileSync(fullPath, "utf-8");
+  return (await readMindFile(mindDir, relPath, { owner }))?.text ?? null;
+}
+
+/** Read the private key PEM from disk */
+export function getPrivateKey(
+  mindDir: string,
+  owner: MindFileOwner | null,
+): Promise<string | null> {
+  return readIdentityKey(mindDir, "privateKey", owner);
 }
 
 /** Read the public key PEM from disk */
-export function getPublicKey(mindDir: string): string | null {
-  const config = readVoluteConfig(mindDir);
-  const relPath = config?.identity?.publicKey;
-  if (!relPath) return null;
-  const fullPath = resolve(mindDir, relPath);
-  if (!existsSync(fullPath)) return null;
-  return readFileSync(fullPath, "utf-8");
+export function getPublicKey(mindDir: string, owner: MindFileOwner | null): Promise<string | null> {
+  return readIdentityKey(mindDir, "publicKey", owner);
 }
 
 /** SHA-256 hex fingerprint of a public key PEM */

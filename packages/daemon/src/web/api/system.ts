@@ -504,9 +504,15 @@ const app = new Hono<AuthEnv>()
         const template = spirit.template ?? "claude";
         if ((await resolveTemplate(spiritModel)) === template) {
           const { writeSpiritModel } = await import("../../lib/mind/spirit.js");
+          const { mindFileOwner } = await import("../../lib/mind/isolation.js");
           const manager = tryGetMindManager();
           if (
-            writeSpiritModel(spirit.dir, template, spiritModel) &&
+            (await writeSpiritModel(
+              spirit.dir,
+              template,
+              spiritModel,
+              await mindFileOwner(spirit.name),
+            )) &&
             manager?.isRunning(spirit.name)
           ) {
             manager

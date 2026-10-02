@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { resolveTemplate } from "../packages/daemon/src/lib/ai-service.js";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
@@ -66,43 +77,43 @@ describe("spirit SOUL.md ownership", () => {
     rmSync(spiritDir(), { recursive: true, force: true });
   });
 
-  it("seeds SOUL.md when missing", () => {
+  it("seeds SOUL.md when missing", async () => {
     const dir = spiritDir();
     mkdirSync(resolve(dir, "home"), { recursive: true });
     assert.equal(existsSync(soulPath(dir)), false);
 
-    const wrote = seedSpiritSoulIfMissing(dir);
+    const wrote = await seedSpiritSoulIfMissing(dir, null);
 
     assert.equal(wrote, true);
     assert.match(readFileSync(soulPath(dir), "utf-8"), /You are volute, the spirit of this system/);
   });
 
-  it("leaves an existing SOUL.md untouched", () => {
+  it("leaves an existing SOUL.md untouched", async () => {
     const dir = spiritDir();
     mkdirSync(resolve(dir, "home"), { recursive: true });
     writeFileSync(soulPath(dir), CUSTOM_SOUL);
 
-    const wrote = seedSpiritSoulIfMissing(dir);
+    const wrote = await seedSpiritSoulIfMissing(dir, null);
 
     assert.equal(wrote, false);
     assert.equal(readFileSync(soulPath(dir), "utf-8"), CUSTOM_SOUL);
   });
 
-  it("writes system name/description to system.json without touching SOUL", () => {
+  it("writes system name/description to system.json without touching SOUL", async () => {
     const dir = spiritDir();
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     writeFileSync(soulPath(dir), CUSTOM_SOUL);
 
     const config = readGlobalConfig();
     writeGlobalConfig({ ...config, name: "Testarium", description: "a place for tests" });
-    writeSpiritSystemJson(dir);
+    await writeSpiritSystemJson(dir, null);
 
     const data = JSON.parse(readFileSync(systemJsonPath(dir), "utf-8"));
     assert.deepEqual(data, { name: "Testarium", description: "a place for tests" });
     assert.equal(readFileSync(soulPath(dir), "utf-8"), CUSTOM_SOUL);
   });
 
-  it("omits the description key from system.json when unset", () => {
+  it("omits the description key from system.json when unset", async () => {
     // The hook's "— <description>" only appears when the key is present, so an
     // unset description must not serialize as a key at all (no dangling em dash).
     const dir = spiritDir();
@@ -110,7 +121,7 @@ describe("spirit SOUL.md ownership", () => {
 
     const config = readGlobalConfig();
     writeGlobalConfig({ ...config, name: "Testarium", description: undefined });
-    writeSpiritSystemJson(dir);
+    await writeSpiritSystemJson(dir, null);
 
     const data = JSON.parse(readFileSync(systemJsonPath(dir), "utf-8"));
     assert.deepEqual(data, { name: "Testarium" });
@@ -141,6 +152,43 @@ describe("spirit SOUL.md ownership", () => {
 
     assert.equal(existsSync(soulPath(dir)), true);
     assert.match(readFileSync(soulPath(dir), "utf-8"), /You are volute, the spirit of this system/);
+  });
+});
+
+// The spirit's tree is its own and the daemon syncs it as root under user isolation: a
+// link the spirit planted must not carry a write out, nor a FIFO hang the sync (#1264).
+describe("syncSpiritTemplate and links the spirit planted", () => {
+  let outside: string;
+  afterEach(async () => {
+    await removeMind("volute");
+    rmSync(spiritDir(), { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it("replaces linked daemon-owned files instead of writing through them", async () => {
+    const dir = await seedSpiritProject();
+    outside = mkdtempSync(join(tmpdir(), "spirit-outside-"));
+    const victims = ["SPIRIT.md", "system.json", "server.ts"];
+    for (const v of victims) writeFileSync(join(outside, v), "untouched");
+    symlinkSync(join(outside, "SPIRIT.md"), resolve(dir, "home/SPIRIT.md"));
+    symlinkSync(join(outside, "system.json"), systemJsonPath(dir));
+    rmSync(resolve(dir, "src/server.ts"));
+    symlinkSync(join(outside, "server.ts"), resolve(dir, "src/server.ts"));
+
+    await syncSpiritTemplate();
+
+    for (const v of victims) assert.equal(readFileSync(join(outside, v), "utf-8"), "untouched", v);
+    for (const p of ["home/SPIRIT.md", "home/.config/system.json", "src/server.ts"]) {
+      assert.ok(lstatSync(resolve(dir, p)).isFile(), `${p} is a regular file again`);
+    }
+  });
+
+  it("neither reads through nor hangs on a planted MEMORY.md", async () => {
+    const dir = await seedSpiritProject();
+    outside = mkdtempSync(join(tmpdir(), "spirit-outside-"));
+    execFileSync("mkfifo", [resolve(dir, "home/MEMORY.md")]);
+    await syncSpiritTemplate();
+    assert.ok(lstatSync(resolve(dir, "home/MEMORY.md")).isFIFO(), "left as the spirit made it");
   });
 });
 
@@ -211,13 +259,13 @@ describe("startup-context hook reads system.json", () => {
     return JSON.parse(out).hookSpecificOutput.additionalContext as string;
   }
 
-  it("surfaces the spirit identity written by writeSpiritSystemJson (contract)", () => {
+  it("surfaces the spirit identity written by writeSpiritSystemJson (contract)", async () => {
     const dir = spiritDir();
     rmSync(dir, { recursive: true, force: true });
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     const config = readGlobalConfig();
     writeGlobalConfig({ ...config, name: "Testarium", description: "a place for tests" });
-    writeSpiritSystemJson(dir);
+    await writeSpiritSystemJson(dir, null);
 
     const context = runHook(dir);
 
@@ -225,13 +273,13 @@ describe("startup-context hook reads system.json", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("omits the em dash when description is unset", () => {
+  it("omits the em dash when description is unset", async () => {
     const dir = spiritDir();
     rmSync(dir, { recursive: true, force: true });
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     const config = readGlobalConfig();
     writeGlobalConfig({ ...config, name: "Testarium", description: undefined });
-    writeSpiritSystemJson(dir);
+    await writeSpiritSystemJson(dir, null);
 
     const context = runHook(dir);
 

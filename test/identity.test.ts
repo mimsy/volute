@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   generateIdentity,
@@ -10,6 +20,10 @@ import {
   signMessage,
   verifySignature,
 } from "../packages/daemon/src/lib/mind/identity.js";
+import {
+  readVoluteConfig,
+  writeVoluteConfig,
+} from "../packages/daemon/src/lib/mind/volute-config.js";
 
 const scratchDir = resolve("/tmp/identity-test");
 
@@ -52,13 +66,41 @@ describe("identity", () => {
     it("reads keys after generation", async () => {
       const { publicKeyPem, privateKeyPem } = await generateIdentity(scratchDir);
 
-      assert.equal(getPrivateKey(scratchDir), privateKeyPem);
-      assert.equal(getPublicKey(scratchDir), publicKeyPem);
+      assert.equal(await getPrivateKey(scratchDir, null), privateKeyPem);
+      assert.equal(await getPublicKey(scratchDir, null), publicKeyPem);
     });
 
-    it("returns null when no identity configured", () => {
-      assert.equal(getPrivateKey(scratchDir), null);
-      assert.equal(getPublicKey(scratchDir), null);
+    it("returns null when no identity configured", async () => {
+      assert.equal(await getPrivateKey(scratchDir, null), null);
+      assert.equal(await getPublicKey(scratchDir, null), null);
+    });
+
+    // volute.json is the mind's to edit, and the key route reads as the daemon — root
+    // under user isolation, with no auth in front of it (#1264).
+    it("refuses a key path out of the mind dir, a link at the name, or a FIFO", async () => {
+      await generateIdentity(scratchDir);
+      const outside = mkdtempSync(join(tmpdir(), "identity-outside-"));
+      try {
+        writeFileSync(join(outside, "secret.pem"), "secret");
+        const setPath = async (publicKey: string) => {
+          const config = readVoluteConfig(scratchDir) ?? {};
+          config.identity = { privateKey: ".mind/identity/private.pem", publicKey };
+          await writeVoluteConfig(scratchDir, config, null);
+        };
+
+        await setPath(join(outside, "secret.pem"));
+        await assert.rejects(getPublicKey(scratchDir, null));
+
+        symlinkSync(join(outside, "secret.pem"), resolve(scratchDir, ".mind/identity/linked.pem"));
+        await setPath(".mind/identity/linked.pem");
+        await assert.rejects(getPublicKey(scratchDir, null), /not a regular file/);
+
+        execFileSync("mkfifo", [resolve(scratchDir, ".mind/identity/fifo.pem")]);
+        await setPath(".mind/identity/fifo.pem");
+        await assert.rejects(getPublicKey(scratchDir, null), /not a regular file/);
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
     });
   });
 
