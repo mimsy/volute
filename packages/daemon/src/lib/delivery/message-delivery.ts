@@ -1,7 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
-import { getActiveTurnId, getActiveTurnOwner, normalizeThread } from "../daemon/turn-tracker.js";
+import {
+  getActiveTurnId,
+  getActiveTurnOwner,
+  linkRowsToTurn,
+  normalizeThread,
+} from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import {
   type ActivityEvent,
@@ -13,6 +19,7 @@ import { findMind, getBaseName } from "../mind/registry.js";
 import { activity, messages, mindHistory, minds } from "../schema.js";
 import log from "../util/logger.js";
 import {
+  type EnteredTurn,
   getDeliveryManager,
   recordDeferredInbound,
   tryGetDeliveryManager,
@@ -44,9 +51,9 @@ export async function recordInbound(
   senderId: number | null,
   content: string | null,
 ): Promise<number | undefined> {
-  // Record without turn_id initially. The inbound is linked to its turn when the turn is
-  // created (TurnLifecycle.linkPendingInbound), scoped by the turn's session and channel.
-  // This avoids merging unrelated inbounds from different channels into one turn.
+  // Record without turn_id initially. The caller keeps the id on the payload (`historyId`),
+  // and the inbound is linked to its turn when the mind acks the delivery
+  // (`linkRowsToTurn`) — exactly this row, never a sweep of the channel.
   let insertedId: number | undefined;
   try {
     const db = await getDb();
@@ -448,7 +455,7 @@ export async function deliverMessage(
           payload.inboundDeferred = true;
           payload.deferred ??= { at: Date.now() };
         } else {
-          await recordInbound(
+          payload.historyId = await recordInbound(
             baseName,
             payload.channel,
             payload.sender ?? null,
@@ -507,7 +514,7 @@ export async function deliverMessage(
         )
           payload.inboundDeferred = true;
         else
-          await recordInbound(
+          payload.historyId = await recordInbound(
             baseName,
             payload.channel,
             payload.sender ?? null,
@@ -581,6 +588,17 @@ export async function deliverBatch(
     // here instead of holding. A woken mind's night of backlog is several of these in a
     // row, which is exactly the pile-up #823 exists to stagger.
     const slot = await takeTurnSlot(baseName, session);
+    // Tracked like the manager's own deliveries: outstanding until a `done` covers it — the
+    // mind names it by `deliveryId` — and in the turn it runs in, entered the moment it holds
+    // the slot, before anything else awaits: a message delivered on the thread meanwhile then
+    // folds into it, and its sender counts toward the turn's authority (#433). No trigger
+    // yet — a rider claimed below may go first.
+    const deliveryId = randomUUID();
+    const known = () => payloads.map((p) => p.historyId);
+    const entering = manager?.beginDirect(baseName, session, mindName, deliveryId, slot.owned, [
+      undefined,
+      ...known(),
+    ]);
     if (slot.timedOut) {
       dlog.warn(
         `delivering a batch to ${baseName}/${session} after waiting ` +
@@ -593,10 +611,18 @@ export async function deliverBatch(
     let riders: Awaited<ReturnType<NonNullable<typeof manager>["claimDeferred"]>> | undefined;
     let ok = false;
     let rejected = false;
+    let posting = false;
+    let entered: EnteredTurn | undefined;
     try {
+      entered = await entering;
       // Deferred messages already waiting on this thread ride along with the turn, first,
       // since they arrived first.
       riders = manager ? await manager.claimDeferred(mindName, session) : undefined;
+      // The turn it opened is triggered by its first message — unless a rider leads, whose
+      // row is only written on the ack.
+      if (entered?.created && !riders?.payloads.length && payloads[0].historyId != null) {
+        await linkRowsToTurn(entered.turnId, known());
+      }
 
       // Build the batch payload shape the mind-side router expects. senderId never
       // crosses to the mind process — see WirePayload (#1017) — and neither does daemon
@@ -625,11 +651,13 @@ export async function deliverBatch(
         channels[ch].push(wire);
       }
 
+      posting = true;
       const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session,
+          deliveryId,
           batch: { channels },
           interrupt: false,
           replyInstructions: resolveDeliveryMode(config, session).replyInstructions,
@@ -639,12 +667,21 @@ export async function deliverBatch(
       rejected = !res.ok;
       if (ok) {
         for (const p of payloads) {
-          if (p.inboundDeferred) await recordDeferredInbound(baseName, p);
+          if (p.inboundDeferred) {
+            p.historyId = await recordDeferredInbound(baseName, p, entered?.turnId);
+          }
         }
       }
       return ok;
     } finally {
-      await riders?.settle(ok ? "acked" : rejected ? "rejected" : "failed");
+      const riderRows =
+        (await riders?.settle(ok ? "acked" : rejected ? "rejected" : "failed", entered?.turnId)) ??
+        [];
+      const outcome = ok ? "acked" : rejected ? "rejected" : posting ? "failed" : "unsent";
+      manager?.endDirect(baseName, session, mindName, deliveryId, entered, outcome, [
+        ...riderRows,
+        ...known(),
+      ]);
       // No turn will run for a batch the mind never took, so the slot must go back — but
       // only if this call took it. `owned: false` means the batch folded into a turn that
       // was already running, whose slot is not ours to give back. Nor did it wake anything.

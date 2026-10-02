@@ -196,7 +196,7 @@ export async function resolveEffective(principal: {
     return daemonRaised ? { role: "system", scopes: [self] } : BASIC(self);
   }
 
-  // More than one distinct sender in the turn drops to basic. `linkInboundToActiveTurn`
+  // More than one distinct sender in the turn drops to basic. `DeliveryManager.enterTurn`
   // folds messages that arrive mid-turn into the running turn, so without this an
   // admin's DM turn would lend its authority to whatever a non-admin said into it
   // while it ran. Per-message attribution would be tighter, but a CLI request carries

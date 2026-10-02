@@ -3,12 +3,17 @@ import { after, afterEach, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { drainEvents, recordNotice } from "../packages/daemon/src/lib/chat/system-events.js";
 import { getTypingMap } from "../packages/daemon/src/lib/chat/typing.js";
+import { initSpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.js";
+import { settleHeld } from "../packages/daemon/src/lib/daemon/summarizer.js";
 import { drainNotices, handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import { hasTurnSlot } from "../packages/daemon/src/lib/daemon/turn-slots.js";
 import {
   clearMind,
+  closedTurnFor,
   getActiveTurnId,
   markErrored,
+  markInterrupted,
+  openDeliveredTurn,
   recordDrained,
   takeDrained,
   takeErrored,
@@ -18,7 +23,7 @@ import {
   type DeliveryManager,
   initDeliveryManager,
 } from "../packages/daemon/src/lib/delivery/delivery-manager.js";
-import { mindHistory, systemEvents, turns } from "../packages/daemon/src/lib/schema.js";
+import { mindHistory, summaries, systemEvents, turns } from "../packages/daemon/src/lib/schema.js";
 
 /**
  * A `done` names the turn it ends (`messageId`) and the deliveries it finished (`covers`),
@@ -31,6 +36,11 @@ import { mindHistory, systemEvents, turns } from "../packages/daemon/src/lib/sch
 let dm: DeliveryManager;
 before(() => {
   dm = initDeliveryManager();
+  try {
+    initSpendBudget(); // usage events accrue against it
+  } catch {
+    // already initialized
+  }
 });
 after(() => dm.dispose());
 
@@ -444,6 +454,316 @@ describe("a done names the deliveries it covers", () => {
     const { turnId } = await next;
     assert.equal(await turnStatus(turnId!), "active", "d2's turn is not split off at d1's done");
   });
+
+  it("a parent's message that waited behind its variant's turn gets the parent's own turn (#1298)", async () => {
+    const mind = mindNamed("td-variant-waited");
+    const variant = `${mind}@v`;
+    const db = await getDb();
+    // The variant's turn holds the thread's key; the parent's message folds in on the
+    // daemon's side and is linked to nothing — the running turn isn't the parent's.
+    delivered(mind, "s1", "v1", variant);
+    const { turnId: vTurn } = await handleMindEvent(
+      mind,
+      { type: "text", session: "s1", messageId: "v1", content: "v" },
+      variant,
+    );
+    const [row] = await db
+      .insert(mindHistory)
+      .values({ mind, type: "inbound", channel: "@alice", thread: "s1", content: "for the parent" })
+      .returning({ id: mindHistory.id });
+    (dm as any).addOutstanding(mind, "s1", "p1", mind, undefined, undefined, [row.id]);
+    await handleMindEvent(
+      mind,
+      { type: "done", session: "s1", messageId: "v1", covers: ["v1"] },
+      variant,
+    );
+    // The parent, silent, reports only its done.
+    const { turnId } = await handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "p1",
+      covers: ["p1"],
+    });
+    assert.ok(turnId && turnId !== vTurn);
+    const linked = await db.select().from(mindHistory).where(eq(mindHistory.id, row.id)).get();
+    assert.equal(linked!.turn_id, turnId);
+    assert.equal(
+      (await db.select().from(turns).where(eq(turns.id, turnId!)).get())!.trigger_event_id,
+      row.id,
+    );
+  });
+
+  it("a done handled while the last turn is still closing gets its own turn (#1298)", async () => {
+    const mind = mindNamed("td-closing-done");
+    const db = await getDb();
+    delivered(mind, "s1", "d1");
+    const { turnId: a } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      messageId: "d1",
+      content: "a",
+    });
+    const [row] = await db
+      .insert(mindHistory)
+      .values({ mind, type: "inbound", channel: "@alice", thread: "s1", content: "second" })
+      .returning({ id: mindHistory.id });
+    (dm as any).addOutstanding(mind, "s1", "d2", mind, undefined, undefined, [row.id]);
+    // The silent second turn's done lands while the first's completion is being recorded.
+    const first = handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d1",
+      covers: ["d1"],
+    });
+    const second = handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d2",
+      covers: ["d2"],
+    });
+    await first;
+    const { turnId: b } = await second;
+    assert.ok(b && b !== a, "the second done is its own turn's, not the closing one's");
+    const linked = await db.select().from(mindHistory).where(eq(mindHistory.id, row.id)).get();
+    assert.equal(linked!.turn_id, b);
+  });
+
+  it("a later sweep doesn't take the trigger from the delivery a turn runs (#1298)", async () => {
+    const mind = mindNamed("td-adopt-trigger");
+    const db = await getDb();
+    delivered(mind, "s1", "d1");
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d1", content: "a" });
+    // An event folds in, left unlinked; then a message folds in and is not covered.
+    const [event] = await db
+      .insert(mindHistory)
+      .values({ mind, type: "event", channel: "@alice", content: "schedule" })
+      .returning({ id: mindHistory.id });
+    const [message] = await db
+      .insert(mindHistory)
+      .values({ mind, type: "inbound", channel: "@alice", content: "from alice" })
+      .returning({ id: mindHistory.id });
+    (dm as any).addOutstanding(mind, "s1", "d2", mind, undefined, undefined, [message.id]);
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
+    // The mind runs the message as its own turn.
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "@alice",
+      messageId: "d2",
+      content: "b",
+    });
+    const turn = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
+    assert.equal(turn!.trigger_event_id, message.id, "not the event the sweep found");
+    void event;
+  });
+
+  it("a turn opening while a done is recorded doesn't take what that done covered (#1298)", async () => {
+    const mind = mindNamed("td-retiring");
+    const db = await getDb();
+    delivered(mind, "s1", "d1");
+    const { turnId: a } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      messageId: "d1",
+      content: "a",
+    });
+    // d2 folded into a, and a's done covers it.
+    const [row] = await db
+      .insert(mindHistory)
+      .values({
+        mind,
+        type: "inbound",
+        channel: "@alice",
+        thread: "s1",
+        content: "folded",
+        turn_id: a,
+      })
+      .returning({ id: mindHistory.id });
+    (dm as any).addOutstanding(mind, "s1", "d2", mind, undefined, undefined, [row.id]);
+    (dm as any).sessionStates.get(mind).get("s1").outstanding.get("d2").foldedInto = a;
+    // The mind's next turn starts while a's done is still being recorded.
+    const closing = handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d1",
+      covers: ["d1", "d2"],
+    });
+    const next = handleMindEvent(mind, { type: "text", session: "s1", content: "next" });
+    await closing;
+    const { turnId: b } = await next;
+    assert.ok(b && b !== a);
+    const kept = await db.select().from(mindHistory).where(eq(mindHistory.id, row.id)).get();
+    assert.equal(kept!.turn_id, a, "it stays with the turn that ran it");
+  });
+
+  it("a done without covers keeps only what it names for its turn's late reports", async () => {
+    const mind = mindNamed("td-legacy-closed");
+    delivered(mind, "s1", "d1");
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      messageId: "d1",
+      content: "a",
+    });
+    delivered(mind, "s1", "d2"); // the mind will run this as its own next turn
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1" });
+    assert.equal(closedTurnFor(mind, "s1", "d1"), turnId);
+    assert.equal(closedTurnFor(mind, "s1", "d2"), undefined, "d2's usage is not this turn's");
+  });
+
+  it("folded deliveries a turn adopted move on again when that turn doesn't cover them", async () => {
+    const mind = mindNamed("td-readopt");
+    const db = await getDb();
+    delivered(mind, "s1", "d1");
+    const { turnId: a } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      messageId: "d1",
+      content: "a",
+    });
+    const folded = async (id: string, content: string) => {
+      const [row] = await db
+        .insert(mindHistory)
+        .values({ mind, type: "inbound", channel: "@alice", thread: "s1", content, turn_id: a })
+        .returning({ id: mindHistory.id });
+      (dm as any).addOutstanding(mind, "s1", id, mind, undefined, undefined, [row.id]);
+      (dm as any).sessionStates.get(mind).get("s1").outstanding.get(id).foldedInto = a;
+      return row.id;
+    };
+    await folded("d2", "two");
+    const three = await folded("d3", "three");
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d1", covers: ["d1"] });
+    // d2 runs next and its turn takes both; its done covers only d2 (one turn per follow-up).
+    await handleMindEvent(mind, { type: "text", session: "s1", messageId: "d2", content: "b" });
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "d2", covers: ["d2"] });
+    // d3 runs as its own turn too.
+    const { turnId: c } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      messageId: "d3",
+      content: "c",
+    });
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, three)).get();
+    assert.equal(row!.turn_id, c);
+    assert.equal(
+      (await db.select().from(turns).where(eq(turns.id, c!)).get())!.trigger_event_id,
+      three,
+    );
+  });
+
+  it("a usage named by a done's own id, sent before it, joins the turn that done records", async () => {
+    const mind = mindNamed("td-early-usage");
+    const db = await getDb();
+    delivered(mind, "s1", "d2");
+    const { insertedId: usageId } = await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      messageId: "m-x",
+      metadata: { output_tokens: 3 },
+    });
+    const { turnId } = await handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "m-x",
+      covers: ["d2"],
+    });
+    assert.ok(turnId);
+    const usage = await db.select().from(mindHistory).where(eq(mindHistory.id, usageId!)).get();
+    assert.equal(usage!.turn_id, turnId);
+  });
+
+  it("a usage handled alongside the done that records its turn lands on that turn", async () => {
+    const mind = mindNamed("td-usage-race");
+    const db = await getDb();
+    delivered(mind, "s1", "d2");
+    // A silent mind POSTs both at once; the usage is handled first but awaits its pricing.
+    const usage = handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      messageId: "d2",
+      metadata: { output_tokens: 5 },
+    });
+    const done = handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d2",
+      covers: ["d2"],
+    });
+    const [{ insertedId }, { turnId }] = await Promise.all([usage, done]);
+    assert.ok(turnId);
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, insertedId!)).get();
+    assert.equal(row!.turn_id, turnId);
+  });
+
+  it("a held turn finds a usage written without it when its hold runs out, and is kept", async () => {
+    const mind = mindNamed("td-usage-backstop");
+    const db = await getDb();
+    delivered(mind, "s1", "d2");
+    const { turnId } = await handleMindEvent(mind, {
+      type: "done",
+      session: "s1",
+      messageId: "d2",
+      covers: ["d2"],
+    });
+    assert.ok(turnId);
+    // Its usage was written with no turn, having raced the done.
+    await db.insert(mindHistory).values({
+      mind,
+      type: "usage",
+      thread: "s1",
+      message_id: "d2",
+      metadata: JSON.stringify({ output_tokens: 6 }),
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    settleHeld(turnId!);
+    const deadline = Date.now() + 3000;
+    let summary: unknown;
+    while (!summary && Date.now() < deadline) {
+      summary = await db.select().from(summaries).where(eq(summaries.period_key, turnId!)).get();
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.ok(summary, "kept as quiet, not taken back as interrupted");
+    await db.delete(summaries).where(eq(summaries.period_key, turnId!));
+  });
+
+  for (const pi of [true, false]) {
+    it(`an interrupt the turn's own done covers didn't cut it off (${pi ? "pi: kept" : "claude: taken back"})`, async () => {
+      const mind = mindNamed(pi ? "td-interrupt-pi" : "td-interrupt-claude");
+      const db = await getDb();
+      delivered(mind, "s1", "d1");
+      const opened = await openDeliveredTurn(mind, "s1", mind);
+      delivered(mind, "s1", "d2"); // POSTed to interrupt the running turn
+      markInterrupted(opened!.turnId, "d2");
+      await handleMindEvent(mind, {
+        type: "usage",
+        session: "s1",
+        messageId: "d1",
+        metadata: { output_tokens: 7 },
+      });
+      // pi folds the interrupting message into the same run: one done covers both. claude
+      // runs it as a turn of its own: the cut-off turn's done covers only its own.
+      await handleMindEvent(mind, {
+        type: "done",
+        session: "s1",
+        messageId: "d1",
+        covers: pi ? ["d1", "d2"] : ["d1"],
+      });
+      const deadline = Date.now() + 3000;
+      let settled = false;
+      while (!settled && Date.now() < deadline) {
+        const turn = await db.select().from(turns).where(eq(turns.id, opened!.turnId)).get();
+        const summary = await db
+          .select()
+          .from(summaries)
+          .where(eq(summaries.period_key, opened!.turnId))
+          .get();
+        settled = pi ? !!summary : !turn;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      assert.ok(settled, pi ? "kept as the quiet turn it was" : "taken back as interrupted");
+      await db.delete(summaries).where(eq(summaries.period_key, opened!.turnId));
+    });
+  }
 
   it("a variant's turn beside its parent's leaves the parent's typing indicator be", async () => {
     const mind = mindNamed("td-variant-typing");

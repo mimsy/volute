@@ -170,21 +170,27 @@ export interface DeliveryPayload {
    * heard something it never received (#420). Stripped before the payload is POSTed.
    */
   inboundDeferred?: boolean;
+  /**
+   * The id of this message's `mind_history` inbound row, once written — so the turn the
+   * message is delivered into links exactly it (`linkRowsToTurn`), never a sweep of the
+   * channel's history. Daemon bookkeeping: stripped by `toWirePayload`.
+   */
+  historyId?: number;
   whileSleeping?: "skip" | "queue" | "trigger-wake";
 }
 
 /**
- * The payload as POSTed to a mind process: `senderId` is stripped. It is the daemon's
+ * The payload as POSTed to a mind process: `senderId` (and `historyId`) is stripped. It is the daemon's
  * record of the authenticated principal (#1017), and the mind's side of the wire is an
  * untrusted process — a field it could echo back must never exist in a shape that looks
  * authoritative. `held`/`deferred`/`peeked`/`inboundDeferred` are likewise daemon
  * bookkeeping, rendered and stripped by `withHeldPreface`, the one strip point on the
  * same boundary.
  */
-export type WirePayload = Omit<DeliveryPayload, "senderId">;
+export type WirePayload = Omit<DeliveryPayload, "senderId" | "historyId">;
 
 export function toWirePayload(payload: DeliveryPayload): WirePayload {
-  const { senderId: _senderId, ...wire } = payload;
+  const { senderId: _senderId, historyId: _historyId, ...wire } = payload;
   return wire;
 }
 

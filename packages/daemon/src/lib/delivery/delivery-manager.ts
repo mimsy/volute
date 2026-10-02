@@ -13,7 +13,16 @@ import {
   releaseTurnSlot,
   turnSlotHolders,
 } from "../daemon/turn-slots.js";
-import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
+import {
+  adoptInterrupted,
+  closedTurnFor,
+  linkRowsToTurn,
+  markInterrupted,
+  openDeliveredTurn,
+  runningTurnOf,
+  unlinkRefused,
+  unmarkInterrupted,
+} from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { getChannelName, getChannelSettings, getParticipants } from "../events/conversations.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
@@ -142,9 +151,24 @@ const AVATAR_CACHE_TTL = 5 * 60 * 1000;
 // --- Session state tracking ---
 
 /** A delivery the mind has taken but no `done` has covered yet. */
+/** The turn a delivery was put into before its POST (see `enterTurn`). */
+export type EnteredTurn = {
+  turnId: string;
+  created: boolean;
+  folded: boolean;
+  /** It marked the turn it folded into as interrupted (see `enterTurn`). */
+  interrupted?: boolean;
+};
+
 type Outstanding = {
   /** The process it was POSTed to — the mind, or one of its variants (see `coveredBy`). */
   process: string;
+  /** Its `mind_history` rows, in envelope order — for the turn it turns out to run in. */
+  rows: (number | undefined)[];
+  /** The running turn it folded into, which its rows were linked to on the ack. */
+  foldedInto?: string;
+  /** A `done` has covered it; `sessionDone` has yet to retire it (see `markRetiring`). */
+  retiring?: boolean;
 };
 
 /** What a mind's `done` says about the deliveries it finished (see `coveredBy`). */
@@ -397,27 +421,34 @@ function storedPayload(payload: DeliveryPayload): string {
  *
  * Never throws into the delivery path: the message has already been received, and a
  * missing history row is a smaller wrong than a delivery that reports failure and is
- * re-sent.
+ * re-sent. Returns the row's id, or undefined if it could not be written.
  */
 export async function recordDeferredInbound(
   baseName: string,
   payload: DeliveryPayload,
-): Promise<void> {
+  /** The turn it was delivered into, already open on a live timeline (see `enterTurn`). */
+  turnId?: string,
+): Promise<number | undefined> {
   const arrived = payload.held?.at ?? payload.deferred?.at;
+  let id: number | undefined;
   try {
     const db = await getDb();
-    await db.insert(mindHistory).values({
-      mind: baseName,
-      type: "inbound",
-      channel: payload.channel,
-      sender: payload.sender ?? null,
-      sender_id: payload.senderId,
-      content: extractTextContent(payload.content),
-      ...(arrived != null ? { created_at: toDbTimestamp(arrived) } : {}),
-    });
+    const [row] = await db
+      .insert(mindHistory)
+      .values({
+        mind: baseName,
+        type: "inbound",
+        channel: payload.channel,
+        sender: payload.sender ?? null,
+        sender_id: payload.senderId,
+        content: extractTextContent(payload.content),
+        ...(arrived != null ? { created_at: toDbTimestamp(arrived) } : {}),
+      })
+      .returning({ id: mindHistory.id });
+    id = row?.id;
   } catch (err) {
     dlog.warn(`failed to record deferred inbound for ${baseName}`, log.errorData(err));
-    return;
+    return undefined;
   }
   publishMindEvent(baseName, {
     mind: baseName,
@@ -425,7 +456,9 @@ export async function recordDeferredInbound(
     channel: payload.channel,
     content: extractTextContent(payload.content),
     sender: payload.sender ?? undefined,
+    turnId,
   });
+  return id;
 }
 
 /** The delivery_queue fields a dead-lettered row carries into its failure notice. */
@@ -747,12 +780,13 @@ export class DeliveryManager {
    * Deliver a thread's deferred messages now, on their own — for a turn on the thread that
    * starts somewhere this class doesn't POST (a system event), called just before that POST
    * so they arrive first, the way they arrived first. A no-op when nothing is deferred there.
-   * Returns whether anything was delivered.
+   * `turnId` is the turn the caller opened: they begin it, so the first of them is its
+   * trigger. Returns whether anything was delivered.
    */
-  async flushDeferred(mindName: string, session: string): Promise<boolean> {
+  async flushDeferred(mindName: string, session: string, turnId?: string): Promise<boolean> {
     const baseName = await getBaseName(mindName);
     const sessionConfig = resolveDeliveryMode(getRoutingConfig(baseName), session);
-    return await this.deliverBatchToMind(mindName, session, [], sessionConfig);
+    return await this.deliverBatchToMind(mindName, session, [], sessionConfig, turnId);
   }
 
   /** When a full rate-limit window frees a wake (epoch ms), or null when it isn't full. */
@@ -954,23 +988,30 @@ export class DeliveryManager {
     session: string,
   ): Promise<{
     payloads: WirePayload[];
-    settle: (outcome: "acked" | "rejected" | "failed") => Promise<void>;
+    /** Resolves to the riders' history rows, in envelope order, once recorded on an ack. */
+    settle: (
+      outcome: "acked" | "rejected" | "failed",
+      turnId?: string,
+    ) => Promise<(number | undefined)[]>;
   }> {
     const baseName = await getBaseName(mindName);
     const riders = await this.takeDeferred(baseName, mindName, session);
     return {
       payloads: riders.map((r) => withHeldPreface(r.payload)),
-      settle: async (outcome) => {
+      settle: async (outcome, turnId) => {
         const ids = riders.map((r) => r.queueId!);
         try {
           if (outcome === "acked") {
             await this.deleteQueueRows(ids);
             for (const r of riders) {
-              if (r.payload.inboundDeferred) await recordDeferredInbound(baseName, r.payload);
+              if (r.payload.inboundDeferred) {
+                r.payload.historyId = await recordDeferredInbound(baseName, r.payload, turnId);
+              }
             }
-          } else if (outcome === "rejected") {
-            await this.countRiderRejection(ids);
+            return riders.map((r) => r.payload.historyId);
           }
+          if (outcome === "rejected") await this.countRiderRejection(ids);
+          return [];
         } finally {
           for (const id of ids) this.inFlight.delete(id);
         }
@@ -1462,6 +1503,7 @@ export class DeliveryManager {
       sender: string | null;
       senderId: number | null;
       content: string | null;
+      payload: DeliveryPayload;
     };
     const byChannel = new Map<string, Promotable[]>();
     const archiveIds: number[] = [];
@@ -1490,6 +1532,7 @@ export class DeliveryManager {
         // row's missing senderId to null (#1017).
         senderId: payload.senderId,
         content: extractTextContent(payload.content),
+        payload,
       });
       byChannel.set(channel, list);
     }
@@ -1552,17 +1595,27 @@ export class DeliveryManager {
       const db = await getDb();
       for (const p of orderedPromote) {
         await db.transaction(async (tx) => {
-          await tx.insert(mindHistory).values({
-            mind: baseName,
-            type: "inbound",
-            channel: p.channel,
-            sender: p.sender,
-            sender_id: p.senderId,
-            content: p.content,
-          });
+          const [row] = await tx
+            .insert(mindHistory)
+            .values({
+              mind: baseName,
+              type: "inbound",
+              channel: p.channel,
+              sender: p.sender,
+              sender_id: p.senderId,
+              content: p.content,
+            })
+            .returning({ id: mindHistory.id });
           await tx
             .update(deliveryQueue)
-            .set({ status: "pending", thread: p.session, attempts: 0, next_attempt_at: null })
+            .set({
+              status: "pending",
+              thread: p.session,
+              attempts: 0,
+              next_attempt_at: null,
+              // So the turn it is delivered into links exactly this row.
+              payload: storedPayload({ ...p.payload, historyId: row?.id }),
+            })
             .where(eq(deliveryQueue.id, p.id));
         });
         committed++;
@@ -2733,6 +2786,7 @@ export class DeliveryManager {
         mindName,
         senders,
         channels,
+        [payload.historyId],
       );
       const wakeAt = ownsSlot ? this.noteWake(baseName, session, sessionConfig) : undefined;
       const typingMap = getTypingMap();
@@ -2740,19 +2794,22 @@ export class DeliveryManager {
       // From here the row and (maybe) the turn slot are ours; a throw before the POST must
       // hand both back, or the slot gates the mind until its TTL.
       let posting = false;
+      let entered: EnteredTurn | undefined;
       try {
+        entered = await this.enterTurn(
+          baseName,
+          session,
+          mindName,
+          deliveryId,
+          ownsSlot,
+          [payload.historyId],
+          sessionConfig.interrupt === true,
+        );
+
         // Snapshot the stale-send baseline: the latest message this mind has now seen in
         // the conversation, so a reply it composes can be held if a peer posts after this.
         // Awaited so the baseline is set before the mind can receive-and-reply.
         await onDeliveredToMind(baseName, payload.conversationId);
-
-        // If a turn is already in progress for this session, attribute this mid-turn inbound
-        // to it now. linkPendingInbound only tags at turn creation (bounded sweep), so without
-        // this a batched message arriving mid-turn — or a >5 backlog — would stay untagged.
-        // No-op when no turn is active yet; the turn-creation path tags the trigger then.
-        linkInboundToActiveTurn(baseName, session, payload.channel).catch((err) =>
-          dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
-        );
 
         // Set typing indicator on both slug and conversationId keys, and publish the
         // conversationId key so the web UI learns the mind is typing at delivery time
@@ -2803,6 +2860,21 @@ export class DeliveryManager {
         if (!ok) {
           // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
           this.dropOutstanding(baseName, session, deliveryId);
+          // Refused, it interrupted nothing.
+          if (entered?.interrupted) unmarkInterrupted(entered.turnId, deliveryId);
+          // Its turn first, synchronously: the slot must not reach a waiter that would join it.
+          // Only a turn it opened: in one it folded into, the mind may have read it before
+          // refusing, and its sender must stay visible to authority checks (#433).
+          if (entered?.created) {
+            this.unfold(baseName, session, entered.turnId);
+            void unlinkRefused(
+              baseName,
+              session,
+              entered.turnId,
+              [payload.historyId],
+              entered.created,
+            );
+          }
           // No turn ran, so give the slot back — but only if this delivery took it. A
           // message that folded into a turn already running does not own that turn's slot,
           // and freeing it would open the gate while the mind is still working.
@@ -2818,8 +2890,9 @@ export class DeliveryManager {
           // at release means a promoted row that then fails to deliver still doesn't claim
           // the mind heard it (#420).
           if (payload.inboundDeferred) {
-            await recordDeferredInbound(baseName, payload);
+            payload.historyId = await recordDeferredInbound(baseName, payload, entered?.turnId);
           }
+          this.linkAcked(baseName, session, mindName, deliveryId, entered, [payload.historyId]);
         }
       } catch (err) {
         // Threw at the POST → transport failure (mind/variant down or timed out), NOT a live
@@ -2829,6 +2902,19 @@ export class DeliveryManager {
           log.errorData(err),
         );
         this.dropOutstanding(baseName, session, deliveryId);
+        if (entered?.interrupted && !posting) unmarkInterrupted(entered.turnId, deliveryId);
+        // Only if nothing was sent: a POST that failed to answer may be running, and stays —
+        // the next delivery folds into it, and the mind's `done` settles it.
+        if (entered && !posting) {
+          if (entered.created) this.unfold(baseName, session, entered.turnId);
+          void unlinkRefused(
+            baseName,
+            session,
+            entered.turnId,
+            [payload.historyId],
+            entered.created,
+          );
+        }
         if (ownsSlot) releaseTurnSlot(baseName, session);
         this.unnoteWake(baseName, session, wakeAt);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
@@ -2844,6 +2930,7 @@ export class DeliveryManager {
     session: string,
     messages: QueuedMessage[],
     sessionConfig: ResolvedSessionConfig,
+    turnId?: string,
   ): Promise<boolean> {
     const queueIds = messages
       .map((m) => m.queueId)
@@ -2908,6 +2995,7 @@ export class DeliveryManager {
         session,
         [...riders, ...messages],
         sessionConfig,
+        turnId,
       );
     });
   }
@@ -2925,6 +3013,8 @@ export class DeliveryManager {
     session: string,
     messages: QueuedMessage[],
     sessionConfig: ResolvedSessionConfig,
+    /** A turn the caller opened for this batch to begin (see `flushDeferred`). */
+    turnId?: string,
   ): Promise<boolean> {
     const queueIds = messages
       .map((m) => m.queueId)
@@ -2949,6 +3039,8 @@ export class DeliveryManager {
     let incremented = false;
     let posting = false;
     let acked = false;
+    let entered: EnteredTurn | undefined;
+    const rowIds = () => messages.map((m) => m.payload.historyId);
     try {
       // Enrich first message per new channel with participant profiles
       const firstPerChannel = new Set<string>();
@@ -3007,7 +3099,23 @@ export class DeliveryManager {
       }
 
       // Increment active count with metadata (the slot was claimed above).
-      this.addOutstanding(baseName, session, deliveryId, mindName, senders, channelSet);
+      this.addOutstanding(baseName, session, deliveryId, mindName, senders, channelSet, rowIds());
+      // The turn it runs in, before the mind sees it: a caller's turn this batch begins
+      // (`flushDeferred`), or the one `enterTurn` finds.
+      if (turnId) {
+        entered = { turnId, created: false, folded: false };
+        if (messages[0].payload.historyId != null) await linkRowsToTurn(turnId, rowIds());
+      } else {
+        entered = await this.enterTurn(
+          baseName,
+          session,
+          mindName,
+          deliveryId,
+          ownsSlot,
+          rowIds(),
+          sessionConfig.interrupt === true,
+        );
+      }
       incremented = true;
 
       // Snapshot the stale-send baseline per conversation in this batch (see deliverToMind).
@@ -3017,13 +3125,6 @@ export class DeliveryManager {
       }
       for (const convId of convIds) {
         await onDeliveredToMind(baseName, convId);
-      }
-
-      // Attribute any mid-turn inbounds in this batch to an in-progress turn (see deliverToMind).
-      for (const ch of channelSet) {
-        linkInboundToActiveTurn(baseName, session, ch).catch((err) =>
-          dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
-        );
       }
 
       // Set typing indicators for all real channels in the batch
@@ -3059,7 +3160,17 @@ export class DeliveryManager {
         if (!ok) {
           // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
           this.dropOutstanding(baseName, session, deliveryId);
+          // Refused, it interrupted nothing.
+          if (entered?.interrupted) unmarkInterrupted(entered.turnId, deliveryId);
           // Only if this batch took the slot — see the immediate path.
+          if (entered?.created) {
+            this.unfold(baseName, session, entered.turnId);
+            void unlinkRefused(baseName, session, entered.turnId, rowIds(), entered.created);
+          } else if (turnId) {
+            // Riders ahead of an event, refused: not the event's turn's, but their own turn's
+            // when they are sent again.
+            void unlinkRefused(baseName, session, turnId, rowIds(), false);
+          }
           if (ownsSlot) releaseTurnSlot(baseName, session);
           this.unnoteWake(baseName, session, wakeAt);
           publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
@@ -3071,22 +3182,20 @@ export class DeliveryManager {
           // concurrently during the flush.
           acked = true;
           await this.deleteQueueRows(queueIds);
-          const lateChannels = new Set<string>();
           for (const msg of messages) {
             if (!msg.payload.inboundDeferred) continue;
-            await recordDeferredInbound(baseName, msg.payload);
-            if (msg.channel) lateChannels.add(msg.channel);
-          }
-          // Rows written only now missed the turn-creation link; attribute them to the turn.
-          for (const ch of lateChannels) {
-            linkInboundToActiveTurn(baseName, session, ch).catch((err) =>
-              dlog.warn(`failed to link deferred inbound for ${baseName}`, log.errorData(err)),
+            msg.payload.historyId = await recordDeferredInbound(
+              baseName,
+              msg.payload,
+              entered?.turnId,
             );
           }
+          this.linkAcked(baseName, session, mindName, deliveryId, entered, rowIds());
         }
       } catch (err) {
         // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
         dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
+        // A POST that failed to answer may be running: its turn stays.
         this.dropOutstanding(baseName, session, deliveryId);
         if (ownsSlot) releaseTurnSlot(baseName, session);
         this.unnoteWake(baseName, session, wakeAt);
@@ -3099,6 +3208,12 @@ export class DeliveryManager {
       if (posting) throw err;
       dlog.warn(`failed to prepare batch for ${mindName}/${session}`, log.errorData(err));
       if (incremented) this.dropOutstanding(baseName, session, deliveryId);
+      // It never reached the mind, so it interrupted nothing.
+      if (entered?.interrupted) unmarkInterrupted(entered.turnId, deliveryId);
+      if (entered) {
+        if (entered.created) this.unfold(baseName, session, entered.turnId);
+        void unlinkRefused(baseName, session, entered.turnId, rowIds(), entered.created);
+      }
       if (ownsSlot) releaseTurnSlot(baseName, session);
       this.unnoteWake(baseName, session, wakeAt);
       return false;
@@ -3483,6 +3598,7 @@ export class DeliveryManager {
     process: string,
     senders?: Set<string>,
     channels?: Set<string>,
+    rows: (number | undefined)[] = [],
   ): boolean {
     let mindSessions = this.sessionStates.get(mind);
     if (!mindSessions) {
@@ -3497,7 +3613,7 @@ export class DeliveryManager {
       seenChannelProfiles: new Set<string>(),
       announcedChannelInfo: new Map<string, string>(),
     };
-    state.outstanding.set(deliveryId, { process });
+    state.outstanding.set(deliveryId, { process, rows });
     // Take the concurrency slot in the same tick as the gate check above it, so two
     // deliveries can't both pass a gate neither has yet claimed against.
     const owned = acquireTurnSlot(mind, session);
@@ -3506,6 +3622,206 @@ export class DeliveryManager {
     if (channels) state.lastDeliveryChannels = channels;
     mindSessions.set(session, state);
     return owned;
+  }
+
+  /**
+   * Link an acked delivery that found the turn slot taken. While it is outstanding it joins
+   * the running turn — so the turn's senders are known to authority checks while it runs —
+   * and its rows are kept on it: if the `done` that ends that turn does not cover it, the
+   * mind runs it as a turn of its own, and its rows move there (`foldedRows`). Once a `done`
+   * has retired it, its rows go to the turn that ran it, and nothing opens.
+   */
+  private linkFolded(
+    mind: string,
+    session: string,
+    process: string,
+    deliveryId: string,
+    rows: (number | undefined)[],
+  ): void {
+    const d = this.sessionStates.get(mind)?.get(session)?.outstanding.get(deliveryId);
+    if (d) {
+      // The turn it folded into before its POST, if any — not whatever runs by the ack. With
+      // none, its rows wait for the turn it runs in (`foldedRows`).
+      if (d.foldedInto) void linkRowsToTurn(d.foldedInto, rows, { trigger: false });
+    } else {
+      const ran = closedTurnFor(mind, session, deliveryId);
+      if (ran) void linkRowsToTurn(ran, rows, { trigger: false });
+    }
+  }
+
+  /**
+   * Put a delivery into the turn it runs in, before it is POSTed: the turn it starts, if it
+   * took the slot — its first row the trigger — or the turn it folds into, so authority
+   * checks see its sender from the moment the mind can. A first row only written on the ack
+   * (a rider's) waits for it, so the trigger is the first message the mind reads. Undo it
+   * with `unlinkRefused` if the mind definitely refuses the POST.
+   */
+  private async enterTurn(
+    mind: string,
+    session: string,
+    process: string,
+    deliveryId: string,
+    ownsSlot: boolean,
+    rows: (number | undefined)[],
+    /** It is POSTed to interrupt the turn it lands in, if one is running. */
+    interrupts: boolean,
+  ): Promise<EnteredTurn | undefined> {
+    const d = this.sessionStates.get(mind)?.get(session)?.outstanding.get(deliveryId);
+    let into: string | undefined;
+    if (ownsSlot) {
+      const opened = await openDeliveredTurn(mind, session, process);
+      if (!opened) return undefined;
+      if (opened.created) {
+        if (rows[0] != null) await linkRowsToTurn(opened.turnId, rows);
+        this.adoptUnlinked(mind, session, process, opened.turnId, deliveryId);
+        return { turnId: opened.turnId, created: true, folded: false };
+      }
+      // Joined a turn of its own process already running: a fold in all but name.
+      into = opened.turnId;
+    } else {
+      into = runningTurnOf(mind, session, process);
+    }
+    if (d) d.foldedInto = into;
+    if (!into) return undefined;
+    // The turn it interrupts ends without an answer; it is not a quiet one (see summarizer).
+    if (interrupts) markInterrupted(into, deliveryId);
+    await linkRowsToTurn(into, rows, { trigger: false });
+    return { turnId: into, created: false, folded: true, interrupted: interrupts };
+  }
+
+  /**
+   * Track a delivery POSTed outside this class (the wake flush) as one of its own: outstanding
+   * until a `done` covers it, and put into the turn it runs in (`enterTurn`), so a batch the
+   * mind folds in or runs as a turn of its own is followed like any other (#1298). The
+   * caller must POST it with `deliveryId` and report how that went with `endDirect`.
+   */
+  async beginDirect(
+    baseName: string,
+    session: string,
+    process: string,
+    deliveryId: string,
+    ownsSlot: boolean,
+    rows: (number | undefined)[],
+  ): Promise<EnteredTurn | undefined> {
+    this.addOutstanding(baseName, session, deliveryId, process, undefined, undefined, rows);
+    return this.enterTurn(baseName, session, process, deliveryId, ownsSlot, rows, false);
+  }
+
+  /** How a `beginDirect` delivery's POST went; `rows` as they stand after it. */
+  endDirect(
+    baseName: string,
+    session: string,
+    process: string,
+    deliveryId: string,
+    entered: EnteredTurn | undefined,
+    outcome: "acked" | "rejected" | "failed" | "unsent",
+    rows: (number | undefined)[],
+  ): void {
+    if (outcome === "acked") {
+      this.linkAcked(baseName, session, process, deliveryId, entered, rows);
+      return;
+    }
+    this.dropOutstanding(baseName, session, deliveryId);
+    // Never sent, or a turn it opened refused. A POST that failed to answer may be running,
+    // and a refused fold may have been read: those stay (#433).
+    if (entered && (outcome === "unsent" || (outcome === "rejected" && entered.created))) {
+      if (entered.created) this.unfold(baseName, session, entered.turnId);
+      void unlinkRefused(baseName, session, entered.turnId, rows, entered.created);
+    }
+  }
+
+  /** Link what an acked delivery's ack wrote, now the mind has it (see `enterTurn`). */
+  private linkAcked(
+    mind: string,
+    session: string,
+    process: string,
+    deliveryId: string,
+    entered: EnteredTurn | undefined,
+    rows: (number | undefined)[],
+  ): void {
+    this.keepRows(mind, session, deliveryId, rows);
+    if (entered && !entered.folded) {
+      // A turn it opened also takes what a turn interrupted there left (only now the mind
+      // has the message: a refused one must not carry them off).
+      const turnId = entered.turnId;
+      void linkRowsToTurn(turnId, rows).then(() =>
+        entered.created ? adoptInterrupted(mind, session, turnId) : undefined,
+      );
+    } else this.linkFolded(mind, session, process, deliveryId, rows);
+  }
+
+  /**
+   * A turn just opened takes `process`'s outstanding deliveries that found no turn to join
+   * when they reached the mind — delivered in the moment the slot was taken but the turn
+   * not yet open. The mind has them, so they are in this turn's context, and their senders
+   * must count toward its authority (#433). Never the trigger.
+   */
+  adoptUnlinked(
+    mind: string,
+    session: string,
+    process: string,
+    turnId: string,
+    except?: string,
+  ): void {
+    const rows: (number | undefined)[] = [];
+    for (const [id, d] of this.sessionStates.get(mind)?.get(session)?.outstanding ?? []) {
+      if (id === except || d.process !== process || d.retiring || d.foldedInto) continue;
+      d.foldedInto = turnId;
+      rows.push(...d.rows);
+    }
+    if (rows.length > 0) void linkRowsToTurn(turnId, rows, { trigger: false });
+  }
+
+  /** A turn was taken back unrun: what folded into it waits for the turn it runs in. */
+  unfold(mind: string, session: string, turnId: string): void {
+    for (const d of this.sessionStates.get(mind)?.get(session)?.outstanding.values() ?? []) {
+      if (d.foldedInto === turnId) d.foldedInto = undefined;
+    }
+  }
+
+  /** Note that a `done` has covered these deliveries, on its arrival (see `Outstanding`). */
+  markRetiring(mind: string, session: string, ids: string[]): void {
+    const outstanding = this.sessionStates.get(mind)?.get(session)?.outstanding;
+    for (const id of ids) {
+      const d = outstanding?.get(id);
+      if (d) d.retiring = true;
+    }
+  }
+
+  /** Keep an acked delivery's rows on it, now those written on the ack exist too. */
+  private keepRows(
+    mind: string,
+    session: string,
+    deliveryId: string,
+    rows: (number | undefined)[],
+  ): void {
+    const d = this.sessionStates.get(mind)?.get(session)?.outstanding.get(deliveryId);
+    if (d) d.rows = rows;
+  }
+
+  /**
+   * The rows of `process`'s outstanding deliveries on the session — only `ids`, if given —
+   * in the order they reached the mind, and the turns they were linked to when they folded
+   * in. For a turn opening on the session: these are what it runs (see `linkRowsToTurn`).
+   */
+  foldedRows(
+    mind: string,
+    session: string,
+    process: string,
+    ids: string[] | undefined,
+    /** The turn taking them: it holds their rows from now (see `Outstanding.foldedInto`). */
+    adoptedBy: string,
+  ): { rows: (number | undefined)[]; from: string[] } {
+    const rows: (number | undefined)[] = [];
+    const from: string[] = [];
+    const outstanding = this.sessionStates.get(mind)?.get(session)?.outstanding;
+    for (const [id, d] of outstanding ?? []) {
+      if (d.process !== process || (ids ? !ids.includes(id) : d.retiring)) continue;
+      rows.push(...d.rows);
+      if (d.foldedInto) from.push(d.foldedInto);
+      d.foldedInto = adoptedBy;
+    }
+    return { rows, from };
   }
 
   /** A POST the mind never took: its delivery is no longer outstanding. */

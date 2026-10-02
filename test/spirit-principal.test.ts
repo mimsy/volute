@@ -17,7 +17,14 @@ import {
   revokeMindToken,
   revokeScriptToken,
 } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
-import { clearMind, createTurn } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
+import {
+  adoptInterrupted,
+  clearMind,
+  createTurn,
+  holdInterrupted,
+  linkRowsToTurn,
+  openDeliveredTurn,
+} from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   addMind,
@@ -197,7 +204,7 @@ describe("spirit effective principal (#433 / #1017)", () => {
     const admin = await createUser(ADMIN, "pass");
     await addMind(ASKING_MIND, 4702);
     await getOrCreateMindUser(ASKING_MIND);
-    // linkInboundToActiveTurn folds mid-turn arrivals into the running turn, so a
+    // DeliveryManager.enterTurn folds mid-turn arrivals into the running turn, so a
     // non-admin can speak into an admin's turn. Neither authority survives that.
     await openTurn(`@${ADMIN}`, [
       { type: "inbound", sender: admin.username },
@@ -208,6 +215,56 @@ describe("spirit effective principal (#433 / #1017)", () => {
       (await resolveEffective({ user: spirit, mindSession: `@${ADMIN}` })).role,
       "basic",
     );
+  });
+
+  it("an admin's message from an interrupted turn never lends a later event turn admin authority", async () => {
+    const spirit = await spiritUser();
+    const admin = await createUser(ADMIN, "pass");
+    const thread = `@${ADMIN}`;
+    const db = await getDb();
+    const [adminRow] = await db
+      .insert(mindHistory)
+      .values({
+        mind: SPIRIT,
+        type: "inbound",
+        channel: thread,
+        sender: admin.username,
+        content: "x",
+      })
+      .returning({ id: mindHistory.id });
+    // The admin's DM turn was taken back as interrupted; nothing runs on the thread yet.
+    await holdInterrupted(SPIRIT, thread, [adminRow.id]);
+    // A system event routed to that thread opens the next turn there.
+    const [eventRow] = await db
+      .insert(mindHistory)
+      .values({
+        mind: SPIRIT,
+        type: "event",
+        channel: eventChannel("schedule", 1),
+        content: "tick",
+      })
+      .returning({ id: mindHistory.id });
+    const opened = await openDeliveredTurn(SPIRIT, thread, SPIRIT);
+    await linkRowsToTurn(opened!.turnId, [eventRow.id]);
+    await adoptInterrupted(SPIRIT, thread, opened!.turnId);
+    const role = (await resolveEffective({ user: spirit, mindSession: thread })).role;
+    assert.notEqual(role, "admin");
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, adminRow.id)).get();
+    assert.equal(row!.turn_id, null, "not adopted into a turn a message didn't start");
+
+    // Nor joined into one already running.
+    const [another] = await db
+      .insert(mindHistory)
+      .values({
+        mind: SPIRIT,
+        type: "inbound",
+        channel: thread,
+        sender: admin.username,
+        content: "y",
+      })
+      .returning({ id: mindHistory.id });
+    await holdInterrupted(SPIRIT, thread, [another.id]);
+    assert.notEqual((await resolveEffective({ user: spirit, mindSession: thread })).role, "admin");
   });
 
   it("treats an event-only turn as the spirit's own self-initiated work", async () => {

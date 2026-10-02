@@ -4,11 +4,27 @@ import { and, eq, sql } from "drizzle-orm";
 import { drainEvents } from "../packages/daemon/src/lib/chat/system-events.js";
 import { getTypingMap } from "../packages/daemon/src/lib/chat/typing.js";
 import { getSpendBudget, initSpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.js";
-import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import {
+  reconcileWedgedTurns,
+  summarizeTurn,
+} from "../packages/daemon/src/lib/daemon/summarizer.js";
+import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
+import { releaseTurnSlot } from "../packages/daemon/src/lib/daemon/turn-slots.js";
+import {
+  adoptInterrupted,
   clearMind,
+  closedTurnFor,
+  completeTurn,
   getActiveTurnId,
-  linkInboundToActiveTurn,
+  holdInterrupted,
+  linkRowsToTurn,
+  markClosing,
+  markInterrupted,
+  openDeliveredTurn,
+  runningTurnOf,
+  unlinkRefused,
+  unmarkInterrupted,
+  wasInterrupted,
 } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
@@ -21,9 +37,30 @@ import {
   type ConversationEvent,
   subscribe,
 } from "../packages/daemon/src/lib/events/conversation-events.js";
-import { mindHistory, systemEvents, turns } from "../packages/daemon/src/lib/schema.js";
+import { mindHistory, summaries, systemEvents, turns } from "../packages/daemon/src/lib/schema.js";
+
+/** What a delivery that found the slot taken does before its POST (`enterTurn`). */
+async function fold(
+  mind: string,
+  session: string,
+  process: string,
+  rows: (number | undefined)[],
+): Promise<void> {
+  const running = runningTurnOf(mind, session, process);
+  if (running) await linkRowsToTurn(running, rows, { trigger: false });
+}
+
+async function waitFor<T>(read: () => T | Promise<T>): Promise<T> {
+  const deadline = Date.now() + 3000;
+  for (;;) {
+    const v = await read();
+    if (v || Date.now() > deadline) return v;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
 
 async function cleanup(mind: string): Promise<void> {
+  releaseTurnSlot(mind);
   await clearMind(mind);
   const db = await getDb();
   await db.delete(mindHistory).where(eq(mindHistory.mind, mind));
@@ -363,8 +400,8 @@ describe("turn-lifecycle: handleMindEvent", () => {
   });
 });
 
-describe("turn-lifecycle: mid-turn inbound tagging", () => {
-  it("tags an inbound arriving mid-turn to the in-progress turn, without touching the trigger", async () => {
+describe("turn-lifecycle: a delivery's rows link to its turn", () => {
+  it("tags an inbound folded in mid-turn to the in-progress turn, without touching the trigger", async () => {
     const mind = "tl-midturn";
     // A turn is already active for (mind, s1, @alice), triggered by an earlier inbound.
     const triggerId = await recordInbound(mind, "@alice", "alice", null, "first");
@@ -375,23 +412,15 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
       content: "on it",
     });
     assert.ok(turnId);
-    assert.equal(getActiveTurnId(mind, "s1"), turnId, "turn should be active");
 
-    // A new inbound arrives on the same channel WHILE the turn is still active.
+    // A new message is delivered on the same thread WHILE the turn is still active.
     const interruptId = await recordInbound(mind, "@alice", "alice", null, "actually, wait");
+    await fold(mind, "s1", mind, [interruptId]);
+
     const db = await getDb();
-    const before = await db
-      .select()
-      .from(mindHistory)
-      .where(eq(mindHistory.id, interruptId!))
-      .get();
-    assert.equal(before!.turn_id, null, "interrupt starts untagged");
-
-    // Delivery attributes it to the in-progress turn immediately.
-    await linkInboundToActiveTurn(mind, "s1", "@alice");
-
     const after = await db.select().from(mindHistory).where(eq(mindHistory.id, interruptId!)).get();
-    assert.equal(after!.turn_id, turnId, "mid-turn inbound must be tagged to the active turn now");
+    assert.equal(after!.turn_id, turnId, "mid-turn inbound must be tagged to the active turn");
+    assert.equal(getActiveTurnId(mind, "s1"), turnId, "no second turn is opened");
 
     // The turn's trigger stays the original triggering inbound — a mid-turn message is not a trigger.
     const turn = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
@@ -399,51 +428,8 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
     await cleanup(mind);
   });
 
-  it("tags a system event arriving mid-turn to the in-progress turn", async () => {
-    // `linkInboundToActiveTurn` must match "event" rows as well as "inbound" ones. Events are
-    // delivered with no busy check, so one can land while a turn is already running — this is
-    // the only path that attributes it. If the filter narrows back to "inbound", the event
-    // silently drops out of the turn's `events` array in the timeline and out of the
-    // summarizer's transcript. Nothing throws; the event simply never happened, as far as
-    // history is concerned.
-    const mind = "tl-midturn-event";
-    const triggerId = await recordInbound(mind, "@alice", "alice", null, "first");
-    const { turnId } = await handleMindEvent(mind, {
-      type: "text",
-      session: "s1",
-      channel: "@alice",
-      content: "on it",
-    });
-    assert.ok(turnId);
-
-    const db = await getDb();
-    const inserted = await db
-      .insert(mindHistory)
-      .values({
-        mind,
-        type: "event",
-        thread: "s1",
-        channel: "event:schedule:99",
-        content: "Time for your morning check-in.",
-        metadata: JSON.stringify({ systemEventId: 99, label: "Schedule: morning-check" }),
-      })
-      .returning({ id: mindHistory.id });
-    const eventRowId = inserted[0].id;
-
-    await linkInboundToActiveTurn(mind, "s1", "event:schedule:99");
-
-    const after = await db.select().from(mindHistory).where(eq(mindHistory.id, eventRowId)).get();
-    assert.equal(after!.turn_id, turnId, "mid-turn event must be tagged to the active turn");
-
-    // ...but a mid-turn arrival is never the trigger — the turn was started by alice.
-    const turn = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
-    assert.equal(turn!.trigger_event_id, triggerId, "trigger_event_id must not be overwritten");
-    await cleanup(mind);
-  });
-
-  it("tags ALL mid-turn inbounds even when more than 5 accumulate (next-turn sweep would miss them)", async () => {
+  it("tags every message of a batch folded in mid-turn", async () => {
     const mind = "tl-midturn-backlog";
-    // Open a turn on the channel.
     const { turnId } = await handleMindEvent(mind, {
       type: "text",
       session: "s1",
@@ -452,14 +438,12 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
     });
     assert.ok(turnId);
 
-    // 7 inbounds pile up mid-turn — more than linkPendingInbound's bounded sweep of 5.
     const ids: number[] = [];
     for (let i = 0; i < 7; i++) {
       const id = await recordInbound(mind, "@alice", "alice", null, `msg ${i}`);
       ids.push(id!);
     }
-
-    await linkInboundToActiveTurn(mind, "s1", "@alice");
+    await fold(mind, "s1", mind, ids);
 
     const db = await getDb();
     for (const id of ids) {
@@ -469,48 +453,490 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
     await cleanup(mind);
   });
 
-  it("is a no-op when no turn is active — the turn-creation path tags it instead", async () => {
-    const mind = "tl-midturn-noturn";
-    // No active turn for this session yet.
+  it("a folded delivery opens nothing when no turn of its process is running", async () => {
+    const mind = "tl-folded-noturn";
     const inboundId = await recordInbound(mind, "@alice", "alice", null, "hello");
-    await linkInboundToActiveTurn(mind, "s1", "@alice");
-
-    const db = await getDb();
-    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
-    assert.equal(
-      row!.turn_id,
-      null,
-      "no active turn → inbound stays untagged for the creation path",
-    );
-
-    // The turn-creation path then tags it as the trigger.
-    const { turnId } = await handleMindEvent(mind, {
-      type: "text",
-      session: "s1",
-      channel: "@alice",
-      content: "hi",
-    });
-    const tagged = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
-    assert.equal(tagged!.turn_id, turnId, "creation path tags the pending inbound");
+    await fold(mind, "s1", mind, [inboundId]);
+    assert.equal(getActiveTurnId(mind, "s1"), undefined);
     await cleanup(mind);
   });
 
-  it("does not tag inbounds on a different channel", async () => {
-    const mind = "tl-midturn-otherchannel";
-    const { turnId } = await handleMindEvent(mind, {
+  it("a delivery that takes the slot opens its turn, with its row as the trigger", async () => {
+    const mind = "tl-delivery-opens";
+    const inboundId = await recordInbound(mind, "@alice", "alice", null, "hello");
+    const opened = await openDeliveredTurn(mind, "s1", mind);
+    assert.ok(opened?.created);
+    await linkRowsToTurn(opened!.turnId, [inboundId]);
+
+    assert.equal(getActiveTurnId(mind, "s1"), opened!.turnId);
+    const db = await getDb();
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
+    assert.equal(row!.turn_id, opened!.turnId);
+    const turn = await db.select().from(turns).where(eq(turns.id, opened!.turnId)).get();
+    assert.equal(turn!.trigger_event_id, inboundId);
+    assert.equal(turn!.thread, "s1");
+
+    // The mind's first event joins it rather than opening a second.
+    const { turnId: eventTurn } = await handleMindEvent(mind, {
       type: "text",
       session: "s1",
       channel: "@alice",
       content: "hi",
     });
-    assert.ok(turnId);
-    // Inbound on a different channel must not be swept into this turn.
+    assert.equal(eventTurn, opened!.turnId);
+    assert.equal((await db.select().from(turns).where(eq(turns.mind, mind)).all()).length, 1);
+    await cleanup(mind);
+  });
+
+  it("links only the delivery's own rows — never the channel's older untagged history", async () => {
+    const mind = "tl-delivery-exact";
+    const db = await getDb();
+    // Months of untagged history on the same channel, and a row on another channel.
+    const [old] = await db
+      .insert(mindHistory)
+      .values({
+        mind,
+        type: "inbound",
+        channel: "@alice",
+        content: "from long ago",
+        created_at: "2026-01-01 00:00:00",
+      })
+      .returning({ id: mindHistory.id });
     const otherId = await recordInbound(mind, "@bob", "bob", null, "unrelated");
-    await linkInboundToActiveTurn(mind, "s1", "@alice");
+    const strayId = await recordInbound(mind, "@alice", "alice", null, "never delivered");
+    const deliveredId = await recordInbound(mind, "@alice", "alice", null, "hello");
+
+    const opened = await openDeliveredTurn(mind, "@alice", mind);
+    await linkRowsToTurn(opened!.turnId, [deliveredId]);
+
+    const turnOf = async (id: number) =>
+      (await db.select().from(mindHistory).where(eq(mindHistory.id, id)).get())!.turn_id;
+    assert.equal(await turnOf(deliveredId!), opened!.turnId);
+    assert.equal(await turnOf(old.id), null, "old history is not swept into the turn");
+    assert.equal(await turnOf(strayId!), null, "an undelivered row is not swept either");
+    assert.equal(await turnOf(otherId!), null, "another channel's row stays untagged");
+    await cleanup(mind);
+  });
+
+  it("a variant's delivery on its parent's thread neither joins nor takes the parent's turn", async () => {
+    const mind = "tl-delivery-variant";
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "@alice",
+      content: "parent working",
+    });
+    assert.ok(turnId);
+    const inboundId = await recordInbound(mind, "@alice", "alice", null, "for the variant");
+    assert.equal(await openDeliveredTurn(mind, "s1", `${mind}-v`), undefined);
+    await fold(mind, "s1", `${mind}-v`, [inboundId]);
+
+    assert.equal(getActiveTurnId(mind, "s1"), turnId, "the parent's turn is untouched");
+    const db = await getDb();
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
+    assert.equal(row!.turn_id, null, "the variant's message is not linked into the parent's turn");
+    await cleanup(mind);
+  });
+
+  it("the trigger is the first row in the order given, never one another turn holds", async () => {
+    const mind = "tl-delivery-trigger";
+    const db = await getDb();
+    const heldId = await recordInbound(mind, "@alice", "alice", null, "an earlier turn's");
+    await db.update(mindHistory).set({ turn_id: "earlier" }).where(eq(mindHistory.id, heldId!));
+    const laterId = await recordInbound(mind, "@alice", "alice", null, "recorded second");
+    const riderId = await recordInbound(mind, "@alice", "alice", null, "recorded last, sent first");
+    const opened = await openDeliveredTurn(mind, "s1", mind);
+    await linkRowsToTurn(opened!.turnId, [heldId, riderId, laterId]);
+    const turn = await db.select().from(turns).where(eq(turns.id, opened!.turnId)).get();
+    assert.equal(turn!.trigger_event_id, riderId);
+    await cleanup(mind);
+  });
+
+  it("a turn opened for a delivery the mind never took is taken back whole", async () => {
+    const mind = "tl-delivery-discard";
+    const inboundId = await recordInbound(mind, "@alice", "alice", null, "hello");
+    const opened = await openDeliveredTurn(mind, "s1", mind);
+    await linkRowsToTurn(opened!.turnId, [inboundId]);
+    await unlinkRefused(mind, "s1", opened!.turnId, [inboundId], true);
+
+    assert.equal(getActiveTurnId(mind, "s1"), undefined);
+    const db = await getDb();
+    assert.equal((await db.select().from(turns).where(eq(turns.mind, mind)).all()).length, 0);
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
+    assert.equal(row!.turn_id, null, "the row waits for the delivery that reaches the mind");
+    await cleanup(mind);
+  });
+
+  it("a refused delivery's turn is gone before the next delivery can join it", async () => {
+    const mind = "tl-delivery-refused-next";
+    const refused = await openDeliveredTurn(mind, "s1", mind);
+    const taking = unlinkRefused(mind, "s1", refused!.turnId, [], true);
+    // The refusal freed the slot; the next delivery takes it at once.
+    const next = await openDeliveredTurn(mind, "s1", mind);
+    await taking;
+    assert.ok(next?.created && next.turnId !== refused!.turnId);
+    const db = await getDb();
+    assert.ok(await db.select().from(turns).where(eq(turns.id, next!.turnId)).get());
+    assert.equal(
+      await db.select().from(turns).where(eq(turns.id, refused!.turnId)).get(),
+      undefined,
+    );
+    await cleanup(mind);
+  });
+
+  it("a refused delivery leaves a turn the mind is already working in, and its rows", async () => {
+    const mind = "tl-delivery-refused-busy";
+    const triggerId = await recordInbound(mind, "@alice", "alice", null, "first");
+    const opened = await openDeliveredTurn(mind, "s1", mind);
+    await linkRowsToTurn(opened!.turnId, [triggerId]);
+    const { insertedId: textId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      content: "working on it",
+    });
+    const foldedId = await recordInbound(mind, "@bob", "bob", null, "refused");
+    await fold(mind, "s1", mind, [foldedId]);
+    await unlinkRefused(mind, "s1", opened!.turnId, [foldedId], false);
 
     const db = await getDb();
-    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, otherId!)).get();
-    assert.equal(row!.turn_id, null, "a different channel's inbound must stay untagged");
+    const turnOf = async (id: number) =>
+      (await db.select().from(mindHistory).where(eq(mindHistory.id, id)).get())!.turn_id;
+    assert.equal(await turnOf(foldedId!), null, "only the refused delivery's row leaves");
+    assert.equal(await turnOf(triggerId!), opened!.turnId);
+    assert.equal(await turnOf(textId!), opened!.turnId, "the mind's own rows are never touched");
+    assert.equal(getActiveTurnId(mind, "s1"), opened!.turnId);
+    await cleanup(mind);
+  });
+
+  it("a delivery while the last turn's completion is being recorded opens its own turn", async () => {
+    const mind = "tl-delivery-closing";
+    const first = await openDeliveredTurn(mind, "s1", mind);
+    // Its done has arrived: the slot went to the next delivery before the turn completed.
+    markClosing(mind, "s1", first!.turnId, ["d1"]);
+    const next = await openDeliveredTurn(mind, "s1", mind);
+    assert.ok(next?.created && next.turnId !== first!.turnId, "not joined to the closing turn");
+    assert.equal(await completeTurn(mind, "s1", { turnId: first!.turnId }), first!.turnId);
+    assert.equal(getActiveTurnId(mind, "s1"), next!.turnId, "the next turn runs on");
+    await cleanup(mind);
+  });
+
+  it("an event turn's usage after its done lands on it by the id the done named", async () => {
+    const mind = "tl-event-usage";
+    // An event's turn: no daemon delivery id, only the mind's own.
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "event:schedule:1",
+      messageId: "m-1",
+      content: "x",
+    });
+    await handleMindEvent(mind, { type: "done", session: "s1", messageId: "m-1" });
+    const usage = await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      messageId: "m-1",
+      metadata: {},
+    });
+    assert.equal(usage.turnId, turnId);
+    await cleanup(mind);
+  });
+
+  it("a usage naming a closing turn's delivery lands on it, not on the next turn", async () => {
+    const mind = "tl-usage-closing";
+    const first = await openDeliveredTurn(mind, "s1", mind);
+    markClosing(mind, "s1", first!.turnId, ["d1"]);
+    const next = await openDeliveredTurn(mind, "s1", mind);
+    const usage = await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      messageId: "d1",
+      metadata: {},
+    });
+    assert.equal(usage.turnId, first!.turnId);
+    assert.notEqual(usage.turnId, next!.turnId);
+    await cleanup(mind);
+  });
+
+  it("one mind's reports can't crowd another's out of the closed-turn map", async () => {
+    const quiet = "tl-closed-quiet";
+    const noisy = "tl-closed-noisy";
+    const own = await openDeliveredTurn(quiet, "s1", quiet);
+    markClosing(quiet, "s1", own!.turnId, ["q1"]);
+    for (let i = 0; i < 500; i++) markClosing(noisy, "s1", `t${i}`, [`n${i}`]);
+    assert.equal(closedTurnFor(quiet, "s1", "q1"), own!.turnId);
+    await cleanup(quiet);
+    await cleanup(noisy);
+  });
+
+  it("an event the mind sent before its done, handled after it, lands on that turn", async () => {
+    const mind = "tl-late-event";
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      messageId: "m1",
+      content: "a",
+    });
+    const closing = handleMindEvent(mind, { type: "done", session: "s1", messageId: "m1" });
+    const late = await handleMindEvent(mind, {
+      type: "tool_result",
+      session: "s1",
+      messageId: "m1",
+      content: "late",
+    });
+    await closing;
+    assert.equal(late.turnId, turnId, "no phantom turn opens for it");
+    assert.equal(getActiveTurnId(mind, "s1"), undefined);
+    // The next turn's own first event still opens its own.
+    const next = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      messageId: "m2",
+      content: "b",
+    });
+    assert.ok(next.turnId && next.turnId !== turnId);
+    await cleanup(mind);
+  });
+
+  it("a turn interrupted before any output hands its message to the next turn on the thread", async () => {
+    const mind = "tl-interrupted-handoff";
+    const db = await getDb();
+    const inboundId = await recordInbound(mind, "@alice", "alice", null, "first");
+    const first = await openDeliveredTurn(mind, "s1", mind);
+    await linkRowsToTurn(first!.turnId, [inboundId]);
+    // The model was cut off before producing anything.
+    await handleMindEvent(mind, { type: "usage", session: "s1", metadata: { output_tokens: 0 } });
+    await handleMindEvent(mind, { type: "done", session: "s1", content: "" });
+    // The summarizer finds nothing and takes the turn back.
+    assert.ok(
+      await waitFor(
+        async () => !(await db.select().from(turns).where(eq(turns.id, first!.turnId)).get()),
+      ),
+    );
+    // The next message on the thread starts the turn that answers it.
+    const nextId = await recordInbound(mind, "@alice", "alice", null, "hello?");
+    const next = (await openDeliveredTurn(mind, "s1", mind))!.turnId;
+    await linkRowsToTurn(next, [nextId]);
+    await adoptInterrupted(mind, "s1", next);
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
+    assert.equal(row!.turn_id, next);
+    assert.equal(
+      (await db.select().from(turns).where(eq(turns.id, next)).get())!.trigger_event_id,
+      nextId,
+      "its own message stays the trigger",
+    );
+    await cleanup(mind);
+  });
+
+  it("a turn a delivery interrupted is taken back, though its model produced output", async () => {
+    const mind = "tl-interrupted-output";
+    const db = await getDb();
+    const inboundId = await recordInbound(mind, "@alice", "alice", null, "first");
+    const first = await openDeliveredTurn(mind, "s1", mind);
+    await linkRowsToTurn(first!.turnId, [inboundId]);
+    markInterrupted(first!.turnId, "d-interrupting");
+    // It thought (hidden from observers), was cut off, and reported its usage and done.
+    await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      metadata: { input_tokens: 50, output_tokens: 30 },
+    });
+    await handleMindEvent(mind, { type: "done", session: "s1" });
+    assert.ok(
+      await waitFor(
+        async () => !(await db.select().from(turns).where(eq(turns.id, first!.turnId)).get()),
+      ),
+      "not kept as a quiet turn",
+    );
+    const nextId = await recordInbound(mind, "@alice", "alice", null, "next");
+    const next = (await openDeliveredTurn(mind, "s1", mind))!.turnId;
+    await linkRowsToTurn(next, [nextId]);
+    await adoptInterrupted(mind, "s1", next);
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
+    assert.equal(row!.turn_id, next, "the turn that answers it has it");
+    await cleanup(mind);
+  });
+
+  it("a failed turn isn't held for a usage it will never send", async () => {
+    const mind = "tl-errored-no-hold";
+    const db = await getDb();
+    const { turnId } = await handleMindEvent(mind, { type: "error", session: "s1", content: "x" });
+    void turnId;
+    const opened = await openDeliveredTurn(mind, "s2", mind);
+    await db.insert(mindHistory).values([
+      { mind, type: "error", thread: "s2", content: "boom", turn_id: opened!.turnId },
+      { mind, type: "done", thread: "s2", turn_id: opened!.turnId },
+    ]);
+    await summarizeTurn(mind, "s2", undefined, 0, opened!.turnId, undefined, { onDone: true });
+    assert.equal(
+      await db.select().from(turns).where(eq(turns.id, opened!.turnId)).get(),
+      undefined,
+      "taken back at once",
+    );
+    await cleanup(mind);
+  });
+
+  it("an interrupted turn's message joins a turn already running on the thread, not as its trigger", async () => {
+    const mind = "tl-interrupted-running";
+    const db = await getDb();
+    const oldId = await recordInbound(mind, "@alice", "alice", null, "interrupted");
+    const newId = await recordInbound(mind, "@alice", "alice", null, "interrupting");
+    const running = await openDeliveredTurn(mind, "s1", mind);
+    await linkRowsToTurn(running!.turnId, [newId]);
+    await holdInterrupted(mind, "s1", [oldId!]);
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, oldId!)).get();
+    assert.equal(row!.turn_id, running!.turnId);
+    assert.equal(
+      (await db.select().from(turns).where(eq(turns.id, running!.turnId)).get())!.trigger_event_id,
+      newId,
+    );
+    // Held only for this thread: another thread's next turn takes nothing.
+    const otherId = await recordInbound(mind, "@bob", "bob", null, "elsewhere");
+    await holdInterrupted(mind, "s2", [otherId!]);
+    const { turnId: s3 } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s3",
+      content: "x",
+    });
+    const other = await db.select().from(mindHistory).where(eq(mindHistory.id, otherId!)).get();
+    assert.notEqual(other!.turn_id, s3);
+    await cleanup(mind);
+  });
+
+  it("after a restart, a turn left complete without a summary is settled by the tick", async () => {
+    const mind = "tl-restart-settle";
+    const db = await getDb();
+    const old = "2026-01-01 00:00:00";
+    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+    // Two turns whose holds died with the daemon: one got its usage in the end, one never.
+    const make = async (id: string, withUsage: boolean) => {
+      await db
+        .insert(turns)
+        .values({ id, mind, thread: "s1", status: "complete", created_at: now });
+      const rows = [
+        { mind, type: "inbound", channel: "@alice", sender: "alice", content: "hi", turn_id: id },
+        ...(withUsage
+          ? [{ mind, type: "usage", metadata: JSON.stringify({ output_tokens: 9 }), turn_id: id }]
+          : []),
+        { mind, type: "done", turn_id: id },
+      ];
+      await db
+        .insert(mindHistory)
+        .values(rows.map((r) => ({ ...r, thread: "s1", created_at: old })));
+    };
+    await make(`${mind}-quiet`, true);
+    await make(`${mind}-cut`, false);
+    await reconcileWedgedTurns(60_000);
+    const summary = await waitFor(() =>
+      db
+        .select()
+        .from(summaries)
+        .where(eq(summaries.period_key, `${mind}-quiet`))
+        .get(),
+    );
+    assert.match(summary!.content, /no visible output/, "the quiet one is summarized");
+    assert.equal(
+      await db
+        .select()
+        .from(turns)
+        .where(eq(turns.id, `${mind}-cut`))
+        .get(),
+      undefined,
+      "the one whose usage never came is taken back",
+    );
+    await db.delete(summaries).where(eq(summaries.mind, mind));
+    await cleanup(mind);
+  });
+
+  it("an empty turn — opened for a delivery that never arrived — leaves no row once settled", async () => {
+    const mind = "tl-empty-turn";
+    const db = await getDb();
+    const opened = await openDeliveredTurn(mind, "s1", mind);
+    // The mind stops before anything reached it; its turns are completed and summarized.
+    await clearMind(mind);
+    await summarizeTurn(mind, "s1", undefined, 0, opened!.turnId);
+    assert.equal(
+      await db.select().from(turns).where(eq(turns.id, opened!.turnId)).get(),
+      undefined,
+    );
+    await cleanup(mind);
+  });
+
+  it("a turn settled long after it ended doesn't hand its messages to whatever runs next", async () => {
+    const mind = "tl-settled-no-handoff";
+    const db = await getDb();
+    const inboundId = await recordInbound(mind, "@alice", "alice", null, "long ago");
+    const first = await openDeliveredTurn(mind, "s1", mind);
+    await linkRowsToTurn(first!.turnId, [inboundId]);
+    await completeTurn(mind, "s1", { turnId: first!.turnId });
+    await db
+      .insert(mindHistory)
+      .values({ mind, type: "done", thread: "s1", turn_id: first!.turnId });
+    // The sweep settles it: no usage ever came.
+    await summarizeTurn(mind, "s1", undefined, 0, first!.turnId);
+    const { turnId: next } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      content: "x",
+    });
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
+    assert.notEqual(row!.turn_id, next);
+    await cleanup(mind);
+  });
+
+  it("an interrupted turn's message waits only briefly for the turn that answers it", async () => {
+    const mind = "tl-interrupted-expiry";
+    const db = await getDb();
+    const oldId = await recordInbound(mind, "@alice", "alice", null, "cut off");
+    await holdInterrupted(mind, "s1", [oldId!]);
+    const realNow = Date.now;
+    Date.now = () => realNow() + 3 * 60_000;
+    try {
+      const nextId = await recordInbound(mind, "@alice", "alice", null, "much later");
+      const next = (await openDeliveredTurn(mind, "s1", mind))!.turnId;
+      await linkRowsToTurn(next, [nextId]);
+      await adoptInterrupted(mind, "s1", next);
+    } finally {
+      Date.now = realNow;
+    }
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, oldId!)).get();
+    assert.equal(row!.turn_id, null, "left unlinked, as on main");
+    await cleanup(mind);
+  });
+
+  it("a turn the mind opens for the message that interrupted another takes that one's message", async () => {
+    const mind = "tl-interrupted-mind-open";
+    const db = await getDb();
+    const oldId = await recordInbound(mind, "@bob", "bob", null, "cut off");
+    await holdInterrupted(mind, "s1", [oldId!]);
+    await recordInbound(mind, "@alice", "alice", null, "interrupting");
+    // The mind runs the interrupting message; its first event opens the turn.
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "@alice",
+      content: "on it",
+    });
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, oldId!)).get();
+    assert.equal(row!.turn_id, turnId);
+    await cleanup(mind);
+  });
+
+  it("one interrupting delivery that never arrived doesn't undo another's interrupt", async () => {
+    const mind = "tl-interrupt-count";
+    const opened = await openDeliveredTurn(mind, "s1", mind);
+    markInterrupted(opened!.turnId, "B"); // arrived, and interrupts it
+    markInterrupted(opened!.turnId, "C"); // refused
+    unmarkInterrupted(opened!.turnId, "C");
+    assert.equal(wasInterrupted(opened!.turnId), true);
+    unmarkInterrupted(opened!.turnId, "B");
+    assert.equal(wasInterrupted(opened!.turnId), false);
+    await cleanup(mind);
+  });
+
+  it("a delivery with no thread opens nothing", async () => {
+    const mind = "tl-delivery-nothread";
+    assert.equal(await openDeliveredTurn(mind, "", mind), undefined);
+    assert.equal(getActiveTurnId(mind), undefined);
     await cleanup(mind);
   });
 });

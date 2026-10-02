@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
+import { publish as publishMindEvent } from "../events/mind-events.js";
 import { mindHistory, turns } from "../schema.js";
 import log from "../util/logger.js";
-import { summarizeTurn } from "./summarizer.js";
+import { forgetAwaitingUsage, summarizeTurn } from "./summarizer.js";
 
 const tlog = log.child("turn-tracker");
 
@@ -18,6 +19,12 @@ type ActiveTurn = {
    * only stamped with a turn its own process opened (see `turnStamp`).
    */
   owner: string;
+  /**
+   * A `done` has closed it and its completion is being recorded. It is no longer the active
+   * turn to anything — not a delivery, not another `done`, not an event, which belong to the
+   * next — only its own late `usage` still finds it, by delivery (`closedTurnFor`).
+   */
+  closing?: boolean;
 };
 
 /**
@@ -27,6 +34,46 @@ type ActiveTurn = {
  * sibling thread's turn (#1173).
  */
 const activeTurns = new Map<string, ActiveTurn>();
+
+/**
+ * Turns a `done` has completed, by `mind:thread:delivery` for each delivery the `done`
+ * retired. A turn's `usage` is a separate POST the daemon may handle after its `done`
+ * (#1298); it names its delivery, so it finds its own turn here exactly, whatever has opened
+ * on the thread since. Capped: entries are only ever needed for moments, and most are never
+ * looked up.
+ */
+const closedTurns = new Map<string, Map<string, string>>();
+/** Per mind, so no mind's reports can crowd out another's. */
+const CLOSED_TURNS_PER_MIND = 64;
+
+function closedKey(session: string | null | undefined, delivery: string): string {
+  return `${normalizeThread(session) ?? "*"}:${delivery}`;
+}
+
+/** The deliveries a `done` named for this completed turn, as far as they are remembered. */
+export function deliveriesOf(
+  mind: string,
+  session: string | null | undefined,
+  turnId: string,
+): string[] {
+  const prefix = closedKey(session, "");
+  const ids: string[] = [];
+  for (const [k, t] of closedTurns.get(mind) ?? []) {
+    if (t === turnId && k.startsWith(prefix)) ids.push(k.slice(prefix.length));
+  }
+  return ids;
+}
+
+/** The completed turn that ran this delivery, if a `done` named it recently. */
+export function closedTurnFor(
+  mind: string,
+  session: string | null | undefined,
+  delivery: string | undefined,
+): string | undefined {
+  return delivery === undefined
+    ? undefined
+    : closedTurns.get(mind)?.get(closedKey(session, delivery));
+}
 
 /**
  * A thread name as the daemon records it: undefined for no thread. "" and "*" are no
@@ -164,7 +211,7 @@ export async function createTurn(
 ): Promise<string | undefined> {
   const k = key(mind, session);
   const existing = activeTurns.get(k);
-  if (existing) return existing.turnId;
+  if (existing && !existing.closing) return existing.turnId;
 
   const turnId = randomUUID();
   const entry: ActiveTurn = {
@@ -193,58 +240,331 @@ export async function createTurn(
 
 /** The process that opened this mind+thread's active turn (see `ActiveTurn.owner`). */
 export function getActiveTurnOwner(mind: string, session?: string | null): string | undefined {
-  return activeTurns.get(key(mind, session))?.owner;
+  const entry = activeTurns.get(key(mind, session));
+  return entry?.closing ? undefined : entry?.owner;
 }
 
 /** Get the active turn ID for exactly this mind+thread (`mind:*` when there is none). */
 export function getActiveTurnId(mind: string, session?: string | null): string | undefined {
-  return activeTurns.get(key(mind, session))?.turnId;
+  const entry = activeTurns.get(key(mind, session));
+  return entry?.closing ? undefined : entry?.turnId;
 }
 
 /**
- * Attribute an inbound message OR a system event that arrives mid-turn to the turn already in
- * progress.
+ * Open the turn a delivery starts: called when the delivery takes the session's turn slot,
+ * before it is POSTed, so the turn exists — with its trigger — before the mind sees the
+ * message. This is what gives a turn a row when the mind emits nothing that would open one:
+ * a `silent` mind filters every such event (#1298). It rests on the daemon's own evidence,
+ * the slot it just gave the delivery, never on a thread the mind names.
  *
- * `TurnLifecycle.linkPendingInbound` only runs at turn CREATION and sweeps a bounded set of
- * the most-recent untagged rows. One delivered while a turn is already active for the session
- * would otherwise wait for the NEXT same-channel turn to sweep it — and be left
- * `turn_id = NULL` forever if more than that bound accumulate or no later turn runs. Called
- * per-delivery: when the mind has an active turn for (mind, session), every still-untagged
- * row on that channel is attributed to it immediately.
+ * A turn already open on the thread is joined if the delivered process opened it (the mind
+ * started work there on its own); one another process opened — a variant shares its
+ * parent's turn key — is not this delivery's, and nothing opens. `created` says whether
+ * this call made the turn, and so whether a refused POST may take it back (`unlinkRefused`).
  *
- * The type filter below must match "event" as well as "inbound". Events are POSTed with no
- * busy check, so one can land while a turn is running, and this is the only path that
- * attributes it. Narrow the filter and the event silently drops out of the turn's `events`
- * array in the timeline and out of the summarizer's transcript — no error, no log; as far as
- * history is concerned it never arrived. Guarded by "tags a system event arriving mid-turn"
- * in test/turn-lifecycle.test.ts.
- *
- * No-op when no turn is active yet — the turn-creation path (`linkPendingInbound`) tags the
- * trigger then. Only `turn_id` is set here: the turn's `trigger_event_id` stays the original
- * trigger, since a mid-turn arrival did not trigger the turn.
+ * `mind` is the base name; `process` the mind or variant delivered to. A delivery with no
+ * thread opens nothing — the mind picks where it runs.
  */
-export async function linkInboundToActiveTurn(
+export async function openDeliveredTurn(
   mind: string,
   session: string | null | undefined,
-  channel?: string,
-): Promise<void> {
-  // Channel is required to prevent cross-session tagging (mirrors linkPendingInbound).
-  if (!channel) return;
-  const turnId = getActiveTurnId(mind, session);
-  if (!turnId) return;
+  process: string,
+): Promise<{ turnId: string; created: boolean } | undefined> {
+  if (!normalizeThread(session)) return undefined;
+  const existing = activeTurns.get(key(mind, session));
+  if (existing && !existing.closing) {
+    // Joined, even one whose own delivery's POST went unanswered: the mind may be running
+    // it, and folding in is safe where a wrong deletion is not.
+    return existing.owner === process ? { turnId: existing.turnId, created: false } : undefined;
+  }
+  const turnId = await createTurn(mind, session, process);
+  if (!turnId) return undefined;
+  publishMindEvent(mind, { mind, type: "turn_created", turnId });
+  return { turnId, created: true };
+}
+
+/**
+ * Per `mind:thread`, the rows of turns the summarizer took back as interrupted — a message
+ * the mind was given but whose turn produced nothing before it ended — while no turn runs
+ * on the thread to take them. The mind's next turn there is normally its answer, so that
+ * turn adopts them (`adoptInterrupted`) — if it comes soon: after `INTERRUPTED_ROWS_MS` the
+ * thread has moved on, and they are left unlinked, as on main.
+ */
+const interruptedRows = new Map<string, { ids: number[]; at: number }>();
+const INTERRUPTED_ROWS_PER_THREAD = 64;
+const INTERRUPTED_ROWS_MS = 2 * 60_000;
+
+/**
+ * Turns a delivery was POSTed to interrupt: they end without answering what they were given,
+ * however much output the model had produced, so the summarizer takes them back rather than
+ * keeping them as quiet turns. Capped; an entry is only needed until its turn is summarized.
+ */
+const interruptedTurns = new Map<string, Set<string>>();
+
+/**
+ * A delivery POSTed to interrupt this turn. Kept per delivery: one that turns out never to
+ * have arrived (`unmarkInterrupted`) can't undo another's that did, and one the turn's own
+ * `done` covers didn't cut it off — the mind took it into the same run (pi does) — so it
+ * is cleared there (`clearCoveredInterrupts`).
+ */
+export function markInterrupted(turnId: string, deliveryId: string): void {
+  const by = interruptedTurns.get(turnId) ?? new Set<string>();
+  by.add(deliveryId);
+  interruptedTurns.set(turnId, by);
+  if (interruptedTurns.size > 256) {
+    interruptedTurns.delete(interruptedTurns.keys().next().value!);
+  }
+}
+
+/** Whether a delivery interrupted this turn (see `markInterrupted`). */
+export function wasInterrupted(turnId: string): boolean {
+  return (interruptedTurns.get(turnId)?.size ?? 0) > 0;
+}
+
+/**
+ * Whether a turn was started by a message — its trigger an `inbound` row. Only such a turn
+ * is an answer an interrupted message can join: adopting one into a turn an event or the
+ * mind itself started would add a sender to a turn that never ran it, and authority is
+ * read off a turn's senders (#433).
+ */
+async function startedByMessage(turnId: string): Promise<boolean> {
   const db = await getDb();
-  await db
-    .update(mindHistory)
-    .set({ turn_id: turnId })
-    .where(
-      and(
-        eq(mindHistory.mind, mind),
-        // System events ("event") arrive mid-turn too and need the same attribution.
-        inArray(mindHistory.type, ["inbound", "event"]),
-        sql`${mindHistory.turn_id} IS NULL`,
-        eq(mindHistory.channel, channel),
-      ),
+  const row = await db
+    .select({ type: mindHistory.type })
+    .from(turns)
+    .innerJoin(mindHistory, eq(mindHistory.id, turns.trigger_event_id))
+    .where(eq(turns.id, turnId))
+    .get();
+  return row?.type === "inbound";
+}
+
+/**
+ * Hand an interrupted turn's rows, taken back just as it ended, to the next turn on its
+ * thread: the one already running there, if a message started it (an interrupting one's),
+ * or else the next to open soon (`adoptInterrupted`). Never the trigger: that turn's is its
+ * own message. Never throws.
+ */
+export async function holdInterrupted(
+  mind: string,
+  session: string | null | undefined,
+  rowIds: number[],
+): Promise<void> {
+  if (!normalizeThread(session) || rowIds.length === 0) return;
+  const running = getActiveTurnId(mind, session);
+  if (running) {
+    try {
+      if (await startedByMessage(running)) {
+        await linkRowsToTurn(running, rowIds, { trigger: false });
+        return;
+      }
+    } catch (err) {
+      tlog.warn(`failed to hand interrupted rows to turn ${running}`, log.errorData(err));
+    }
+    // Not (yet) known to be a message's — its trigger may be on its way: held for it.
+  }
+  const k = key(mind, session);
+  const prior = interruptedRows.get(k)?.ids ?? [];
+  interruptedRows.set(k, {
+    ids: [...prior, ...rowIds].slice(-INTERRUPTED_ROWS_PER_THREAD),
+    at: Date.now(),
+  });
+}
+
+/**
+ * Give a turn a message just started on its thread — its trigger already linked — what an
+ * interrupted turn there left, if that was recently (see `interruptedRows`). Only rows still
+ * unlinked, and never the trigger. Never throws.
+ */
+export async function adoptInterrupted(
+  mind: string,
+  session: string | null | undefined,
+  turnId: string,
+): Promise<void> {
+  const k = key(mind, session);
+  const held = interruptedRows.get(k);
+  if (!held) return;
+  interruptedRows.delete(k);
+  if (Date.now() - held.at > INTERRUPTED_ROWS_MS) return;
+  try {
+    if (await startedByMessage(turnId)) {
+      await linkRowsToTurn(turnId, held.ids, { trigger: false });
+    }
+  } catch (err) {
+    tlog.warn(`failed to adopt interrupted rows into turn ${turnId}`, log.errorData(err));
+  }
+}
+
+/** A delivery that would have interrupted a turn never reached the mind: it didn't. */
+export function unmarkInterrupted(turnId: string, deliveryId: string): void {
+  const by = interruptedTurns.get(turnId);
+  by?.delete(deliveryId);
+  if (by?.size === 0) interruptedTurns.delete(turnId);
+}
+
+/** The turn's `done` covers these deliveries: none of them cut it off. */
+export function clearCoveredInterrupts(turnId: string, covered: string[]): void {
+  for (const id of covered) unmarkInterrupted(turnId, id);
+}
+
+/**
+ * Link a delivery's own `inbound`/`event` history rows to the turn it runs in — exactly
+ * them, never a sweep of the channel's untagged history — and make the first of them the
+ * turn's trigger if it has none. `rowIds` are in the order the mind was given them. A row
+ * another turn holds is left, and is never the trigger — unless it is held by one of
+ * `from`, the turns folded deliveries were linked to on their ack (see
+ * `DeliveryManager.foldedRows`).
+ * `trigger: false` links without touching the trigger: a delivery that folded into a
+ * running turn did not start it. Never throws: the message was received, and a missing
+ * link costs only attribution.
+ */
+export async function linkRowsToTurn(
+  turnId: string,
+  rowIds: (number | undefined)[],
+  opts: { trigger?: boolean; from?: string[] } = {},
+): Promise<void> {
+  const ids = rowIds.filter((id): id is number => id != null);
+  if (ids.length === 0) return;
+  try {
+    const db = await getDb();
+    const unheld = opts.from?.length
+      ? or(isNull(mindHistory.turn_id), inArray(mindHistory.turn_id, opts.from))
+      : isNull(mindHistory.turn_id);
+    const linked = new Set(
+      (
+        await db
+          .update(mindHistory)
+          .set({ turn_id: turnId })
+          .where(and(inArray(mindHistory.id, ids), unheld))
+          .returning({ id: mindHistory.id })
+      ).map((r) => r.id),
     );
+    const first = ids.find((id) => linked.has(id));
+    if (first === undefined || opts.trigger === false) return;
+    await db
+      .update(turns)
+      .set({ trigger_event_id: first })
+      .where(and(eq(turns.id, turnId), sql`${turns.trigger_event_id} IS NULL`));
+  } catch (err) {
+    tlog.warn(`failed to link delivered rows to turn ${turnId}`, log.errorData(err));
+  }
+}
+
+/**
+ * Record a turn that has already ended: one a `done` names but nothing opened, because the
+ * mind emitted nothing that would (#1298). Written complete and never made active, so no
+ * event arriving meanwhile can join it; `deliveries` find it afterwards (`closedTurnFor`).
+ */
+export async function recordClosedTurn(
+  mind: string,
+  session: string,
+  process: string,
+  deliveries: string[],
+): Promise<string | undefined> {
+  const turnId = randomUUID();
+  try {
+    const db = await getDb();
+    await db
+      .insert(turns)
+      .values({ id: turnId, mind, thread: normalizeThread(session) ?? null, status: "complete" });
+  } catch (err) {
+    tlog.error(`failed to record turn for ${mind} (${process})`, log.errorData(err));
+    return undefined;
+  }
+  rememberClosed(mind, session, turnId, deliveries);
+  publishMindEvent(mind, { mind, type: "turn_created", turnId });
+  return turnId;
+}
+
+/**
+ * Link what the mind reported against `deliveries` before their turn was recorded — a
+ * `usage` or `error` that named one, with no turn to land on — to that turn. Never throws.
+ */
+export async function linkReportsToTurn(
+  mind: string,
+  session: string,
+  turnId: string,
+  deliveries: string[],
+): Promise<void> {
+  try {
+    const db = await getDb();
+    await db
+      .update(mindHistory)
+      .set({ turn_id: turnId })
+      .where(
+        and(
+          eq(mindHistory.mind, mind),
+          eq(mindHistory.thread, session),
+          inArray(mindHistory.message_id, deliveries),
+          isNull(mindHistory.turn_id),
+        ),
+      );
+  } catch (err) {
+    tlog.warn(`failed to link reports to turn ${turnId}`, log.errorData(err));
+  }
+}
+
+/**
+ * Take back a delivery the mind refused — a definite rejection, never a POST that merely
+ * failed to answer, which the mind may be running. Its own rows leave `turnId`; if this
+ * delivery opened the turn (`created`) and nothing else is in it, the turn goes too. The
+ * mind's own rows are never touched. Never throws.
+ */
+export async function unlinkRefused(
+  mind: string,
+  session: string | null | undefined,
+  turnId: string,
+  rowIds: (number | undefined)[],
+  created: boolean,
+): Promise<void> {
+  const ids = rowIds.filter((id): id is number => id != null);
+  // Synchronously, before the slot this refusal freed can be taken: a turn this delivery
+  // opened is no longer the thread's, so the next delivery opens its own.
+  const k = key(mind, session);
+  if (created && activeTurns.get(k)?.turnId === turnId) activeTurns.delete(k);
+  try {
+    const db = await getDb();
+    if (ids.length > 0) {
+      await db
+        .update(mindHistory)
+        .set({ turn_id: null })
+        .where(and(inArray(mindHistory.id, ids), eq(mindHistory.turn_id, turnId)));
+      await db
+        .update(turns)
+        .set({ trigger_event_id: null })
+        .where(and(eq(turns.id, turnId), inArray(turns.trigger_event_id, ids)));
+    }
+    if (!created) return;
+    // The turn never ran. A delivery that folded into it meanwhile starts a turn of its own
+    // mind-side, and is linked there when that opens (`foldedRows`): its rows leave too.
+    await db
+      .update(mindHistory)
+      .set({ turn_id: null })
+      .where(and(eq(mindHistory.turn_id, turnId), inArray(mindHistory.type, ["inbound", "event"])));
+    const rest = await db
+      .select({ id: mindHistory.id })
+      .from(mindHistory)
+      .where(eq(mindHistory.turn_id, turnId))
+      .get();
+    if (rest) {
+      // Something of the mind's own landed in it: it stays, ended rather than running.
+      await db.update(turns).set({ status: "complete" }).where(eq(turns.id, turnId));
+      return;
+    }
+    await db.delete(turns).where(eq(turns.id, turnId));
+    publishMindEvent(mind, { mind, type: "turn_discarded", turnId });
+  } catch (err) {
+    tlog.warn(`failed to take back refused delivery from turn ${turnId}`, log.errorData(err));
+  }
+}
+
+/** The turn `process` is running on the thread, if it is running one — folds join it. */
+export function runningTurnOf(
+  mind: string,
+  session: string | null | undefined,
+  process: string,
+): string | undefined {
+  const entry = activeTurns.get(key(mind, session));
+  return entry && !entry.closing && entry.owner === process ? entry.turnId : undefined;
 }
 
 /**
@@ -304,22 +624,54 @@ export async function completeTurn(
   only?: { turnId: string | undefined },
 ): Promise<string | undefined> {
   const k = key(mind, session);
-  const entry = activeTurns.get(k);
-  if (!entry) return undefined;
-  if (only && entry.turnId !== only.turnId) return undefined;
+  // The turn the `done` closed — which a delivery may already have replaced as the active
+  // one (see `closing`) — or, with no `only`, whatever is active.
+  const turnId = only ? only.turnId : activeTurns.get(k)?.turnId;
+  if (!turnId) return undefined;
 
   try {
     const db = await getDb();
-    await db.update(turns).set({ status: "complete" }).where(eq(turns.id, entry.turnId));
+    await db.update(turns).set({ status: "complete" }).where(eq(turns.id, turnId));
   } catch (err) {
-    tlog.error(`failed to complete turn ${entry.turnId}`, log.errorData(err));
+    tlog.error(`failed to complete turn ${turnId}`, log.errorData(err));
     // Don't clean up in-memory state on DB failure — allows retry
     return undefined;
   }
 
-  activeTurns.delete(k);
+  if (activeTurns.get(k)?.turnId === turnId) activeTurns.delete(k);
+  return turnId;
+}
 
-  return entry.turnId;
+/**
+ * Mark the turn a `done` closes as closing, synchronously on the `done`'s arrival: the turn
+ * slot may be handed to the next delivery before its completion is recorded, and that
+ * delivery's turn is its own. From here `deliveries` find this turn (`closedTurnFor`), so a
+ * late report naming one is never taken by the next turn.
+ */
+export function markClosing(
+  mind: string,
+  session: string | null | undefined,
+  turnId: string,
+  deliveries: string[],
+): void {
+  const entry = activeTurns.get(key(mind, session));
+  if (entry?.turnId === turnId) entry.closing = true;
+  rememberClosed(mind, session, turnId, deliveries);
+}
+
+function rememberClosed(
+  mind: string,
+  session: string | null | undefined,
+  turnId: string,
+  deliveries: string[],
+): void {
+  let own = closedTurns.get(mind);
+  if (!own) {
+    own = new Map();
+    closedTurns.set(mind, own);
+  }
+  for (const delivery of deliveries) own.set(closedKey(session, delivery), turnId);
+  while (own.size > CLOSED_TURNS_PER_MIND) own.delete(own.keys().next().value!);
 }
 
 /** Mark orphaned active turns as complete and return their IDs for summary generation.
@@ -373,6 +725,11 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
   }
   for (const k of [...drainedNotices.keys()]) {
     if (k.startsWith(`${mind}:`)) drainedNotices.delete(k);
+  }
+  closedTurns.delete(mind);
+  forgetAwaitingUsage(mind);
+  for (const k of [...interruptedRows.keys()]) {
+    if (k.startsWith(`${mind}:`)) interruptedRows.delete(k);
   }
   // Mark orphaned turns as complete in DB
   if (orphaned.length > 0) {

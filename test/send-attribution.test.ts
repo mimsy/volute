@@ -13,6 +13,7 @@ import {
   revokeMindToken,
 } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
+import { acquireTurnSlot, releaseTurnSlot } from "../packages/daemon/src/lib/daemon/turn-slots.js";
 import {
   clearMind,
   completeTurn,
@@ -55,6 +56,7 @@ let convId: string | undefined;
 async function cleanup() {
   revokeMindToken(MIND);
   revokeMindToken(VARIANT);
+  releaseTurnSlot(MIND);
   await clearMind(MIND);
   const db = await getDb();
   if (convId) {
@@ -160,6 +162,18 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
       assert.equal(row.turn_id, null, `"${content}" must not carry the sibling's turn`);
       assert.equal(row.thread, thread, "the sending thread is recorded even without a turn");
     }
+  });
+
+  it("a send naming a thread mid-delivery opens no turn there (#1298)", async () => {
+    const token = await setup();
+    // The daemon holds a slot on `@admin` — a delivery is in flight there — but no turn is
+    // open on it yet. A send naming that thread must not open one, or attach to it.
+    acquireTurnSlot(MIND, "@admin");
+    await send(token, "naming another thread", "@admin");
+    assert.equal(getActiveTurnId(MIND, "@admin"), undefined);
+    const db = await getDb();
+    assert.equal((await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length, 0);
+    assert.equal((await outboundRow("naming another thread")).turn_id, null);
   });
 
   it("an unstamped send is linked to its own thread and turn by its tool_result marker", async () => {

@@ -458,6 +458,100 @@ describe("summarizer", () => {
       await clearMind(mind);
     });
 
+    /** A turn of only the given rows: an inbound, then whatever the mind sent the daemon. */
+    async function quietTurn(
+      mind: string,
+      rows: { type: string; metadata?: object; content?: string }[],
+    ) {
+      const session = "q1";
+      const turnId = randomUUID();
+      const db = await getDb();
+      await db.insert(turns).values({ id: turnId, mind, thread: session, status: "active" });
+      const [inbound] = await db
+        .insert(mindHistory)
+        .values({
+          mind,
+          type: "inbound",
+          thread: session,
+          channel: "@tester",
+          sender: "tester",
+          content: "could you tidy the notes folder?",
+          turn_id: turnId,
+        })
+        .returning({ id: mindHistory.id });
+      let lastId = inbound.id;
+      for (const r of rows) {
+        const [row] = await db
+          .insert(mindHistory)
+          .values({
+            mind,
+            type: r.type,
+            thread: session,
+            content: r.content ?? null,
+            metadata: r.metadata ? JSON.stringify(r.metadata) : null,
+            turn_id: turnId,
+          })
+          .returning({ id: mindHistory.id });
+        lastId = row.id;
+      }
+      // A model that would gladly invent what the mind did, were it asked.
+      await summarizeTurn(mind, session, "@tester", lastId, turnId, async () => ({
+        status: "ok",
+        text: "I tidied the notes folder and told tester it was done.",
+      }));
+      return { db, turnId, inboundId: inbound.id };
+    }
+
+    it("keeps a silent mind's clean turn with output but nothing visible (#1298)", async () => {
+      const mind = "test-quiet-kept";
+      const { db, turnId, inboundId } = await quietTurn(mind, [
+        { type: "usage", metadata: { input_tokens: 900, output_tokens: 120 } },
+        { type: "done" },
+      ]);
+
+      const turnRow = await db.select().from(turns).where(eq(turns.id, turnId)).get();
+      assert.ok(turnRow, "the turn row is kept");
+      const inboundRow = await db
+        .select()
+        .from(mindHistory)
+        .where(eq(mindHistory.id, inboundId))
+        .get();
+      assert.equal(inboundRow!.turn_id, turnId, "its trigger stays linked");
+      const [summary] = await db
+        .select()
+        .from(summaries)
+        .where(and(eq(summaries.mind, mind), eq(summaries.period_key, turnId)));
+      assert.equal(
+        summary.content,
+        "Received a message from tester on @tester. Took a turn with no visible output.",
+        "what reached it and the fact of the turn, nothing guessed",
+      );
+      assert.equal(JSON.parse(summary.metadata!).deterministic, true);
+      await clearMind(mind);
+    });
+
+    it("still deletes a quiet turn that errored, or produced no output", async () => {
+      for (const [mind, rows] of [
+        [
+          "test-quiet-errored",
+          [
+            { type: "error", content: "overloaded" },
+            { type: "usage", metadata: { output_tokens: 40 } },
+            { type: "done" },
+          ],
+        ],
+        [
+          "test-quiet-no-output",
+          [{ type: "usage", metadata: { output_tokens: 0 } }, { type: "done" }],
+        ],
+      ] as const) {
+        const { db, turnId } = await quietTurn(mind, [...rows]);
+        const turnRow = await db.select().from(turns).where(eq(turns.id, turnId)).get();
+        assert.equal(turnRow, undefined, `${mind}: deleted as interrupted`);
+        await clearMind(mind);
+      }
+    });
+
     it("deletes an interrupted turn resolved via events' turn_id when called with turnId=undefined", async () => {
       // The #395 path: completeTurn returned undefined (a wedged-turn sweep already ran), so
       // `done` fires summarizeTurn with no explicit turnId. The id must be recovered from the
