@@ -61,7 +61,7 @@ SETUP_COMPLETE=false
 cleanup_on_failure() {
   if [[ "$SETUP_COMPLETE" == "true" ]]; then return; fi
   echo "Setup failed, cleaning up..." >&2
-  docker rm -f "$CONTAINER" 2>/dev/null || true
+  docker rm -fv "$CONTAINER" 2>/dev/null || true
   docker rmi "$IMAGE" 2>/dev/null || true
   rm -f "$ENV_FILE"
 }

@@ -147,6 +147,11 @@ export class Scheduler {
    * permanently.
    */
   private runningScripts = new Map<string, { skipped: number }>();
+  /**
+   * One-time scripts the mind has already been told could not be consumed, so a
+   * volute.json that stays unwritable doesn't repeat the notice every minute.
+   */
+  private unconsumableNoticed = new Set<string>();
   /** Serialises writes so two callers can't interleave on the same file. */
   private writeChain: Promise<void> = Promise.resolve();
   private writeSeq = 0;
@@ -492,8 +497,11 @@ export class Scheduler {
     // log, touch a file, run a backup) prints nothing by design, and skipping
     // delivery used to skip consumption too, so it re-fired on every tick
     // forever (#866). The only outcome that keeps a one-timer armed is a failure
-    // to record the event at all, so the next tick retries the insert.
+    // to record the event at all, so the next tick retries the insert. A one-time
+    // *script* is the exception: it is consumed before it runs (#1373, below).
     let consumeOneTimer = true;
+    /** Set when a one-time script was consumed before it ran; see below. */
+    let consumedBeforeRun = false;
     /** Non-null once THIS fire owns the script guard, so only it releases it. */
     let heldScriptKey: string | null = null;
     let heldTracker: { skipped: number } | null = null;
@@ -528,14 +536,43 @@ export class Scheduler {
         heldTracker = { skipped: 0 };
         heldScriptKey = key;
         this.runningScripts.set(key, heldTracker);
+        // A one-time script is consumed before it runs, not after: at most once.
+        // Consuming in the `finally` lost the race with process exit whenever the
+        // daemon stopped while the script was running — the script finished in
+        // the shutdown grace, the volute.json write did not land, and the boot
+        // after re-ran a side effect (a backup, a send) the mind had asked for
+        // once (#1373). Consuming first also covers a crash. The cost is the
+        // other way round: a run cut short by a crash is not retried. If the
+        // removal could not be written, don't run — the schedule is still on
+        // disk and would run again at the next boot. Put it back in memory
+        // instead, so the next tick retries, and tell the mind once.
+        if (schedule.fireAt) {
+          consumeOneTimer = false;
+          const removal = await this.removeSchedule(mindName, schedule.id);
+          if (!removal.ok) {
+            this.restoreSchedule(mindName, schedule);
+            if (!this.unconsumableNoticed.has(key)) {
+              this.unconsumableNoticed.add(key);
+              await this.noticeFireFailed(
+                mindName,
+                schedule,
+                `this one-time script could not be removed from volute.json before running, so it has not run. It stays armed and is retried every minute. (${errorMessage(removal.error)})`,
+              );
+            }
+            return;
+          }
+          this.unconsumableNoticed.delete(key);
+          consumedBeforeRun = true;
+        }
         try {
           const output = await this.runScript(schedule.script, homeDir, mindName);
           if (!output.trim()) {
             slog.info(`fired script "${schedule.id}" for ${mindName} (no output)`);
             // A silent side-effect script DID run. Recording it keeps the state
             // file honest: a nightly script that has worked for months must not
-            // read as "never ran" just because it prints nothing (#867).
-            this.markFired(mindName, schedule.id);
+            // read as "never ran" just because it prints nothing (#867). A
+            // consumed one-timer has no bookkeeping left to record it in.
+            if (!consumedBeforeRun) this.markFired(mindName, schedule.id);
             return;
           }
           text = output;
@@ -587,36 +624,27 @@ export class Scheduler {
       // start or wake, so the reminder is not lost — only a failed insert (no id)
       // keeps a one-timer armed so the next tick retries (a retained fireAt refires
       // every minute, so retaining it after a successful insert would pile up
-      // duplicate pending events).
-      if (id == null) consumeOneTimer = false;
-      else this.markFired(mindName, schedule.id);
+      // duplicate pending events). A one-time script was consumed before it ran
+      // and won't run again, so its output is gone: tell the mind what it began with.
+      if (id == null) {
+        consumeOneTimer = false;
+        if (consumedBeforeRun) {
+          await this.noticeFireFailed(
+            mindName,
+            schedule,
+            `the event could not be recorded. This one-time script ran and will not run again; its output began: ${text.trim().split("\n")[0]}`,
+          );
+        }
+      } else if (!consumedBeforeRun) this.markFired(mindName, schedule.id);
     } catch (err) {
-      // Nothing was recorded, so the one-timer stays armed for the next tick.
+      // Nothing was recorded, so the one-timer stays armed for the next tick — unless
+      // it is a one-time script, consumed before it ran.
       consumeOneTimer = false;
       slog.warn(`failed to fire "${schedule.id}" for ${mindName}`, log.errorData(err));
-      // The schedule fired but the mind never heard it — leave a notice rather than
-      // only a daemon log the mind can't see (#366). recordNotice never throws.
-      // A literal ephemeral thread would strand the notice in a session that never
-      // runs another turn, so those fall back to mind-level ("$new" is collapsed by
-      // deliverEvent itself).
-      const detail = await getPrompt("schedule_failure_notice", {
-        id: schedule.id,
-        reason: err instanceof Error && err.message ? err.message : String(err),
-      });
-      const thread =
-        schedule.thread && !schedule.thread.startsWith("new-")
-          ? schedule.thread
-          : MIND_LEVEL_THREAD;
-      await recordNotice({
-        mind: mindName,
-        thread,
-        kind: "delivery_failed",
-        reason: "schedule_failed",
-        detail,
-      });
+      await this.noticeFireFailed(mindName, schedule, errorMessage(err));
     } finally {
       if (schedule.fireAt && consumeOneTimer) await this.removeSchedule(mindName, schedule.id);
-      // Released only after the one-timer above has been consumed. Releasing it
+      // Released only after the one-timer has been consumed. Releasing it
       // when the script alone finished left a window: a run ending just before a
       // minute boundary frees the guard while `removeSchedule` is still behind an
       // `await`, and the next tick sees a past-due `fireAt` with nothing in
@@ -634,6 +662,37 @@ export class Scheduler {
   }
 
   /**
+   * The schedule fired but the mind never heard it — leave a notice rather than
+   * only a daemon log the mind can't see (#366). recordNotice never throws.
+   * A literal ephemeral thread would strand the notice in a session that never
+   * runs another turn, so those fall back to mind-level ("$new" is collapsed by
+   * deliverEvent itself).
+   */
+  private async noticeFireFailed(
+    mindName: string,
+    schedule: Schedule,
+    reason: string,
+  ): Promise<void> {
+    const detail = await getPrompt("schedule_failure_notice", { id: schedule.id, reason });
+    const thread =
+      schedule.thread && !schedule.thread.startsWith("new-") ? schedule.thread : MIND_LEVEL_THREAD;
+    await recordNotice({
+      mind: mindName,
+      thread,
+      kind: "delivery_failed",
+      reason: "schedule_failed",
+      detail,
+    });
+  }
+
+  /** Put a schedule `removeSchedule` dropped back in memory, unless a reload already has. */
+  private restoreSchedule(mindName: string, schedule: Schedule): void {
+    const current = this.schedules.get(mindName) ?? [];
+    if (current.some((s) => s.id === schedule.id)) return;
+    this.schedules.set(mindName, [...current, schedule]);
+  }
+
+  /**
    * Record that a fire was actually dispatched — the system event row exists.
    * Persisted immediately because `fire()` runs un-awaited from `tick()`, whose
    * own `saveState()` may already have run by the time this lands. `mark()`
@@ -647,7 +706,11 @@ export class Scheduler {
     );
   }
 
-  private async removeSchedule(mindName: string, scheduleId: string): Promise<void> {
+  /** Not ok only when the removal could not be written to volute.json. */
+  private async removeSchedule(
+    mindName: string,
+    scheduleId: string,
+  ): Promise<{ ok: true } | { ok: false; error: unknown }> {
     // Drop the bookkeeping with the schedule. Ids get reused — `clock add --id
     // reminder --in 5m` is the natural repeat — and loadSchedules only baselines
     // keys it has never seen, so a surviving key would hand a brand-new schedule
@@ -684,11 +747,13 @@ export class Scheduler {
         return config;
       });
       if (wrote) slog.info(`removed one-time schedule "${scheduleId}" for ${mindName}`);
+      return { ok: true };
     } catch (err) {
       slog.error(
         `failed to persist removal of schedule "${scheduleId}" for ${mindName} (removed from memory)`,
         log.errorData(err),
       );
+      return { ok: false, error: err };
     }
   }
 
@@ -740,4 +805,8 @@ export function initScheduler(): Scheduler {
 export function getScheduler(): Scheduler {
   if (!instance) throw new ManagerNotReadyError("Scheduler", "initScheduler");
   return instance;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : String(err);
 }

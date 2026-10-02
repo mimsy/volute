@@ -45,7 +45,7 @@ if [[ -z "$CONTAINER" ]]; then
 fi
 
 echo "Stopping container: $CONTAINER"
-if ! docker rm -f "$CONTAINER" 2>/dev/null; then
+if ! docker rm -fv "$CONTAINER" 2>/dev/null; then
   if docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "Error: failed to remove container $CONTAINER" >&2
     echo "Env file preserved for retry" >&2

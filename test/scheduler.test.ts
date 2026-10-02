@@ -363,7 +363,10 @@ describe("scheduler", () => {
     // start/wake, so the one-shot's job is done once the row exists.
     const scheduler = new TestScheduler();
     const removed: string[] = [];
-    (scheduler as any).removeSchedule = (_mind: string, id: string) => removed.push(id);
+    (scheduler as any).removeSchedule = async (_mind: string, id: string) => {
+      removed.push(id);
+      return { ok: true };
+    };
 
     scheduler.deliverResult = { id: 7, delivered: false };
     await (scheduler as any).fire("test-mind", {
@@ -397,7 +400,10 @@ describe("scheduler", () => {
   it("fireAt is retained when the event row could not be recorded at all", async () => {
     const scheduler = new TestScheduler();
     const removed: string[] = [];
-    (scheduler as any).removeSchedule = (_mind: string, id: string) => removed.push(id);
+    (scheduler as any).removeSchedule = async (_mind: string, id: string) => {
+      removed.push(id);
+      return { ok: true };
+    };
 
     scheduler.deliverResult = { id: undefined, delivered: false };
     await (scheduler as any).fire("test-mind", {
@@ -415,7 +421,10 @@ describe("scheduler one-time consumption (#866)", () => {
   function schedulerWithRemovals() {
     const scheduler = new TestScheduler();
     const removed: string[] = [];
-    (scheduler as any).removeSchedule = (_mind: string, id: string) => removed.push(id);
+    (scheduler as any).removeSchedule = async (_mind: string, id: string) => {
+      removed.push(id);
+      return { ok: true };
+    };
     return { scheduler, removed };
   }
 
@@ -933,7 +942,10 @@ describe("scheduler script timeout (#989)", () => {
   }, async () => {
     const scheduler = new TestScheduler();
     const removed: string[] = [];
-    (scheduler as any).removeSchedule = (_m: string, id: string) => removed.push(id);
+    (scheduler as any).removeSchedule = async (_m: string, id: string) => {
+      removed.push(id);
+      return { ok: true };
+    };
 
     let release!: () => void;
     scheduler.scriptGate = new Promise<void>((r) => {
@@ -941,12 +953,7 @@ describe("scheduler script timeout (#989)", () => {
     });
     scheduler.scriptResult = "done";
 
-    const schedule = {
-      id: "slow-timer",
-      fireAt: new Date(Date.now() - 60000).toISOString(),
-      script: "sleep 600",
-      enabled: true,
-    };
+    const schedule = { id: "slow-cron", cron: "* * * * *", script: "sleep 600", enabled: true };
 
     const first = (scheduler as any).fire("test-mind", schedule);
     // The tick that follows a minute later, while the first run is still hung.
@@ -955,23 +962,127 @@ describe("scheduler script timeout (#989)", () => {
 
     assert.equal(scheduler.scriptCalls.length, 1, "a hung run must not be stacked on");
     assert.equal(scheduler.systemDeliveries.length, 0, "the skipped fires deliver nothing");
-    assert.deepEqual(removed, [], "the in-flight run still owns consuming the one-timer");
 
     release();
     await first;
-
-    assert.deepEqual(removed, ["slow-timer"], "and does consume it when it finishes");
     assert.equal(scheduler.systemDeliveries.length, 1);
 
     // Once the run is done the schedule is firable again — the guard bounds a
     // run, it doesn't retire the schedule.
     scheduler.scriptGate = null;
-    await (scheduler as any).fire("test-mind", {
-      ...schedule,
-      fireAt: undefined,
-      cron: "* * * * *",
-    });
+    await (scheduler as any).fire("test-mind", schedule);
     assert.equal(scheduler.scriptCalls.length, 2);
+    assert.deepEqual(removed, [], "a recurring schedule is never consumed");
+  });
+
+  it("consumes a one-time script on disk before it runs, so a restart mid-run can't re-run it (#1373)", {
+    timeout: 10_000,
+  }, async () => {
+    const scheduler = new TestScheduler();
+    const dir = mkdtempSync(join(tmpdir(), "sched-onetime-script-"));
+    mkdirSync(join(dir, "home/.config"), { recursive: true });
+    const configPath = join(dir, "home/.config/volute.json");
+    const timer = {
+      id: "backup-once",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      script: "restic backup",
+      enabled: true,
+    };
+    writeFileSync(configPath, JSON.stringify({ schedules: [timer] }));
+    scheduler.loadSchedules("onetime-mind", dir);
+
+    let release!: () => void;
+    scheduler.scriptGate = new Promise<void>((r) => {
+      release = r;
+    });
+    const first = (scheduler as any).fire("onetime-mind", timer);
+    while (scheduler.scriptCalls.length === 0) await new Promise((r) => setTimeout(r, 5));
+
+    // The daemon stops here, with the script still running: nothing after this
+    // point is guaranteed to happen. The schedule must already be gone from disk.
+    const onDisk = JSON.parse(readFileSync(configPath, "utf-8"));
+    assert.equal(onDisk.schedules, undefined, "consumed before the run, not after");
+
+    // The next boot reads the same volute.json and finds nothing to re-run.
+    const rebooted = new TestScheduler();
+    rebooted.loadSchedules("onetime-mind", dir);
+    assert.deepEqual((rebooted as any).schedules.get("onetime-mind") ?? [], []);
+
+    release();
+    await first;
+    assert.equal(scheduler.scriptCalls.length, 1);
+    assert.equal(
+      (scheduler as any).state.has("onetime-mind:backup-once"),
+      false,
+      "no bookkeeping resurrected for the consumed schedule",
+    );
+  });
+
+  /** The notices recorded for a mind, read back off the real system_events table. */
+  async function noticesFor(mind: string) {
+    const { getDb } = await import("../packages/daemon/src/lib/db.js");
+    const { systemEvents } = await import("../packages/daemon/src/lib/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    return db.select().from(systemEvents).where(eq(systemEvents.mind, mind)).all();
+  }
+
+  it("keeps a one-time script armed, unrun, when its consumption can't be written — and says so once", async () => {
+    // Running it anyway would leave it on disk to run a second time at the next boot.
+    const mind = "unwritable-mind";
+    const scheduler = new TestScheduler();
+    const timer = {
+      id: "unwritable",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      script: "restic backup",
+      enabled: true,
+    };
+    (scheduler as any).schedules.set(mind, [timer]);
+    let writable = false;
+    (scheduler as any).removeSchedule = async (m: string, id: string) => {
+      (scheduler as any).schedules.delete(m);
+      return writable ? { ok: true } : { ok: false, error: new Error("EACCES: volute.json") };
+    };
+
+    await (scheduler as any).fire(mind, timer);
+    await (scheduler as any).fire(mind, timer); // the next tick, still unwritable
+
+    assert.equal(scheduler.scriptCalls.length, 0, "never ran");
+    assert.equal((scheduler as any).runningScripts.size, 0, "the guard is released");
+    assert.deepEqual(
+      (scheduler as any).schedules.get(mind).map((s: Schedule) => s.id),
+      ["unwritable"],
+      "still armed in memory, so the next tick retries",
+    );
+    const notices = await noticesFor(mind);
+    assert.equal(notices.length, 1, "told once, not every minute");
+    assert.match(notices[0].body, /unwritable/);
+    assert.match(notices[0].body, /EACCES/);
+
+    writable = true;
+    await (scheduler as any).fire(mind, timer);
+    assert.equal(scheduler.scriptCalls.length, 1, "runs once the removal lands");
+  });
+
+  it("tells the mind when a consumed one-time script's output could not be recorded", async () => {
+    const mind = "lost-output-mind";
+    const scheduler = new TestScheduler();
+    (scheduler as any).removeSchedule = async () => ({ ok: true });
+    scheduler.scriptResult = "backup finished: 42 files\nmore detail";
+    scheduler.deliverResult = { id: undefined, delivered: false };
+
+    await (scheduler as any).fire(mind, {
+      id: "once-backup",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      script: "restic backup",
+      enabled: true,
+    });
+
+    const notices = await noticesFor(mind);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0].body, /once-backup/);
+    assert.match(notices[0].body, /backup finished: 42 files/);
+    assert.doesNotMatch(notices[0].body, /more detail/);
   });
 
   it("records the skipped fire in the state file rather than leaving a silent gap", {
