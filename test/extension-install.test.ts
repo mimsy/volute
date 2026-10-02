@@ -60,4 +60,20 @@ describe("installNpmExtension", () => {
     await uninstallNpmExtension("cachepkg");
     assert.equal(readFileSync(cacheLog, "utf-8"), expected);
   });
+
+  // #1268: the name check refused any hyphen after the first character.
+  for (const pkg of ["is-number", "@scope/my-ext", "volute-ext-foo@1.2.0", "left_pad"]) {
+    it(`accepts the package name ${pkg}`, async () => {
+      await installNpmExtension(pkg);
+      const argv = readFileSync(argvLog, "utf-8").split("\n").filter(Boolean);
+      assert.deepEqual(argv, ["install", "--ignore-scripts", pkg]);
+      await uninstallNpmExtension(pkg);
+    });
+  }
+
+  for (const pkg of ["a{b", "@sco|pe/x", "a`b", "Upper", "a b"]) {
+    it(`refuses the package name ${pkg}`, async () => {
+      await assert.rejects(installNpmExtension(pkg), /Invalid package name/);
+    });
+  }
 });
