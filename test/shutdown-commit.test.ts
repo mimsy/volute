@@ -7,8 +7,7 @@ import { after, before, describe, it } from "node:test";
 
 // #1206: claude and pi start their turn-end commit after `done`, so a stop that follows
 // `done` closely signals the mind's whole process group — the commit's git included —
-// mid-flight. The killed commit re-queues its files, and the shutdown flush (after
-// waitForCommits) retries them. This drives the real shared modules in a child, killed
+// mid-flight. The killed commit re-queues its files, and the shutdown drain retries them. This drives the real shared modules in a child, killed
 // the way the daemon stops a mind: SIGTERM to its process group.
 
 const BASE = resolve(import.meta.dirname, "../templates/_base/src/lib");
@@ -66,10 +65,10 @@ describe("shutdown commit (#1206)", () => {
     const script = join(dir, "mind.ts");
     writeFileSync(
       script,
-      `import { flushFileChanges, trackFileChange, waitForCommits } from ${JSON.stringify(`${BASE}/auto-commit.ts`)};
+      `import { drainFileChanges, flushFileChanges, trackFileChange } from ${JSON.stringify(`${BASE}/auto-commit.ts`)};
 import { setupShutdown } from ${JSON.stringify(`${BASE}/startup.ts`)};
 const home = ${JSON.stringify(home)};
-setupShutdown(() => waitForCommits().then(() => flushFileChanges(home)));
+setupShutdown(() => drainFileChanges(home));
 // A turn edited SOUL.md, emitted done, and started its commit without awaiting it.
 trackFileChange("SOUL.md", home);
 void flushFileChanges(home);

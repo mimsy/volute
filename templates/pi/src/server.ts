@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
-import { flushFileChanges, waitForCommits } from "./lib/auto-commit.js";
+import { drainFileChanges } from "./lib/auto-commit.js";
 import { log, setLevel } from "./lib/logger.js";
 import { withMechanicsDoc } from "./lib/mechanics-doc.js";
 import { createRouter } from "./lib/router.js";
@@ -60,12 +60,12 @@ server.listen(port, () => {
 });
 
 // Commit edits from a turn the shutdown cut short — e.g. the mind ran `volute mind
-// restart` mid-turn; that turn never reaches its own flush. Wait out an in-flight turn-end
-// commit first: the stop's signal can kill its git, and a killed commit re-queues its files
-// for this flush to retry (#1206). Stop accepting messages first.
+// restart` mid-turn; that turn never reaches its own flush. Drained, not just flushed: the
+// stop's signal can kill an in-flight turn-end commit's git, which re-queues its files
+// (#1206). Stop accepting messages first.
 setupShutdown(async () => {
   server.close();
-  await waitForCommits()
-    .then(() => flushFileChanges(resolve("home")))
-    .catch((err) => log("server", "shutdown commit failed:", err));
+  await drainFileChanges(resolve("home")).catch((err) =>
+    log("server", "shutdown commit failed:", err),
+  );
 });

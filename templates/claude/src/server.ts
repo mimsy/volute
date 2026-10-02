@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
-import { waitForCommits } from "./lib/auto-commit.js";
+import { drainFileChanges } from "./lib/auto-commit.js";
 import { log, setLevel } from "./lib/logger.js";
 import { createRouter } from "./lib/router.js";
 import {
@@ -71,13 +71,11 @@ setupShutdown(async () => {
   server.close();
   // Commit edits from a turn the shutdown cut short — e.g. the mind ran `volute mind
   // restart` mid-turn to load an identity edit; that turn never reaches its own flush.
-  // Wait out an in-flight turn-end commit first: the stop's signal can kill its git, and
-  // a killed commit re-queues its files for this flush to retry (#1206). Alongside the
-  // reap, so a wedged git can't hold the children past the shutdown bound.
+  // Drained, not just flushed: the stop's signal can kill an in-flight turn-end commit's
+  // git, which re-queues its files, and the reap can end a turn mid-shutdown (#1206).
+  // Alongside the reap, so a wedged git can't hold the children past the shutdown bound.
   await Promise.all([
-    waitForCommits()
-      .then(() => mind.flushFileChanges())
-      .catch((err) => log("server", "shutdown commit failed:", err)),
+    drainFileChanges(resolve("home")).catch((err) => log("server", "shutdown commit failed:", err)),
     mind.reapAllSessions(),
   ]);
 });

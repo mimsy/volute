@@ -214,8 +214,8 @@ describe("template wiring", () => {
 
   it("claude commits a cut-short turn's edits on shutdown (mid-turn self-restart)", () => {
     const shutdown = read("claude/src/server.ts").split("setupShutdown(")[1] ?? "";
-    // After waiting out an in-flight commit, whose killed files it then retries (#1206).
-    assert.match(shutdown, /waitForCommits\(\)\s*\.then\(\(\) => mind\.flushFileChanges\(\)\)/);
+    // Drained, so a commit the stop killed is retried (#1206).
+    assert.match(shutdown, /drainFileChanges\(resolve\("home"\)\)/);
   });
 
   it("claude does not restart the mind on an identity edit", () => {
