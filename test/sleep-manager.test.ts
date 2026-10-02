@@ -1876,3 +1876,92 @@ describe("inbound delivery while a mind is waking (#920)", () => {
     }
   });
 });
+
+describe("SleepManager.initiateSleep on a mind in crash recovery (#1114)", () => {
+  type Mgr = {
+    recoveries: Map<string, { timer?: NodeJS.Timeout }>;
+    minds: Map<string, unknown>;
+    withLock<T>(name: string, fn: () => Promise<T>): Promise<T>;
+    stopMind(name: string): Promise<void>;
+    hasPendingRecovery(name: string): boolean;
+  };
+
+  /** A mind the crash handler left down with a restart pending, and a real SleepManager. */
+  async function setup(tag: string) {
+    const { initMindManager, tryGetMindManager } = await import(
+      "../packages/daemon/src/lib/daemon/mind-manager.js"
+    );
+    const manager = (tryGetMindManager() ?? initMindManager()) as unknown as Mgr;
+    const name = `recovering-${tag}-${process.pid}`;
+    await addMind(name, 4987);
+    const sm = new SleepManager();
+    const dir = mkdtempSync(resolve(tmpdir(), "sleep-recovering-"));
+    Object.defineProperty(sm, "statePath", { get: () => resolve(dir, "sleep-state.json") });
+    manager.recoveries.set(name, { timer: setTimeout(() => {}, 60_000) });
+    const teardown = async () => {
+      clearTimeout(manager.recoveries.get(name)?.timer);
+      manager.recoveries.delete(name);
+      manager.minds.delete(name);
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    };
+    return { manager, name, sm, teardown };
+  }
+
+  it("cancels the pending restart, so the mind does not boot after it is marked asleep", async () => {
+    const { manager, name, sm, teardown } = await setup("timer");
+    try {
+      await sm.initiateSleep(name);
+      assert.equal(sm.isSleeping(name), true);
+      assert.equal(manager.hasPendingRecovery(name), false, "the pending restart is cancelled");
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("is already asleep when an in-flight restart finishes, so the start queues instead of flushing", async () => {
+    const { manager, name, sm, teardown } = await setup("inflight");
+    try {
+      // The recovery's start holds the per-name lock; the sleep's stop queues behind it.
+      // What the start sees as it finishes decides whether it flushes the backlog into a
+      // mind about to be killed.
+      let release!: () => void;
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      let queueingAtStartEnd: boolean | undefined;
+      const inFlightStart = manager.withLock(name, async () => {
+        await released;
+        queueingAtStartEnd = sm.isQueueingInbound(name);
+      });
+
+      const sleeping = sm.initiateSleep(name);
+      await new Promise((r) => setTimeout(r, 50));
+      release();
+      await inFlightStart;
+      await sleeping;
+
+      assert.equal(queueingAtStartEnd, true, "marked asleep before the stop waits on the start");
+      assert.equal(sm.isSleeping(name), true);
+    } finally {
+      await teardown();
+    }
+  });
+
+  it("does not leave a mind marked asleep when the stop fails and it is up", async () => {
+    const { manager, name, sm, teardown } = await setup("stopfail");
+    // The in-flight start landed, then the stop threw: the mind is up and awake.
+    manager.stopMind = async () => {
+      manager.minds.set(name, {});
+      throw new Error("stop failed");
+    };
+    try {
+      await assert.rejects(sm.initiateSleep(name), /stop failed/);
+      assert.equal(sm.isSleeping(name), false);
+      assert.equal(sm.isQueueingInbound(name), false, "an awake mind's inbound is not queued");
+    } finally {
+      delete (manager as Partial<Mgr>).stopMind;
+      await teardown();
+    }
+  });
+});

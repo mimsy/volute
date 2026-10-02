@@ -669,7 +669,9 @@ async function mergeUpgradeAndRestart(
 
 /** The MindManager surface {@link installDepsAndRestart} uses — narrowed so tests can stub it. */
 type RestartTarget = {
-  isRunning(name: string): boolean;
+  isUpOrRecovering(name: string): boolean;
+  hasPendingRecovery(name: string): boolean;
+  resumeRecovery(name: string): Promise<void>;
   stopMind(name: string): Promise<void>;
   startMind(name: string, opts?: { healthTimeoutMs?: number }): Promise<void>;
   setPendingContext(name: string, context: Record<string, unknown>): void;
@@ -762,8 +764,11 @@ export async function installDepsAndRestart(
   }
 
   // Restart mind with upgrade context
+  const wasRecovering = manager.hasPendingRecovery(mindName);
   try {
-    if (manager.isRunning(mindName)) {
+    // A mind waiting out a crash backoff is stopped too: that cancels its pending
+    // restart, which would otherwise race the start below (#1114).
+    if (manager.isUpOrRecovering(mindName)) {
       await manager.stopMind(mindName);
     }
     manager.setPendingContext(mindName, context);
@@ -773,6 +778,13 @@ export async function installDepsAndRestart(
     await manager.startMind(mindName, { healthTimeoutMs: 120_000 });
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
+    // The stop above cancelled a pending crash recovery; without it back, a mind that
+    // was coming back would stay down for good.
+    if (wasRecovering) {
+      await manager.resumeRecovery(mindName).catch((err) => {
+        log.warn(`failed to resume crash recovery for ${mindName}`, log.errorData(err));
+      });
+    }
     // Nothing downstream reads the returned warning on an `upgraded` outcome, and a
     // start that never got healthy registered no crash recovery — so this row is the
     // only thing that tells anyone the mind is down. The pending context stays on

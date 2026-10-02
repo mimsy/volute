@@ -999,6 +999,20 @@ export class MindManager {
     return this.recoveries.has(name);
   }
 
+  /**
+   * Put a mind back into crash recovery after a caller stopped it mid-backoff (which
+   * cancels the recovery) and then failed to start it — so it keeps coming back instead
+   * of staying down for good (#1114).
+   */
+  async resumeRecovery(name: string): Promise<void> {
+    if (this.minds.has(name) || this.recoveries.has(name)) return;
+    // The stop cleared `running`; with it set again, a shutdown that refused the start
+    // still leaves the mind in the next boot's set.
+    await setMindRunning(name, true);
+    if (this.shuttingDown) return;
+    await this.scheduleCrashRestart(name);
+  }
+
   async stopMind(name: string): Promise<void> {
     return this.withLock(name, () => this._stopMind(name));
   }
@@ -1099,6 +1113,16 @@ export class MindManager {
 
   isRunning(name: string): boolean {
     return this.minds.has(name);
+  }
+
+  /**
+   * True when `name` is up, or down but coming back — waiting out a crash-recovery
+   * backoff, or with that restart in flight. A caller that would otherwise act as if
+   * the mind were gone (start a second copy, skip its deliveries, report it stopped)
+   * asks this instead of `isRunning` (#1114).
+   */
+  isUpOrRecovering(name: string): boolean {
+    return this.minds.has(name) || this.recoveries.has(name);
   }
 
   /**

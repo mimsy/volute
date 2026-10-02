@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdirSync, rmSync } from "node:fs";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { approveUser, createUser } from "../packages/daemon/src/lib/auth.js";
@@ -141,6 +142,48 @@ describe("web minds routes", () => {
       clearTimeout(recoveries.get(name)?.timer);
       recoveries.delete(name);
       await removeMind(name);
+    }
+  });
+
+  it("GET /:name — reports a mind waiting out a crash-recovery backoff as starting (#1114)", async () => {
+    const { addMind, mindDir, removeMind, setMindRunning } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { initMindManager, tryGetMindManager } = await import(
+      "../packages/daemon/src/lib/daemon/mind-manager.js"
+    );
+    const manager = tryGetMindManager() ?? initMindManager();
+    const name = `web-backoff-status-${Date.now()}`;
+    await addMind(name, 4988);
+    mkdirSync(mindDir(name), { recursive: true });
+    await setMindRunning(name, true);
+
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const status = async () => {
+      const res = await app.request(`http://localhost/api/v1/minds/${name}`, {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      return ((await res.json()) as { status: string }).status;
+    };
+
+    const recoveries = (
+      manager as unknown as { recoveries: Map<string, { timer?: NodeJS.Timeout }> }
+    ).recoveries;
+    recoveries.set(name, { timer: setTimeout(() => {}, 60_000) });
+
+    try {
+      // `stopped` would have the dashboard offer Start, colliding with the pending restart.
+      assert.equal(await status(), "starting");
+      clearTimeout(recoveries.get(name)?.timer);
+      recoveries.delete(name);
+      assert.equal(await status(), "stopped", "with nothing pending, it really is stopped");
+    } finally {
+      clearTimeout(recoveries.get(name)?.timer);
+      recoveries.delete(name);
+      await removeMind(name);
+      rmSync(mindDir(name), { recursive: true, force: true });
     }
   });
 
