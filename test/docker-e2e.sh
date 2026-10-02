@@ -44,7 +44,7 @@ TOKEN=""
 cleanup() {
   echo ""
   echo "Cleaning up..."
-  docker rm -f "$CONTAINER" 2>/dev/null || true
+  docker rm -fv "$CONTAINER" 2>/dev/null || true
   docker rmi "$IMAGE" 2>/dev/null || true
 }
 trap cleanup EXIT
