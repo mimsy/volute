@@ -89,10 +89,15 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
   // variant-keyed row would strand forever — and the slug must be built from the base
   // username (the one actually in the participants list) so the channel names the
   // recipient, not the sender's own base user.
+  //
+  // At most one report per fan-out: the notice counts the sender's messages, and one
+  // message missing several recipients is still one message (#1345).
   const senderIsMind = registeredMinds.has(opts.senderName);
   let senderCtx: Promise<{ base: string; channel: string }> | undefined;
+  let reported = false;
   const reportFailure = (reason: string) => {
-    if (!senderIsMind) return;
+    if (!senderIsMind || reported) return;
+    reported = true;
     senderCtx ??= getBaseName(opts.senderName).then((base) => ({
       base,
       channel: buildVoluteSlug({
@@ -107,6 +112,7 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
       .catch((err) => log.warn("fan-out: failed to report send failure", log.errorData(err)));
   };
 
+  const stopped: string[] = [];
   const targetMinds = mindParticipants
     .map((ap) => {
       const key = opts.targetName ? opts.targetName(ap.username) : ap.username;
@@ -119,7 +125,7 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
           log.warn(
             `fan-out: skipping ${ap.username} (not running) for conversation ${opts.conversationId}`,
           );
-          reportFailure(`${ap.username} is not running`);
+          stopped.push(ap.username);
         } else if (isMind(ap)) {
           // External mind (no registry row): it pulls its messages, so this is its
           // expected steady state — but a stale registry (mind deleted, user row and
@@ -142,6 +148,14 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
       return null;
     })
     .filter((n): n is string => n !== null && n !== opts.senderName);
+
+  // A stopped recipient is news to the sender only in a DM, where it was addressed directly.
+  // In a channel, stopped members are the ordinary steady state, not a failure of the send —
+  // telling every speaker otherwise on every turn is false, and may push them to start minds
+  // a host stopped (#1345). The warn above still traces the skip (#434).
+  if (isDM && stopped.length > 0) {
+    reportFailure(`${stopped.join(", ")} ${stopped.length === 1 ? "is" : "are"} not running`);
+  }
 
   // Per-target delivery descriptors: the target process name (variant-aware) and the
   // channel slug from that recipient's perspective — shared by the gate prediction and
