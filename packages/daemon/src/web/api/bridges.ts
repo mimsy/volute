@@ -233,6 +233,9 @@ const app = new Hono<AuthEnv>()
   // Set channel mapping — admin only
   .put("/:platform/mappings", requireAdmin, zValidator("json", mappingSchema), (c) => {
     const platform = c.req.param("platform");
+    // The platform keys bridges.json: `__proto__` would write through to the prototype.
+    if (!getBridgeDef(platform))
+      return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
     const body = c.req.valid("json");
     try {
       setChannelMapping(platform, body.externalChannel, body.voluteChannel);
@@ -245,6 +248,8 @@ const app = new Hono<AuthEnv>()
   // Remove channel mapping — admin only
   .delete("/:platform/mappings/:channel", requireAdmin, (c) => {
     const platform = c.req.param("platform");
+    if (!getBridgeDef(platform))
+      return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
     const channel = decodeURIComponent(c.req.param("channel"));
     removeChannelMapping(platform, channel);
     return c.json({ ok: true });
@@ -253,6 +258,8 @@ const app = new Hono<AuthEnv>()
   // List mappings
   .get("/:platform/mappings", (c) => {
     const platform = c.req.param("platform");
+    if (!getBridgeDef(platform))
+      return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
     const config = getBridgeConfig(platform);
     if (!config) return c.json({ error: "Bridge not configured" }, 404);
     return c.json(config.channelMappings);
