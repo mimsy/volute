@@ -955,9 +955,6 @@ export function createCommands(): Record<string, ExtensionCommand> {
         limit: { type: "number", description: "Max number of entries to show (default: 20)" },
       },
       handler: async ({ flags }, ctx) => {
-        const mindName = ctx.mindName;
-        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
-
         const limit = (flags.limit as number | undefined) ?? 20;
 
         try {

@@ -19,6 +19,7 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { afterEach, describe, it, type TestContext } from "node:test";
 import { voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
 import { gitExec } from "../packages/daemon/src/lib/util/exec.js";
+import log from "../packages/daemon/src/lib/util/logger.js";
 import { resolveRealWithinBase } from "../packages/daemon/src/lib/util/paths.js";
 import {
   addPagesWorktree,
@@ -820,7 +821,17 @@ describe("pages collaborative repo", () => {
         REFUSALS.UNVERIFIED_WORKTREE,
       );
       await assert.rejects(pagesStatus(name, mindDir, dataDir, isolation));
-      assert.equal(await hasUnpublishedSharedChanges(name, mindDir, dataDir, isolation), false);
+      // Expected, and the mind is told when it publishes: not worth a warning.
+      const lines: string[] = [];
+      log.setOutput((line) => lines.push(line));
+      try {
+        assert.equal(await hasUnpublishedSharedChanges(name, mindDir, dataDir, isolation), false);
+        if (isolation) await addPagesWorktree(name, mindDir, dataDir, isolation); // tidies
+      } finally {
+        log.setOutput((line) => process.stderr.write(`${line}\n`));
+      }
+      const levels = lines.map((l) => JSON.parse(l)).filter((e) => e.level !== "debug");
+      assert.deepEqual(levels, []);
       assert.equal(existsSync(marker), false, "the planted filter ran");
     });
   }
@@ -844,6 +855,29 @@ describe("pages collaborative repo", () => {
     await WORKTREE_GIT.gitExec(["status", "--porcelain"], opts);
     assert.equal(existsSync(marker), false, "the planted filter ran as the daemon");
     assert.match(await WORKTREE_GIT.gitExec(["diff", "--cached", "--name-only"], opts), /lore\.md/);
+  });
+
+  it("runs a filter from a commondir redirected after vouching as the mind, never as the daemon", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const name = "test-pages-commondir-iso-window";
+    const mindDir = await createFakeMind(name);
+    await addPagesWorktree(name, mindDir, dataDir);
+    const wt = resolve(mindDir, "home", "pages", "_system");
+    const repo = pagesRepoDir(dataDir);
+    const gitDir = worktreeGitDir(repo, wt)!;
+    const { isolation } = containingIsolation();
+    // Vouched first, then redirected: under user isolation git isn't pinned, so the
+    // filter runs, and must run as the mind.
+    const opts = await WORKTREE_GIT.mindWorktree(name, mindDir, repo, isolation);
+    const marker = redirectCommondir(name, gitDir, wt);
+
+    // The add fails on the decoy's missing objects; only who ran the filter matters.
+    await WORKTREE_GIT.gitExec(["add", "-A"], opts, isolation).catch(() => {});
+    assert.ok(existsSync(marker), "the filter never ran, so this proves nothing");
+    for (const line of readFileSync(marker, "utf-8").trim().split("\n")) {
+      assert.equal(line, `as=[${name}]`);
+    }
   });
 
   it("keeps the repo's config, hooks and info out of the minds' group", async (t) => {
