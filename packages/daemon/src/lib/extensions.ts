@@ -25,7 +25,12 @@ import { getSpiritName, readGlobalConfig, writeGlobalConfig } from "./config/set
 import { readSystemsConfig } from "./config/systems-config.js";
 import { publishTurnActivity } from "./delivery/message-delivery.js";
 import { publish } from "./events/activity-events.js";
-import { isIsolationEnabled, mindUserName } from "./mind/isolation.js";
+import {
+  containMindPath,
+  isIsolationEnabled,
+  mindFileOwner,
+  mindUserName,
+} from "./mind/isolation.js";
 import {
   findMind,
   getBaseName,
@@ -380,6 +385,10 @@ export async function buildExtensionContext(
     },
     isIsolationEnabled,
     getMindUser: mindUserName,
+    containMindPath: async (mindName: string, path: string) => {
+      const ids = await mindFileOwner(await getBaseName(mindName));
+      return ids ? containMindPath(path, (st) => st.uid === ids.uid) : resolve(path);
+    },
     // Delegate to the daemon's single source of truth, which falls back to "volute"
     // on installs that predate spirit naming. Reading setup.spiritName directly
     // returned null on those systems, so extension spirit paths no-opped forever.
