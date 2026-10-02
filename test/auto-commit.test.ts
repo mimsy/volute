@@ -208,6 +208,7 @@ describe("auto-commit batching", () => {
     assert.equal(git(["rev-parse", "HEAD"], sharedDir), head, "nothing committed");
     assert.match(git(["status", "--porcelain"], sharedDir), /^UU clash\.md/m);
     git(["rebase", "--abort"], sharedDir);
+    await flushFileChanges(repoDir); // the held file, now with nothing left to commit
   });
 });
 
@@ -394,6 +395,44 @@ exit 0
     await drained;
     assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update MEMORY.md");
     assert.equal(git(["status", "--porcelain", "--", "SOUL.md", "MEMORY.md"], repoDir), "");
+  });
+
+  it("gives up on a failed add whose file is gone", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    trackFileChange("ghost.md", repoDir); // written and removed within the turn
+    const adds = await recordingAdds(async () => {
+      await flushFileChanges(repoDir);
+      writeFileSync(gitLog, "");
+      await flushFileChanges(repoDir);
+    });
+    assert.deepEqual(adds, [], "a file that is gone was tried again");
+  });
+
+  it("holds pages/_system files through a stopped rebase, and commits them after", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const sharedDir = join(scratch, "rebase-home", "pages", "_system");
+    const home = join(scratch, "rebase-home");
+    initRepo(home);
+    initRepo(sharedDir);
+    writeFileSync(join(sharedDir, "clash.md"), "base");
+    git(["add", "clash.md"], sharedDir);
+    git(["commit", "-qm", "base"], sharedDir);
+    git(["checkout", "-q", "-b", "mine"], sharedDir);
+    writeFileSync(join(sharedDir, "clash.md"), "mine");
+    git(["commit", "-qam", "mine"], sharedDir);
+    git(["checkout", "-q", "main"], sharedDir);
+    writeFileSync(join(sharedDir, "clash.md"), "theirs");
+    git(["commit", "-qam", "theirs"], sharedDir);
+    git(["checkout", "-q", "mine"], sharedDir);
+    assert.throws(() => git(["rebase", "main"], sharedDir));
+
+    writeFileSync(join(sharedDir, "note.md"), "written mid-rebase");
+    trackFileChange("pages/_system/note.md", home);
+    await flushFileChanges(home);
+    git(["rebase", "--abort"], sharedDir);
+
+    await flushFileChanges(home);
+    assert.equal(git(["log", "-1", "--format=%s"], sharedDir).trim(), "Update note.md");
   });
 
   it("re-queues a failed pages/_system commit too", async () => {

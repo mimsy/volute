@@ -103,10 +103,13 @@ const retried = new Set<string>();
  * keeps failing (a refusing hook, a path that's gone) doesn't loop every turn.
  * Returns the files given up on.
  */
-function requeue(files: string[], killed: boolean, into: Set<string>): string[] {
+function requeue(files: string[], killed: boolean, into: Set<string>, cwd?: string): string[] {
   const dropped: string[] = [];
   for (const f of files) {
-    if (killed) into.add(f);
+    // Given `cwd`, the files are ones whose add failed: one no longer on disk has nothing
+    // left to add (a deletion of a tracked file adds fine), so it would only fail again.
+    if (cwd && !existsSync(resolve(cwd, f))) dropped.push(f);
+    else if (killed) into.add(f);
     else if (retried.delete(f)) dropped.push(f);
     else {
       retried.add(f);
@@ -160,10 +163,14 @@ export function flushFileChanges(cwd?: string): Promise<void> {
  * session) is waited for. Bounded: a git killed again and again can't hold shutdown.
  */
 export async function drainFileChanges(cwd: string): Promise<void> {
+  const waiting = () => [...pendingFiles, "|", ...pendingSharedFiles].sort().join("\n");
   for (let round = 0; round < 5; round++) {
+    const before = waiting();
     const tail = flushFileChanges(cwd);
     await tail;
-    if (pending === tail && pendingFiles.size === 0 && pendingSharedFiles.size === 0) return;
+    if (pending !== tail) continue; // another flush queued meanwhile
+    // Settled — or only files that will wait regardless (a stopped pages rebase) remain.
+    if (waiting() === "|" || waiting() === before) return;
   }
 }
 
@@ -179,7 +186,11 @@ async function commitPending(cwd: string): Promise<void> {
   // told its work is safe when it isn't (#656).
   if (filesToCommit.length > 0) {
     const { staged, ignored, failed, killed } = await stage(filesToCommit, cwd);
-    reportUnstaged(ignored, requeue(failed, killed, pendingFiles), "or survive a variant join");
+    reportUnstaged(
+      ignored,
+      requeue(failed, killed, pendingFiles, cwd),
+      "or survive a variant join",
+    );
     // staged.length check guards against committing under a blank "Update "
     // message when every file in this batch was blocked — `diff --cached` can
     // still be non-empty from unrelated content already in the index (e.g. the
@@ -213,7 +224,9 @@ async function commitPending(cwd: string): Promise<void> {
   // files above: only what actually staged gets named in the commit message.
   const sharedCwd = resolve(cwd, "pages", "_system");
   if (sharedToCommit.length > 0 && (await rebaseStopped(sharedCwd))) {
-    log("auto-commit", "[pages/_system] rebase in progress, not committing");
+    // Held, not dropped: the next flush after the rebase finishes commits them.
+    for (const f of sharedToCommit) pendingSharedFiles.add(f);
+    log("auto-commit", "[pages/_system] rebase in progress, not committing yet");
   } else if (sharedToCommit.length > 0) {
     const sharedPrefix = "pages/_system/";
     const mindName = process.env.VOLUTE_MIND ?? "unknown";
@@ -227,7 +240,7 @@ async function commitPending(cwd: string): Promise<void> {
     const sharedStaged = prefixed(shared.staged);
     reportUnstaged(
       prefixed(shared.ignored),
-      requeue(prefixed(shared.failed), shared.killed, pendingSharedFiles),
+      requeue(prefixed(shared.failed), shared.killed, pendingSharedFiles, cwd),
     );
     if (
       sharedStaged.length > 0 &&
@@ -255,7 +268,7 @@ async function commitPending(cwd: string): Promise<void> {
   }
 }
 
-/** Warn about files that will not be committed: gitignored, or given up on after a retry. */
+/** Warn about files that will not be committed: gitignored, gone, or given up on after a retry. */
 function reportUnstaged(ignored: string[], dropped: string[], consequence = ""): void {
   const tail = consequence ? ` ${consequence}` : "";
   if (ignored.length > 0) {
@@ -270,7 +283,7 @@ function reportUnstaged(ignored: string[], dropped: string[], consequence = ""):
     const pronoun = dropped.length === 1 ? "it" : "they";
     warn(
       "auto-commit",
-      `git add failed twice for ${dropped.join(", ")}, so ${pronoun} will NOT be committed${tail}`,
+      `git add failed for ${dropped.join(", ")} (twice, or the file is gone), so ${pronoun} will NOT be committed${tail}`,
     );
   }
 }
