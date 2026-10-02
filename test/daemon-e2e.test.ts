@@ -3275,25 +3275,38 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       bobSummaryId = bobSummary!.id;
     });
 
-    it("/turns ignores ?mind= for a mind principal and never leaks another mind", async () => {
-      const res = await aliceRequest(`/api/v1/history/turns?mind=${BOB}`);
+    // A mind naming another mind is refused, never answered with its own history
+    // wearing the other mind's name (#1269). The 403 names the mind asked for, and
+    // carries none of its data.
+    async function assertRefused(res: Response) {
+      assert.equal(res.status, 403);
+      const text = await res.text();
+      assert.ok(text.includes(BOB), `the refusal should name ${BOB}: ${text}`);
+      assert.ok(!text.includes(BOB_SECRET), "a refusal must not carry Bob's data");
+    }
+
+    it("/turns refuses a mind principal naming another mind, and never leaks it", async () => {
+      await assertRefused(await aliceRequest(`/api/v1/history/turns?mind=${BOB}`));
+
+      // Unscoped, Alice reads her own turns and only hers.
+      const res = await aliceRequest("/api/v1/history/turns");
       assert.equal(res.status, 200);
       const body = (await res.json()) as Array<Record<string, unknown>>;
-      const text = JSON.stringify(body);
-      assert.ok(!text.includes(BOB_SECRET), "Alice must not see Bob's private DM content");
+      assert.ok(!JSON.stringify(body).includes(BOB_SECRET), "Alice must not see Bob's DM content");
       assert.ok(
         body.every((t) => t.mind === ALICE),
         "Alice's turn query must only return Alice's turns",
       );
-      // Alice still sees her own turn (filter forced to self, not denied).
       assert.ok(
         body.some((t) => t.id === `${ALICE}-turn-1`),
         "Alice should see her own turn",
       );
     });
 
-    it("/summaries ignores ?mind= for a mind principal", async () => {
-      const res = await aliceRequest(`/api/v1/history/summaries?mind=${BOB}&period=turn`);
+    it("/summaries refuses a mind principal naming another mind", async () => {
+      await assertRefused(await aliceRequest(`/api/v1/history/summaries?mind=${BOB}&period=turn`));
+
+      const res = await aliceRequest(`/api/v1/history/summaries?mind=${ALICE}&period=turn`);
       assert.equal(res.status, 200);
       const body = (await res.json()) as Array<Record<string, unknown>>;
       assert.ok(
@@ -3310,8 +3323,10 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       assert.equal(body.length, 0, "Alice must not fetch Bob's summary by id");
     });
 
-    it("/activity ignores ?mind= for a mind principal", async () => {
-      const res = await aliceRequest(`/api/v1/history/activity?mind=${BOB}`);
+    it("/activity refuses a mind principal naming another mind", async () => {
+      await assertRefused(await aliceRequest(`/api/v1/history/activity?mind=${BOB}`));
+
+      const res = await aliceRequest("/api/v1/history/activity");
       assert.equal(res.status, 200);
       const body = (await res.json()) as Array<Record<string, unknown>>;
       assert.ok(
