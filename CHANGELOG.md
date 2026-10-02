@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.66.6](https://github.com/mimsy/volute/compare/volute-v0.66.5...volute-v0.66.6) (2026-10-02)
+
+
+### Bug Fixes
+
+* **pages:** give a mind back the root-owned files in its worktree gitdir ([#1328](https://github.com/mimsy/volute/issues/1328)) ([b44d996](https://github.com/mimsy/volute/commit/b44d9967e183cc0b1853b4ddd55bd8abc3f513da))
+
 ## [0.66.5](https://github.com/mimsy/volute/compare/volute-v0.66.4...volute-v0.66.5) (2026-10-02)
 
 
