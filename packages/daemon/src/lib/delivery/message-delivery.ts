@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull, or, type SQL, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
 import {
   getActiveTurnId,
-  getActiveTurnOwner,
   isConnectionRefused,
   linkRowsToTurn,
   normalizeThread,
@@ -17,7 +16,7 @@ import {
 } from "../events/activity-events.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
-import { activity, messages, mindHistory, minds } from "../schema.js";
+import { activity, messages, mindHistory } from "../schema.js";
 import log from "../util/logger.js";
 import {
   type EnteredTurn,
@@ -97,8 +96,8 @@ export type TurnStamp = { turnId?: string; thread?: string; delivery?: string };
  * ("", "*" and absent alike) the send is of unknown origin and gets neither, for good.
  *
  * `mind` is the base name turns are kept under; `sender` is who is sending — the mind or
- * one of its variants. A variant's thread shares its parent's turn key, so the turn is
- * only this send's when `sender` is the process that opened it; otherwise no turn.
+ * one of its variants — and the turn is that process's own there, never its parent's or
+ * its variant's beside it (#1177).
  *
  * A send with no turn is a `silent` mind's run that nothing opened, whose turn is recorded
  * only at its `done` (#1320): it is stamped with the delivery the sender is running there,
@@ -114,7 +113,7 @@ export function turnStamp(
 ): TurnStamp {
   const t = normalizeThread(thread);
   if (!t) return {};
-  const turnId = getActiveTurnOwner(mind, t) === sender ? getActiveTurnId(mind, t) : undefined;
+  const turnId = getActiveTurnId(mind, t, sender);
   if (turnId) return { turnId, thread: t };
   const delivery = tryGetDeliveryManager()?.runningDelivery(mind, t, sender);
   return delivery ? { thread: t, delivery } : { thread: t };
@@ -237,7 +236,7 @@ const ACTIVITY_MARKER_RE = /\[volute:activity:(\d+)\]/g;
  * published it before the turn existed). A record already carrying this turn only gets
  * `source_event_id`.
  *
- * Activity markers claim this mind's (or its variants') activities with no turn yet, and
+ * Activity markers claim the sending process's own activities with no turn yet, and
  * add a mind_history row for each. An activity already stamped with this turn at publish
  * (`publishTurnActivity`) only gets `source_event_id`. Activities record no thread, so
  * no thread check is possible for the unstamped ones.
@@ -325,10 +324,11 @@ export async function linkToolResultToTurn(
             ),
           );
       }
-      // Unstamped: only this mind's own activities (a variant publishes under its own
-      // name) — a marker is text a mind can print, and must not pull another mind's
-      // activity into its turn. Claimed with `turn_id IS NULL`, so a repeated or echoed
-      // marker neither moves an activity nor adds a second history row for it.
+      // Unstamped: only the sending process's own activities (a variant publishes under its
+      // own name) — a marker is text a mind can print, and must not pull another mind's
+      // activity, nor its parent's or variant's, into its turn (#1177). Claimed with
+      // `turn_id IS NULL`, so a repeated or echoed marker neither moves an activity nor adds
+      // a second history row for it.
       const linked = await db
         .update(activity)
         .set({ turn_id: turnId, ...sourceEvent })
@@ -336,13 +336,7 @@ export async function linkToolResultToTurn(
           and(
             inArray(activity.id, markerIds),
             sql`${activity.turn_id} IS NULL`,
-            or(
-              eq(activity.mind, mind),
-              inArray(
-                activity.mind,
-                db.select({ name: minds.name }).from(minds).where(eq(minds.parent, mind)),
-              ),
-            ),
+            eq(activity.mind, source.sender ?? mind),
           ),
         )
         .returning();

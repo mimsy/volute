@@ -16,6 +16,7 @@ import {
 import { getSpiritName } from "../config/setup.js";
 import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
 import {
+  getActiveTurnId,
   isConnectionRefused,
   linkRowsToTurn,
   openDeliveredTurn,
@@ -225,10 +226,10 @@ export async function recordNotice(input: RecordNoticeInput): Promise<number | u
 }
 
 /**
- * The channel slug an event's turn is attributed under. Unique per event so
- * `linkPendingInbound` links each event turn to exactly its own event row (which
- * carries `meta.systemEventId`), giving exact reflection attribution. The template
- * builds the same slug from the envelope's type + id when dispatching.
+ * The channel slug an event's row is recorded under, unique per event. The template builds
+ * the same slug from the envelope's type + id and echoes it on the turn's events, but that
+ * echo is the mind's own report: an event row reaches a turn only by the daemon's record
+ * of it (#1178), never by this channel.
  */
 export function eventChannel(type: string, id: number): string {
   return `event:${type}:${id}`;
@@ -261,7 +262,7 @@ export function eventChannelKind(channel: string | null): string | undefined {
 async function recordEventRow(
   mind: string,
   event: SystemEvent,
-  /** What `postEventEnvelope` reported: the turn the event started, if it did not fold. */
+  /** What `postEventEnvelope` reported: the turn the event started, or folded into. */
   posted: { turnId?: string; joined: boolean; afterRiders: boolean },
 ): Promise<void> {
   const channel = eventChannel(event.type, event.id);
@@ -298,11 +299,12 @@ async function recordEventRow(
     elog.warn(`failed to persist event row for ${mind}`, log.errorData(err));
     return;
   }
-  // An event that folded into a running turn is not linked to it: the daemon can't tell a
-  // fold from the next turn the mind runs it as (a budget notice raised by a turn's own
-  // `usage`, say). Its row is left as on main, for the turn the mind's first event opens on
-  // its channel to claim (`linkPendingInbound`). An event that went out behind deferred
-  // messages, or into a turn already running, is not the trigger of that turn.
+  // An event that folded into a turn its process was running when it was POSTed is linked
+  // to that turn, by its own row id — the daemon's evidence, as for a folded message. One
+  // that found no turn of its process running stays unlinked: a turn it starts later gets no
+  // trigger from it, and is never handed one by a channel the mind reports (#1178, #433). An
+  // event that went out behind deferred messages, or into a turn already running, is not the
+  // trigger of that turn.
   const turnId = posted.turnId;
   if (turnId) {
     void (async () => {
@@ -334,7 +336,7 @@ const staleTemplateWarned = new Set<string>();
  * out. They still take a slot, so the turn they start is accounted for.
  *
  * Resolves false if the mind did not take it; otherwise with the turn it started, if it took
- * the slot rather than folding into the turn already running in the session.
+ * the slot, or else the turn its process was running in the session, which it folded into.
  */
 async function postEventEnvelope(
   mind: string,
@@ -369,6 +371,7 @@ async function postEventEnvelope(
   }
   let acked = false;
   let refused = false;
+  let foldedInto: string | undefined;
   // A turn this event starts opens with what the mind's other threads did in between (#939).
   // Folding into a running turn (`owned: false`) adds nothing: that turn is current. The
   // deferred riders flushed below fold into this slot and carry no note of their own, so on
@@ -399,6 +402,9 @@ async function postEventEnvelope(
   } catch (err) {
     elog.warn(`failed to flush deferred messages for ${mind}`, log.errorData(err));
   }
+  // Without the slot, the turn its process is running on the thread, if any, as it stands
+  // when the mind is handed the event (see `recordEventRow`).
+  if (!slot.owned) foldedInto = getActiveTurnId(slotMind, event.thread, mind);
   try {
     const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
       method: "POST",
@@ -447,6 +453,11 @@ async function postEventEnvelope(
     }
     // The turn it started — or joined, one of its own process's already running — and
     // whether deferred messages went ahead of it into that turn.
+    // Only if that turn still runs now the mind has it: one whose `done` landed meanwhile
+    // ended without it, and the mind runs the event as a turn of its own.
+    if (foldedInto && getActiveTurnId(slotMind, event.thread, mind) === foldedInto) {
+      return { turnId: foldedInto, joined: true, afterRiders: carried };
+    }
     return { turnId: opened?.turnId, joined: opened?.created === false, afterRiders: carried };
   } catch (err) {
     elog.warn(`failed to POST event ${event.id} to ${mind}`, log.errorData(err));
@@ -460,7 +471,7 @@ async function postEventEnvelope(
       // What folded into it waits for the turn it runs in, as on every refusal.
       const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
       tryGetDeliveryManager()?.unfold(slotMind, event.thread, opened.turnId);
-      void unlinkRefused(slotMind, event.thread, opened.turnId, [], true);
+      void unlinkRefused(slotMind, opened.turnId, [], true);
     }
     // An event the mind never took starts no turn, so its slot goes straight back — but
     // only if this call is what took it. `owned: false` means the event folded into a turn
@@ -1519,8 +1530,8 @@ export async function recordReflection(mind: string, eventId: number, text: stri
 /**
  * Exact reflection attribution, called from turn-lifecycle when a turn completes:
  * the completed turn's `trigger_event_id` points at the mind_history event row that
- * started it (linked by `linkPendingInbound` via the unique `event:<type>:<id>`
- * channel the template echoes back). If that row carries a `systemEventId`, the
+ * started it (linked on delivery, when the event opened the turn). If that row carries a
+ * `systemEventId`, the
  * turn was an event turn and its final text is stored as the event's reflection.
  * A turn triggered by anything else — or with no linked trigger — records nothing:
  * a missing reflection is better than one stolen from an unrelated conversation.

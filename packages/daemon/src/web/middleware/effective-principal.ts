@@ -142,7 +142,7 @@ export async function resolveEffective(principal: {
   // spirit's scheduled scripts whenever an unrelated DM turn happened to be running.
   if (viaScript) return { role: "system", scopes: [self] };
 
-  const turnId = getActiveTurnId(self, mindSession);
+  const turnId = getActiveTurnId(self, mindSession, self);
   if (!turnId) return BASIC(self);
 
   // `getActiveTurnId` is exact per thread, and a turn records its thread when it is
@@ -183,7 +183,7 @@ export async function resolveEffective(principal: {
     return BASIC(self);
   }
 
-  // Positive evidence only. `linkPendingInbound` is warn-and-continue, so a turn can
+  // Positive evidence only. Trigger linking is warn-and-continue, so a turn can
   // legitimately end up with nothing attributed to it — and a user-triggered turn
   // whose linking failed looks exactly like a schedule fire if you read "no inbound
   // rows" as "self-initiated". Require a linked system event to say system.

@@ -17,6 +17,7 @@ import {
   revokeMindToken,
   revokeScriptToken,
 } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
+import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import {
   adoptInterrupted,
   clearMind,
@@ -110,7 +111,7 @@ type TurnRow =
  * the slug `buildVoluteSlug` derived from the conversation's participants.
  */
 async function openTurn(session: string, rows: TurnRow[]): Promise<string> {
-  const turnId = await createTurn(SPIRIT, session);
+  const turnId = await createTurn(SPIRIT, session, SPIRIT);
   assert.ok(turnId);
   const db = await getDb();
   let eventId = 0;
@@ -233,7 +234,7 @@ describe("spirit effective principal (#433 / #1017)", () => {
       })
       .returning({ id: mindHistory.id });
     // The admin's DM turn was taken back as interrupted; nothing runs on the thread yet.
-    await holdInterrupted(SPIRIT, thread, [adminRow.id]);
+    await holdInterrupted(SPIRIT, thread, SPIRIT, [adminRow.id]);
     // A system event routed to that thread opens the next turn there.
     const [eventRow] = await db
       .insert(mindHistory)
@@ -246,7 +247,7 @@ describe("spirit effective principal (#433 / #1017)", () => {
       .returning({ id: mindHistory.id });
     const opened = await openDeliveredTurn(SPIRIT, thread, SPIRIT);
     await linkRowsToTurn(opened!.turnId, [eventRow.id]);
-    await adoptInterrupted(SPIRIT, thread, opened!.turnId);
+    await adoptInterrupted(SPIRIT, thread, SPIRIT, opened!.turnId);
     const role = (await resolveEffective({ user: spirit, mindSession: thread })).role;
     assert.notEqual(role, "admin");
     const row = await db.select().from(mindHistory).where(eq(mindHistory.id, adminRow.id)).get();
@@ -263,7 +264,7 @@ describe("spirit effective principal (#433 / #1017)", () => {
         content: "y",
       })
       .returning({ id: mindHistory.id });
-    await holdInterrupted(SPIRIT, thread, [another.id]);
+    await holdInterrupted(SPIRIT, thread, SPIRIT, [another.id]);
     assert.notEqual((await resolveEffective({ user: spirit, mindSession: thread })).role, "admin");
   });
 
@@ -338,7 +339,7 @@ describe("spirit effective principal (#433 / #1017)", () => {
     const spirit = await spiritUser();
     // A sessionless turn (no thread recorded) must not be claimable by any slug, nor by
     // the absence of one.
-    const turnId = await createTurn(SPIRIT);
+    const turnId = await createTurn(SPIRIT, undefined, SPIRIT);
     assert.ok(turnId);
     const db = await getDb();
     await db.insert(mindHistory).values({
@@ -361,9 +362,30 @@ describe("spirit effective principal (#433 / #1017)", () => {
     // linkPendingInbound is warn-and-continue, so a user-triggered turn can end up
     // with nothing linked to it. Reading "no inbound rows" as "self-initiated" would
     // turn a failed DB write into an escalation, so system needs positive evidence.
-    const turnId = await createTurn(SPIRIT, "main");
+    const turnId = await createTurn(SPIRIT, "main", SPIRIT);
     assert.ok(turnId);
 
+    assert.equal((await resolveEffective({ user: spirit, mindSession: "main" })).role, "basic");
+  });
+
+  it("can't claim a schedule's stale event row by naming its channel", async () => {
+    const spirit = await spiritUser();
+    const db = await getDb();
+    // A schedule fire whose row joined no turn (it folded in with nothing running).
+    const [stale] = await db
+      .insert(mindHistory)
+      .values({ mind: SPIRIT, type: "event", channel: eventChannel("schedule", 7), content: "x" })
+      .returning({ id: mindHistory.id });
+    // The spirit's own turn reports that channel, guessed or remembered (#1178).
+    const { turnId } = await handleMindEvent(SPIRIT, {
+      type: "text",
+      session: "main",
+      channel: eventChannel("schedule", 7),
+      content: "doing admin things",
+    });
+    assert.ok(turnId);
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, stale.id)).get();
+    assert.equal(row!.turn_id, null, "not claimed");
     assert.equal((await resolveEffective({ user: spirit, mindSession: "main" })).role, "basic");
   });
 

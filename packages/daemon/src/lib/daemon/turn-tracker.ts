@@ -5,18 +5,25 @@ import { publish as publishMindEvent } from "../events/mind-events.js";
 import { mindHistory, turns } from "../schema.js";
 import log from "../util/logger.js";
 import { forgetAwaitingUsage, summarizeTurn } from "./summarizer.js";
+import { SLOT_MAX_AGE_MS } from "./turn-slots.js";
 
 const tlog = log.child("turn-tracker");
 
 type ActiveTurn = {
   turnId: string;
+  /** The base name the turn's history is kept under. */
+  mind: string;
+  /** Its thread, as normalized (undefined for the sessionless slot). */
+  session: string | undefined;
   lastToolUseEventId: number | undefined;
+  /** When it opened or last had an event (`touchTurn`), in epoch ms. */
+  lastAt: number;
   /** SDK tool_use id → mind_history event id, so a tool_result links to its own tool_use. */
   toolUseEventIds: Map<string, number>;
   /**
-   * The process whose events opened the turn — the mind, or one of its variants. Turns
-   * are keyed by base name, so a variant's thread shares its parent's key; a send is
-   * only stamped with a turn its own process opened (see `turnStamp`).
+   * The process running it — the mind, or one of its variants. A variant is a separate
+   * experience of the same mind: its turns are its own, beside its parent's on the same
+   * thread, though both keep history under the base name (#1177).
    */
   owner: string;
   /**
@@ -28,51 +35,84 @@ type ActiveTurn = {
 };
 
 /**
- * In-memory map of active turns, keyed by `mind:thread` (or `mind:*` for events that carry
- * no thread). Every lookup is exact: a thread never resolves to another key's turn. A
- * fallback from a thread to the sessionless slot once credited one thread's send to a
- * sibling thread's turn (#1173).
+ * In-memory map of active turns, keyed by process and thread (`*` for events that carry
+ * no thread; see `key`). Every
+ * lookup is exact: a thread never resolves to another key's turn — a fallback from a thread
+ * to the sessionless slot once credited one thread's send to a sibling thread's turn
+ * (#1173) — and a process never resolves to another's: a variant's events on its parent's
+ * thread once landed in the parent's turn (#1177). Changed only through `setActive` and
+ * `dropActive`, which keep the two indexes below in step.
  */
 const activeTurns = new Map<string, ActiveTurn>();
+/** turnId → its key in `activeTurns`. */
+const activeByTurn = new Map<string, string>();
+/** `mind:thread` → the keys of the turns its processes run on that thread. */
+const activeOnThread = new Map<string, Set<string>>();
+
+function threadKey(mind: string, session: string | null | undefined): string {
+  return `${mind}:${normalizeThread(session) ?? "*"}`;
+}
+
+function setActive(k: string, entry: ActiveTurn): void {
+  dropActive(k);
+  activeTurns.set(k, entry);
+  activeByTurn.set(entry.turnId, k);
+  const tk = threadKey(entry.mind, entry.session);
+  const keys = activeOnThread.get(tk) ?? new Set<string>();
+  keys.add(k);
+  activeOnThread.set(tk, keys);
+}
+
+function dropActive(k: string): void {
+  const entry = activeTurns.get(k);
+  if (!entry) return;
+  activeTurns.delete(k);
+  activeByTurn.delete(entry.turnId);
+  const tk = threadKey(entry.mind, entry.session);
+  const keys = activeOnThread.get(tk);
+  keys?.delete(k);
+  if (keys?.size === 0) activeOnThread.delete(tk);
+}
+
+/** Drop this turn's active entry, wherever it is keyed. */
+function dropTurn(turnId: string): void {
+  const k = activeByTurn.get(turnId);
+  if (k !== undefined) dropActive(k);
+}
 
 /**
- * Turns a `done` has completed, by `mind:thread:delivery` for each delivery the `done`
- * retired. A turn's `usage` is a separate POST the daemon may handle after its `done`
+ * Turns a `done` has completed, per process, by `thread` + delivery for each delivery the
+ * `done` retired. A turn's `usage` is a separate POST the daemon may handle after its `done`
  * (#1298); it names its delivery, so it finds its own turn here exactly, whatever has opened
  * on the thread since. Capped: entries are only ever needed for moments, and most are never
  * looked up.
  */
-const closedTurns = new Map<string, Map<string, string>>();
-/** Per mind, so no mind's reports can crowd out another's. */
-const CLOSED_TURNS_PER_MIND = 64;
+const closedTurns = new Map<string, Map<string, { turnId: string; delivery: string }>>();
+/** Per process, so no process's reports can crowd out another's. */
+const CLOSED_TURNS_PER_PROCESS = 64;
 
 function closedKey(session: string | null | undefined, delivery: string): string {
-  return `${normalizeThread(session) ?? "*"}:${delivery}`;
+  return `${normalizeThread(session) ?? "*"}\n${delivery}`;
 }
 
-/** The deliveries a `done` named for this completed turn, as far as they are remembered. */
-export function deliveriesOf(
-  mind: string,
-  session: string | null | undefined,
-  turnId: string,
-): string[] {
-  const prefix = closedKey(session, "");
+/** The deliveries a `done` of `process` named for this completed turn, as far as remembered. */
+export function deliveriesOf(process: string, turnId: string): string[] {
   const ids: string[] = [];
-  for (const [k, t] of closedTurns.get(mind) ?? []) {
-    if (t === turnId && k.startsWith(prefix)) ids.push(k.slice(prefix.length));
+  for (const closed of closedTurns.get(process)?.values() ?? []) {
+    if (closed.turnId === turnId) ids.push(closed.delivery);
   }
   return ids;
 }
 
-/** The completed turn that ran this delivery, if a `done` named it recently. */
+/** The completed turn `process` ran this delivery in, if a `done` named it recently. */
 export function closedTurnFor(
-  mind: string,
   session: string | null | undefined,
+  process: string,
   delivery: string | undefined,
 ): string | undefined {
   return delivery === undefined
     ? undefined
-    : closedTurns.get(mind)?.get(closedKey(session, delivery));
+    : closedTurns.get(process)?.get(closedKey(session, delivery))?.turnId;
 }
 
 /**
@@ -83,23 +123,29 @@ export function normalizeThread(thread: string | null | undefined): string | und
   return thread && thread !== "*" ? thread : undefined;
 }
 
-function key(mind: string, session?: string | null): string {
-  return `${mind}:${normalizeThread(session) ?? "*"}`;
+/**
+ * Per-process state's key: the process, the base name it keeps history under, and the
+ * thread. Names hold no `:` (see `validateMindName`), so the thread — which may — goes last,
+ * and `${process}:` prefixes exactly that process's keys (`clearMind`).
+ */
+function key(mind: string, process: string, session?: string | null): string {
+  return `${process}:${mind}:${normalizeThread(session) ?? "*"}`;
 }
 
 /**
- * Per `mind:thread`, the turns that have seen an `error` event since their `done`, by the
- * delivery the error named ("" for one that named none). Used to distinguish a failed turn
+ * Per `process:thread`, the turns that have seen an `error` event since their `done`, by
+ * the delivery the error named ("" for one that named none). Used to distinguish a failed turn
  * from a clean one: failure notices are only marked delivered after a turn that completed
  * WITHOUT an error, so they accumulate across a full outage and reach the mind on its next
  * genuinely successful turn. Keyed by delivery, an error in one turn is never charged to
  * another on the same session. Callers key only by deliveries the daemon itself has
- * outstanding (see turn-lifecycle), so a mind can't grow this with ids of its own.
+ * outstanding, and only on threads where the process has a delivery or a turn (see
+ * turn-lifecycle), so a mind can't grow this with ids or thread names of its own (#1220).
  */
 const erroredSessions = new Map<string, Set<string>>();
 
 /**
- * Per `mind:thread`, the notice ids the pre-prompt hook drained, by the delivery whose turn
+ * Per `process:thread`, the notice ids the pre-prompt hook drained, by the delivery whose turn
  * drained them ("" when the hook named none — a template that predates the field). A clean
  * turn marks exactly these delivered, so a notice created mid-turn — or one a prompt was not
  * shown because another turn still held it (#1233) — isn't lost before the mind reads it;
@@ -108,9 +154,68 @@ const erroredSessions = new Map<string, Set<string>>();
  */
 const drainedNotices = new Map<string, Map<string, Set<number>>>();
 
+/**
+ * Per process, the error and drain state of the one thread it last reported on with neither a
+ * delivery nor a turn of its own there — a system event that folded in and runs as a turn of
+ * its own drains and may fail before its first substantive event opens that turn. At most
+ * one per process, replaced when another thread reports, so a mind naming threads can't grow
+ * it (#1220). The `done` that ends a turn on that thread takes it, as an unkeyed flag — if it
+ * comes within a slot's lifetime: later, it is another turn's.
+ */
+const strayThreads = new Map<
+  string,
+  { session: string; at: number; errored: boolean; drained: number[] }
+>();
+
+function strayOf(process: string, session: string) {
+  let stray = strayThreads.get(process);
+  if (stray?.session !== session || Date.now() - stray.at > SLOT_MAX_AGE_MS) {
+    stray = { session, at: Date.now(), errored: false, drained: [] };
+    strayThreads.set(process, stray);
+  }
+  return stray;
+}
+
+/** An error on a thread `process` has no delivery or turn on (see `strayThreads`). */
+export function markStrayErrored(process: string, session: string): void {
+  strayOf(process, session).errored = true;
+}
+
+/**
+ * A drain on a thread `process` has no delivery or turn on (see `strayThreads`). It replaces
+ * the last: stray drains are never held, so each shows everything still undelivered.
+ */
+export function recordStrayDrained(process: string, session: string, ids: number[]): void {
+  strayOf(process, session).drained = ids;
+}
+
+function takeStray(process: string, session: string | null | undefined, part: "errored"): boolean;
+function takeStray(process: string, session: string | null | undefined, part: "drained"): number[];
+function takeStray(
+  process: string,
+  session: string | null | undefined,
+  part: "errored" | "drained",
+): boolean | number[] {
+  const stray = strayThreads.get(process);
+  if (stray && Date.now() - stray.at > SLOT_MAX_AGE_MS) strayThreads.delete(process);
+  if (!stray || stray.session !== session || !strayThreads.has(process)) {
+    return part === "errored" ? false : [];
+  }
+  const taken = stray[part];
+  if (part === "errored") stray.errored = false;
+  else stray.drained = [];
+  if (!stray.errored && stray.drained.length === 0) strayThreads.delete(process);
+  return taken;
+}
+
 /** Flag that the turn of `messageId` (or, naming none, the session's) hit an error. */
-export function markErrored(mind: string, session?: string | null, messageId?: string): void {
-  const k = key(mind, session);
+export function markErrored(
+  mind: string,
+  session: string | null | undefined,
+  process: string,
+  messageId?: string,
+): void {
+  const k = key(mind, process, session);
   let byDelivery = erroredSessions.get(k);
   if (!byDelivery) {
     byDelivery = new Set();
@@ -126,19 +231,21 @@ export function markErrored(mind: string, session?: string | null, messageId?: s
  */
 export function takeErrored(
   mind: string,
-  session?: string | null,
+  session: string | null | undefined,
+  process: string,
   messageIds?: string[],
   unkeyed = true,
 ): boolean {
-  const k = key(mind, session);
+  const k = key(mind, process, session);
+  const stray = (!messageIds || unkeyed) && takeStray(process, session, "errored");
   const byDelivery = erroredSessions.get(k);
-  if (!byDelivery) return false;
-  let errored = false;
+  if (!byDelivery) return stray;
+  let errored = stray;
   if (!messageIds) {
-    errored = byDelivery.size > 0;
+    errored = byDelivery.size > 0 || stray;
     byDelivery.clear();
   } else {
-    if (unkeyed) errored = byDelivery.delete("");
+    if (unkeyed) errored = byDelivery.delete("") || errored;
     for (const id of messageIds) errored = byDelivery.delete(id) || errored;
   }
   if (byDelivery.size === 0) erroredSessions.delete(k);
@@ -149,11 +256,12 @@ export function takeErrored(
 export function recordDrained(
   mind: string,
   session: string,
+  process: string,
   ids: number[],
   messageId?: string,
 ): void {
   if (ids.length === 0) return;
-  const k = key(mind, session);
+  const k = key(mind, process, session);
   let byDelivery = drainedNotices.get(k);
   if (!byDelivery) {
     byDelivery = new Map();
@@ -165,9 +273,13 @@ export function recordDrained(
   byDelivery.set(d, drained);
 }
 
-/** The notice ids drained so far, by each delivery that named itself, on the session. */
-export function drainedByDelivery(mind: string, session: string): [string, Set<number>][] {
-  return [...(drainedNotices.get(key(mind, session)) ?? [])].filter(([d]) => d !== "");
+/** The notice ids `process` drained so far, by each delivery that named itself, on the session. */
+export function drainedByDelivery(
+  mind: string,
+  session: string,
+  process: string,
+): [string, Set<number>][] {
+  return [...(drainedNotices.get(key(mind, process, session)) ?? [])].filter(([d]) => d !== "");
 }
 
 /**
@@ -178,14 +290,17 @@ export function drainedByDelivery(mind: string, session: string): [string, Set<n
 export function takeDrained(
   mind: string,
   session: string,
+  process: string,
   messageIds?: string[],
   unkeyed = true,
 ): number[] {
-  const k = key(mind, session);
+  const k = key(mind, process, session);
+  const taken = new Set<number>(
+    !messageIds || unkeyed ? takeStray(process, session, "drained") : [],
+  );
   const byDelivery = drainedNotices.get(k);
-  if (!byDelivery) return [];
+  if (!byDelivery) return [...taken];
   const keys = messageIds ? [...(unkeyed ? [""] : []), ...messageIds] : [...byDelivery.keys()];
-  const taken = new Set<number>();
   for (const d of keys) {
     const drained = byDelivery.get(d);
     if (!drained) continue;
@@ -197,8 +312,9 @@ export function takeDrained(
 }
 
 /**
- * Create a turn for a mind's thread (or reuse the thread's active one). Keyed by the
- * thread from the start and recorded with it; with no thread, keyed as `mind:*`.
+ * Create a turn for a process's thread (or reuse its active one there). Keyed by the
+ * thread from the start and recorded with it; with no thread, keyed as the sessionless slot.
+ * `mind` is the base name it is recorded under; `process` the mind or variant running it.
  *
  * The in-memory map entry is set BEFORE the DB insert to prevent a race where
  * two concurrent substantive events both pass the existence check. If the DB
@@ -206,22 +322,25 @@ export function takeDrained(
  */
 export async function createTurn(
   mind: string,
-  session?: string | null,
-  owner: string = mind,
+  session: string | null | undefined,
+  process: string,
 ): Promise<string | undefined> {
-  const k = key(mind, session);
+  const k = key(mind, process, session);
   const existing = activeTurns.get(k);
   if (existing && !existing.closing) return existing.turnId;
 
   const turnId = randomUUID();
   const entry: ActiveTurn = {
     turnId,
+    mind,
+    session: normalizeThread(session),
     lastToolUseEventId: undefined,
+    lastAt: Date.now(),
     toolUseEventIds: new Map(),
-    owner,
+    owner: process,
   };
   // Reserve the slot synchronously to prevent concurrent callers from creating duplicates
-  activeTurns.set(k, entry);
+  setActive(k, entry);
 
   try {
     const db = await getDb();
@@ -231,23 +350,55 @@ export async function createTurn(
   } catch (err) {
     tlog.error(`failed to create turn for ${mind}`, log.errorData(err));
     // Roll back the in-memory reservation
-    if (activeTurns.get(k) === entry) activeTurns.delete(k);
+    if (activeTurns.get(k) === entry) dropActive(k);
     return undefined;
   }
 
   return turnId;
 }
 
-/** The process that opened this mind+thread's active turn (see `ActiveTurn.owner`). */
-export function getActiveTurnOwner(mind: string, session?: string | null): string | undefined {
-  const entry = activeTurns.get(key(mind, session));
-  return entry?.closing ? undefined : entry?.owner;
+/**
+ * The turn `process` is running on exactly this thread (the sessionless slot when there is
+ * none) — never another thread's, never another process's.
+ */
+export function getActiveTurnId(
+  mind: string,
+  session: string | null | undefined,
+  process: string,
+): string | undefined {
+  const entry = activeTurns.get(key(mind, process, session));
+  return entry?.closing ? undefined : entry?.turnId;
 }
 
-/** Get the active turn ID for exactly this mind+thread (`mind:*` when there is none). */
-export function getActiveTurnId(mind: string, session?: string | null): string | undefined {
-  const entry = activeTurns.get(key(mind, session));
-  return entry?.closing ? undefined : entry?.turnId;
+/**
+ * The processes of the mind — it and its variants — running a turn on the thread that has
+ * had an event within `withinMs`, if given.
+ */
+export function activeOwners(
+  mind: string,
+  session: string | null | undefined,
+  withinMs?: number,
+): string[] {
+  const owners: string[] = [];
+  const since = withinMs === undefined ? -Infinity : Date.now() - withinMs;
+  for (const k of activeOnThread.get(threadKey(mind, session)) ?? []) {
+    const e = activeTurns.get(k);
+    if (e && !e.closing && e.lastAt >= since) owners.push(e.owner);
+  }
+  return owners;
+}
+
+/** Whether any process of the mind — it or a variant — is running a turn on any thread. */
+export function hasActiveTurn(mind: string): boolean {
+  for (const e of activeTurns.values()) if (e.mind === mind && !e.closing) return true;
+  return false;
+}
+
+/** An event landed on this turn (see `activeOwners`). */
+export function touchTurn(turnId: string): void {
+  const k = activeByTurn.get(turnId);
+  const entry = k === undefined ? undefined : activeTurns.get(k);
+  if (entry) entry.lastAt = Date.now();
 }
 
 /**
@@ -257,10 +408,10 @@ export function getActiveTurnId(mind: string, session?: string | null): string |
  * a `silent` mind filters every such event (#1298). It rests on the daemon's own evidence,
  * the slot it just gave the delivery, never on a thread the mind names.
  *
- * A turn already open on the thread is joined if the delivered process opened it (the mind
- * started work there on its own); one another process opened — a variant shares its
- * parent's turn key — is not this delivery's, and nothing opens. `created` says whether
- * this call made the turn, and so whether a refused POST may take it back (`unlinkRefused`).
+ * A turn the delivered process already has open on the thread is joined (the mind started
+ * work there on its own); another process's turn there — a parent's, beside its variant —
+ * is not this delivery's, and its own opens beside it. `created` says whether this call made
+ * the turn, and so whether a refused POST may take it back (`unlinkRefused`).
  *
  * `mind` is the base name; `process` the mind or variant delivered to. A delivery with no
  * thread opens nothing — the mind picks where it runs.
@@ -271,12 +422,10 @@ export async function openDeliveredTurn(
   process: string,
 ): Promise<{ turnId: string; created: boolean } | undefined> {
   if (!normalizeThread(session)) return undefined;
-  const existing = activeTurns.get(key(mind, session));
-  if (existing && !existing.closing) {
-    // Joined, even one whose own delivery's POST went unanswered: the mind may be running
-    // it, and folding in is safe where a wrong deletion is not.
-    return existing.owner === process ? { turnId: existing.turnId, created: false } : undefined;
-  }
+  // Joined, even one whose own delivery's POST went unanswered: the mind may be running it,
+  // and folding in is safe where a wrong deletion is not.
+  const existing = getActiveTurnId(mind, session, process);
+  if (existing) return { turnId: existing, created: false };
   const turnId = await createTurn(mind, session, process);
   if (!turnId) return undefined;
   publishMindEvent(mind, { mind, type: "turn_created", turnId });
@@ -284,10 +433,10 @@ export async function openDeliveredTurn(
 }
 
 /**
- * Per `mind:thread`, the rows of turns the summarizer took back as interrupted — a message
- * the mind was given but whose turn produced nothing before it ended — while no turn runs
- * on the thread to take them. The mind's next turn there is normally its answer, so that
- * turn adopts them (`adoptInterrupted`) — if it comes soon: after `INTERRUPTED_ROWS_MS` the
+ * Per `process:thread`, the rows of turns the summarizer took back as interrupted — a
+ * message the process was given but whose turn produced nothing before it ended — while it
+ * runs no turn on the thread to take them. Its next turn there is normally its answer, so
+ * that turn adopts them (`adoptInterrupted`) — if it comes soon: after `INTERRUPTED_ROWS_MS` the
  * thread has moved on, and they are left unlinked, as on main.
  */
 const interruptedRows = new Map<string, { ids: number[]; at: number }>();
@@ -339,18 +488,19 @@ async function startedByMessage(turnId: string): Promise<boolean> {
 }
 
 /**
- * Hand an interrupted turn's rows, taken back just as it ended, to the next turn on its
- * thread: the one already running there, if a message started it (an interrupting one's),
- * or else the next to open soon (`adoptInterrupted`). Never the trigger: that turn's is its
- * own message. Never throws.
+ * Hand an interrupted turn's rows, taken back just as it ended, to the next turn `process`
+ * — the one that ran it — has on its thread: the one already running there, if a message
+ * started it (an interrupting one's), or else the next to open soon (`adoptInterrupted`).
+ * Never the trigger: that turn's is its own message. Never throws.
  */
 export async function holdInterrupted(
   mind: string,
   session: string | null | undefined,
+  process: string,
   rowIds: number[],
 ): Promise<void> {
   if (!normalizeThread(session) || rowIds.length === 0) return;
-  const running = getActiveTurnId(mind, session);
+  const running = getActiveTurnId(mind, session, process);
   if (running) {
     try {
       if (await startedByMessage(running)) {
@@ -362,7 +512,7 @@ export async function holdInterrupted(
     }
     // Not (yet) known to be a message's — its trigger may be on its way: held for it.
   }
-  const k = key(mind, session);
+  const k = key(mind, process, session);
   const prior = interruptedRows.get(k)?.ids ?? [];
   interruptedRows.set(k, {
     ids: [...prior, ...rowIds].slice(-INTERRUPTED_ROWS_PER_THREAD),
@@ -371,16 +521,17 @@ export async function holdInterrupted(
 }
 
 /**
- * Give a turn a message just started on its thread — its trigger already linked — what an
- * interrupted turn there left, if that was recently (see `interruptedRows`). Only rows still
- * unlinked, and never the trigger. Never throws.
+ * Give a turn a message just started on `process`'s thread — its trigger already linked —
+ * what an interrupted turn of that process there left, if that was recently (see
+ * `interruptedRows`). Only rows still unlinked, and never the trigger. Never throws.
  */
 export async function adoptInterrupted(
   mind: string,
   session: string | null | undefined,
+  process: string,
   turnId: string,
 ): Promise<void> {
-  const k = key(mind, session);
+  const k = key(mind, process, session);
   const held = interruptedRows.get(k);
   if (!held) return;
   interruptedRows.delete(k);
@@ -470,7 +621,7 @@ export async function recordClosedTurn(
     tlog.error(`failed to record turn for ${mind} (${process})`, log.errorData(err));
     return undefined;
   }
-  rememberClosed(mind, session, turnId, deliveries);
+  rememberClosed(session, process, turnId, deliveries);
   publishMindEvent(mind, { mind, type: "turn_created", turnId });
   return turnId;
 }
@@ -521,7 +672,6 @@ export function isConnectionRefused(err: unknown): boolean {
  */
 export async function unlinkRefused(
   mind: string,
-  session: string | null | undefined,
   turnId: string,
   rowIds: (number | undefined)[],
   created: boolean,
@@ -529,8 +679,7 @@ export async function unlinkRefused(
   const ids = rowIds.filter((id): id is number => id != null);
   // Synchronously, before the slot this refusal freed can be taken: a turn this delivery
   // opened is no longer the thread's, so the next delivery opens its own.
-  const k = key(mind, session);
-  if (created && activeTurns.get(k)?.turnId === turnId) activeTurns.delete(k);
+  if (created) dropTurn(turnId);
   try {
     const db = await getDb();
     if (ids.length > 0) {
@@ -567,36 +716,31 @@ export async function unlinkRefused(
   }
 }
 
-/** The turn `process` is running on the thread, if it is running one — folds join it. */
-export function runningTurnOf(
-  mind: string,
-  session: string | null | undefined,
-  process: string,
-): string | undefined {
-  const entry = activeTurns.get(key(mind, session));
-  return entry && !entry.closing && entry.owner === process ? entry.turnId : undefined;
-}
-
 /**
- * Record a tool_use event ID for a mind+session. When the SDK's `toolUseId` is known it's
+ * Record a tool_use event ID for a process's thread. When the SDK's `toolUseId` is known it's
  * also indexed so the matching tool_result can resolve its exact source (parallel tool calls
  * in one turn would otherwise all collapse onto "the last tool_use").
  */
 export function trackToolUse(
   mind: string,
   session: string | null | undefined,
+  process: string,
   eventId: number,
   toolUseId?: string,
 ): void {
-  const entry = activeTurns.get(key(mind, session));
+  const entry = activeTurns.get(key(mind, process, session));
   if (!entry) return;
   entry.lastToolUseEventId = eventId;
   if (toolUseId) entry.toolUseEventIds.set(toolUseId, eventId);
 }
 
-/** Get the last tool_use event ID for a mind+session. */
-export function getLastToolUseEventId(mind: string, session?: string | null): number | undefined {
-  return activeTurns.get(key(mind, session))?.lastToolUseEventId;
+/** Get the last tool_use event ID for a process's thread. */
+export function getLastToolUseEventId(
+  mind: string,
+  session: string | null | undefined,
+  process: string,
+): number | undefined {
+  return activeTurns.get(key(mind, process, session))?.lastToolUseEventId;
 }
 
 /**
@@ -607,9 +751,10 @@ export function getLastToolUseEventId(mind: string, session?: string | null): nu
 export function getToolUseEventId(
   mind: string,
   session: string | null | undefined,
+  process: string,
   toolUseId?: string,
 ): number | undefined {
-  const entry = activeTurns.get(key(mind, session));
+  const entry = activeTurns.get(key(mind, process, session));
   if (!entry) return undefined;
   if (toolUseId) {
     const id = entry.toolUseEventIds.get(toolUseId);
@@ -620,12 +765,13 @@ export function getToolUseEventId(
 
 /**
  * Mark a turn as complete on a `done`. Returns the turnId (or undefined if none was active).
- * A `done` closes exactly its own thread's turn; only a sessionless `done` closes the
- * sessionless `mind:*` turn — a thread ending never ends an unrelated one.
+ * A `done` closes exactly its own process's turn on its own thread; only a sessionless `done`
+ * closes the sessionless turn — a thread ending never ends an unrelated one.
  */
 export async function completeTurn(
   mind: string,
-  session?: string | null,
+  session: string | null | undefined,
+  process: string,
   /**
    * Complete it only if it is this turn — none, if it is undefined. A `done` decides what
    * it closes on arrival; by the time it completes, a turn opened since (another process's,
@@ -633,7 +779,7 @@ export async function completeTurn(
    */
   only?: { turnId: string | undefined },
 ): Promise<string | undefined> {
-  const k = key(mind, session);
+  const k = key(mind, process, session);
   // The turn the `done` closed — which a delivery may already have replaced as the active
   // one (see `closing`) — or, with no `only`, whatever is active.
   const turnId = only ? only.turnId : activeTurns.get(k)?.turnId;
@@ -648,7 +794,7 @@ export async function completeTurn(
     return undefined;
   }
 
-  if (activeTurns.get(k)?.turnId === turnId) activeTurns.delete(k);
+  if (activeTurns.get(k)?.turnId === turnId) dropActive(k);
   return turnId;
 }
 
@@ -661,27 +807,28 @@ export async function completeTurn(
 export function markClosing(
   mind: string,
   session: string | null | undefined,
+  process: string,
   turnId: string,
   deliveries: string[],
 ): void {
-  const entry = activeTurns.get(key(mind, session));
+  const entry = activeTurns.get(key(mind, process, session));
   if (entry?.turnId === turnId) entry.closing = true;
-  rememberClosed(mind, session, turnId, deliveries);
+  rememberClosed(session, process, turnId, deliveries);
 }
 
 function rememberClosed(
-  mind: string,
   session: string | null | undefined,
+  process: string,
   turnId: string,
   deliveries: string[],
 ): void {
-  let own = closedTurns.get(mind);
+  let own = closedTurns.get(process);
   if (!own) {
     own = new Map();
-    closedTurns.set(mind, own);
+    closedTurns.set(process, own);
   }
-  for (const delivery of deliveries) own.set(closedKey(session, delivery), turnId);
-  while (own.size > CLOSED_TURNS_PER_MIND) own.delete(own.keys().next().value!);
+  for (const delivery of deliveries) own.set(closedKey(session, delivery), { turnId, delivery });
+  while (own.size > CLOSED_TURNS_PER_PROCESS) own.delete(own.keys().next().value!);
 }
 
 /** Mark orphaned active turns as complete and return their IDs for summary generation.
@@ -709,38 +856,37 @@ export async function completeOrphanedTurns(): Promise<OrphanedTurn[]> {
   }));
 }
 
-export type OrphanedTurn = { turnId: string; mind: string; session: string | undefined };
+export type OrphanedTurn = {
+  turnId: string;
+  mind: string;
+  session: string | undefined;
+  /** Swept because its process isn't running, not because the thread went idle. */
+  stopped?: true;
+};
 
-/** Remove all active turn entries for a mind (called on mind stop).
- *  Returns the orphaned turns so callers can generate summaries. */
-export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
+/**
+ * Remove the turn state of a process — a mind, or one of its variants — when it stops or
+ * crashes. Returns its orphaned turns so callers can generate summaries.
+ */
+export async function clearMind(name: string): Promise<OrphanedTurn[]> {
   const toDelete: string[] = [];
   const orphaned: OrphanedTurn[] = [];
+  // Only this process's turns: a variant's stop leaves its parent's running, and the reverse.
   for (const [k, entry] of activeTurns.entries()) {
-    if (k.startsWith(`${mind}:`)) {
-      const session = k.slice(mind.length + 1);
-      orphaned.push({
-        turnId: entry.turnId,
-        mind,
-        session: session === "*" ? undefined : session,
-      });
+    if (entry.owner === name) {
+      orphaned.push({ turnId: entry.turnId, mind: entry.mind, session: entry.session });
       toDelete.push(k);
     }
   }
-  for (const k of toDelete) activeTurns.delete(k);
+  for (const k of toDelete) dropActive(k);
   // Drop any errored-session flags and drained notice ids for this mind so a hard crash
   // can't leave one stale — keyed per delivery, they would otherwise outlive the process.
-  for (const k of [...erroredSessions.keys()]) {
-    if (k.startsWith(`${mind}:`)) erroredSessions.delete(k);
+  for (const map of [erroredSessions, drainedNotices, interruptedRows]) {
+    for (const k of [...map.keys()]) if (k.startsWith(`${name}:`)) map.delete(k);
   }
-  for (const k of [...drainedNotices.keys()]) {
-    if (k.startsWith(`${mind}:`)) drainedNotices.delete(k);
-  }
-  closedTurns.delete(mind);
-  forgetAwaitingUsage(mind);
-  for (const k of [...interruptedRows.keys()]) {
-    if (k.startsWith(`${mind}:`)) interruptedRows.delete(k);
-  }
+  strayThreads.delete(name);
+  closedTurns.delete(name);
+  forgetAwaitingUsage(name);
   // Mark orphaned turns as complete in DB
   if (orphaned.length > 0) {
     try {
@@ -749,7 +895,7 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
         await db.update(turns).set({ status: "complete" }).where(eq(turns.id, turnId));
       }
     } catch (err) {
-      tlog.error(`failed to complete orphaned turns for ${mind}`, log.errorData(err));
+      tlog.error(`failed to complete orphaned turns for ${name}`, log.errorData(err));
     }
   }
   return orphaned;
@@ -768,11 +914,18 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
  * events for `idleMs` is genuinely finished. A sessionless `mind:*` turn is closed only
  * by a sessionless `done` (a thread's `done` never ends an unrelated turn), and a
  * template that tags only its `done` never sends one — so a sessionless turn with no
- * events for `idleMs` is finished too, `done` or not. We mark it complete and drop any in-memory
- * entry so the next event opens a fresh turn. Callers summarize the returned turns and
- * forget the sessions' outstanding deliveries. Idempotent and safe to run on a timer.
+ * events for `idleMs` is finished too, `done` or not. So is a turn whose process `isLive`
+ * says is no longer running, `done` or not: nothing is left to end it, and while it stood it
+ * would read as a turn beside its parent's or variant's on the thread (see `activeOwners`).
+ * We mark each complete and drop any in-memory entry so the next event opens a fresh turn.
+ * Callers summarize the returned turns and forget the idle sessions' outstanding deliveries —
+ * not a `stopped` turn's: its thread may be busy with another process's turn.
+ * Idempotent and safe to run on a timer.
  */
-export async function sweepWedgedTurns(idleMs: number): Promise<OrphanedTurn[]> {
+export async function sweepWedgedTurns(
+  idleMs: number,
+  isLive: (process: string) => boolean = () => true,
+): Promise<OrphanedTurn[]> {
   const db = await getDb();
   // UTC "YYYY-MM-DD HH:MM:SS" to match how mind_history.created_at is stored.
   const cutoff = new Date(Date.now() - idleMs).toISOString().slice(0, 19).replace("T", " ");
@@ -792,6 +945,13 @@ export async function sweepWedgedTurns(idleMs: number): Promise<OrphanedTurn[]> 
     tlog.error("failed to query wedged turns", log.errorData(err));
     return [];
   }
+  const stopped = new Set<string>();
+  for (const e of activeTurns.values()) {
+    if (!isLive(e.owner) && !rows.some((r) => r.id === e.turnId)) {
+      rows.push({ id: e.turnId, mind: e.mind, session: e.session ?? null });
+      stopped.add(e.turnId);
+    }
+  }
 
   const swept: OrphanedTurn[] = [];
   for (const r of rows) {
@@ -802,11 +962,15 @@ export async function sweepWedgedTurns(idleMs: number): Promise<OrphanedTurn[]> 
       continue;
     }
     // Drop the matching in-memory entry so the next event opens a fresh turn instead
-    // of re-tagging onto a now-complete one. Only delete the slot if it still points at
-    // this turn — a newer turn may already have reused the session key.
-    const k = key(r.mind, r.session);
-    if (activeTurns.get(k)?.turnId === r.id) activeTurns.delete(k);
-    swept.push({ turnId: r.id, mind: r.mind, session: r.session ?? undefined });
+    // of re-tagging onto a now-complete one — this turn's own, never a newer turn that
+    // has since taken its key.
+    dropTurn(r.id);
+    swept.push({
+      turnId: r.id,
+      mind: r.mind,
+      session: r.session ?? undefined,
+      ...(stopped.has(r.id) ? { stopped: true } : {}),
+    });
   }
   if (swept.length > 0) tlog.info(`swept ${swept.length} wedged turn(s)`);
   return swept;

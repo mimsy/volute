@@ -188,7 +188,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       }),
       true,
     );
-    const turnId = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const turnId = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     assert.ok(turnId, "the acked delivery opens the turn");
     assert.equal(posted.length, 1);
     assert.equal(JSON.stringify(posted[0]).includes("historyId"), false, "never on the wire");
@@ -229,7 +229,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       senderId: null,
       content: "more",
     });
-    const next = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const next = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     assert.ok(next && next !== turnId);
 
     // Then the first turn's usage lands, long after — a retried POST. No time window applies,
@@ -266,7 +266,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       senderId: null,
       content: "hi",
     });
-    const turnId = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const turnId = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     assert.ok(turnId);
 
     // Upgraded templates land usage before done.
@@ -299,7 +299,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       content: "quick one",
     });
     await waitFor(() => posted.length === 1);
-    const turnId = getActiveTurnId(MIND, "main");
+    const turnId = getActiveTurnId(MIND, "main", MIND);
     assert.ok(turnId, "the turn is open before the mind sees the message");
 
     // The turn is quick: it replies, and its done is handled before the delivery's ack.
@@ -315,7 +315,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     await delivering;
     await new Promise((r) => setTimeout(r, 100));
 
-    assert.equal(getActiveTurnId(MIND, "main"), undefined, "no turn is left open");
+    assert.equal(getActiveTurnId(MIND, "main", MIND), undefined, "no turn is left open");
     assert.equal((await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length, 1);
     const inbound = await db
       .select()
@@ -341,7 +341,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       senderId: null,
       content: "one",
     });
-    const t1 = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const t1 = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     // The second arrives while the first runs: the daemon folds it in, the mind runs it next.
     await deliverMessage(MIND, {
       channel: "@tester",
@@ -382,7 +382,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       .where(and(eq(mindHistory.mind, MIND), eq(mindHistory.type, "usage")))
       .get();
     assert.equal(usage!.turn_id, t2, "and the usage it reported before its done");
-    assert.equal(getActiveTurnId(MIND, "main"), undefined, "nothing is left open");
+    assert.equal(getActiveTurnId(MIND, "main", MIND), undefined, "nothing is left open");
     await waitFor(() => db.select().from(summaries).where(eq(summaries.period_key, t2!)).get());
     await db.delete(summaries).where(eq(summaries.period_key, t2!));
     await db.delete(summaries).where(eq(summaries.period_key, t1!));
@@ -453,7 +453,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     // An earlier run's send no turn ever took: stamped with a delivery no `done` here covers.
     await recordOutbound(MIND, "@tester", "EARLIER", { thread: "main", delivery: "d-earlier" });
     await deliver("one");
-    const t1 = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const t1 = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     await deliver("two");
     await deliver("three");
     await waitFor(() => posted.length === 3);
@@ -462,7 +462,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
 
     // The interrupted run ends; the interrupter runs with no turn to stamp.
     await handleMindEvent(MIND, { type: "done", session: "main", messageId: d1, covers: [d1] });
-    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+    assert.equal(getActiveTurnId(MIND, "main", MIND), undefined);
     await handleMindEvent(MIND, {
       type: "context",
       session: "main",
@@ -606,7 +606,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       senderId: null,
       content: "hi",
     });
-    const turnId = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const turnId = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     const delivery = posted[0].deliveryId as string;
     await handleMindEvent(MIND, {
       type: "done",
@@ -641,7 +641,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       senderId: null,
       content: "hi",
     });
-    const turnId = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const turnId = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     const delivery = posted[0].deliveryId as string;
     await handleMindEvent(MIND, {
       type: "done",
@@ -659,7 +659,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       content: "again",
     });
     const next = await waitFor(() => {
-      const t = getActiveTurnId(MIND, "main");
+      const t = getActiveTurnId(MIND, "main", MIND);
       return t && t !== turnId ? t : undefined;
     });
     // A turn opening next proves nothing about the held one's usage: it is still held.
@@ -705,7 +705,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     const unsubscribe = subscribeMindEvents(MIND, (e) => seen.push(e));
     const { delivered } = await deliverEvent(MIND, { type: "schedule", body: "time to check" });
     assert.ok(delivered);
-    const turnId = getActiveTurnId(MIND, "main");
+    const turnId = getActiveTurnId(MIND, "main", MIND);
     assert.ok(turnId);
     const rows = await waitFor(async () => {
       const r = await db.select().from(mindHistory).where(eq(mindHistory.mind, MIND)).all();
@@ -745,7 +745,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
         senderId: admin.id,
         content: "do the admin thing",
       });
-      await waitFor(() => getActiveTurnId(SPIRIT, thread));
+      await waitFor(() => getActiveTurnId(SPIRIT, thread, SPIRIT));
       assert.equal((await resolveEffective({ user: spirit, mindSession: thread })).role, "admin");
 
       // A second sender's message folds in. While the mind is being handed it — before
@@ -793,7 +793,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       async () => (await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length === 0,
     );
     assert.ok(gone, "no turn ran, so none is left");
-    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+    assert.equal(getActiveTurnId(MIND, "main", MIND), undefined);
     // A live timeline that showed it opening is told it is gone.
     const opened = seen.find((e) => e.type === "turn_created")?.turnId;
     assert.ok(opened);
@@ -846,7 +846,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     unsubscribe();
     const db = await getDb();
     assert.equal((await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length, 0);
-    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+    assert.equal(getActiveTurnId(MIND, "main", MIND), undefined);
     const inbound = await db
       .select()
       .from(mindHistory)
@@ -881,7 +881,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     unsubscribe();
     const db = await getDb();
     assert.equal((await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length, 0);
-    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+    assert.equal(getActiveTurnId(MIND, "main", MIND), undefined);
   });
 
   it("a wake batch whose connection is refused takes its turn back — nothing got it", async () => {
@@ -900,7 +900,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       ),
       "no turn is left behind",
     );
-    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+    assert.equal(getActiveTurnId(MIND, "main", MIND), undefined);
   });
 
   it("an event whose connection is refused takes its turn back — nothing got it", async () => {
@@ -922,7 +922,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     unsubscribe();
     const db = await getDb();
     assert.equal((await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length, 0);
-    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+    assert.equal(getActiveTurnId(MIND, "main", MIND), undefined);
     await db.delete(systemEvents).where(eq(systemEvents.mind, MIND));
   });
 
@@ -956,7 +956,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       return r && r.turn_id === null ? r : undefined;
     });
     assert.ok(row, "its row left the running turn");
-    assert.equal(getActiveTurnId(MIND, "main"), running, "the running turn is untouched");
+    assert.equal(getActiveTurnId(MIND, "main", MIND), running, "the running turn is untouched");
   });
 
   it("the next delivery folds into a turn whose POST went unanswered — the mind may be running it", async () => {
@@ -970,7 +970,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       content: "lost?",
     });
     await waitFor(() => posted.length === 1);
-    const first = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const first = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     await new Promise((r) => setTimeout(r, 100));
     refuse = undefined;
     // A silent mind says nothing while it runs; the next message takes the free slot.
@@ -982,7 +982,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     });
     await waitFor(() => posted.length === 2);
     await new Promise((r) => setTimeout(r, 100));
-    assert.equal(getActiveTurnId(MIND, "main"), first, "joined, not deleted and replaced");
+    assert.equal(getActiveTurnId(MIND, "main", MIND), first, "joined, not deleted and replaced");
     const rows = await db
       .select()
       .from(mindHistory)
@@ -1033,7 +1033,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       .insert(mindHistory)
       .values({ mind: MIND, type: "inbound", channel: "@tester", content: "cut off" })
       .returning({ id: mindHistory.id });
-    await holdInterrupted(MIND, "main", [left.id]);
+    await holdInterrupted(MIND, "main", MIND, [left.id]);
     refuse = 503;
     await deliverMessage(MIND, {
       channel: "@tester",
@@ -1054,7 +1054,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       senderId: null,
       content: "yes",
     });
-    const turnId = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const turnId = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     const adopted = await waitFor(
       async () =>
         (await db.select().from(mindHistory).where(eq(mindHistory.id, left.id)).get())!.turn_id,
@@ -1217,7 +1217,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       senderId: null,
       content: "a",
     });
-    const first = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const first = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     const delivery = posted[0].deliveryId as string;
     await handleMindEvent(MIND, {
       type: "done",
@@ -1264,7 +1264,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     // The mind refuses A; B was taken.
     (dm as any).dropOutstanding(MIND, "main", "dA");
     (dm as any).unfold(MIND, "main", opened.turnId);
-    await unlinkRefused(MIND, "main", opened.turnId, [a.id], true);
+    await unlinkRefused(MIND, opened.turnId, [a.id], true);
     assert.equal(await db.select().from(turns).where(eq(turns.id, opened.turnId)).get(), undefined);
     // The mind runs B as a turn of its own.
     const { turnId } = await handleMindEvent(MIND, {
@@ -1285,7 +1285,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       messageId: "m1",
       content: "x",
     });
-    markClosing(MIND, "main", running!, ["m1"]);
+    markClosing(MIND, "main", MIND, running!, ["m1"]);
     (dm as any).addOutstanding(MIND, "main", "d-late", MIND);
     await (dm as any).enterTurn(MIND, "main", MIND, "d-late", false, [], true);
     assert.equal(wasInterrupted(running!), false);
@@ -1325,7 +1325,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     try {
       // The schedule event takes the slot; its POST hangs, so the turn is open, unacked.
       const firing = deliverEvent(SPIRIT, { type: "schedule", body: "tick", thread: "main" });
-      const eventTurn = await waitFor(() => getActiveTurnId(SPIRIT, "main"));
+      const eventTurn = await waitFor(() => getActiveTurnId(SPIRIT, "main", SPIRIT));
       assert.ok(eventTurn, "the event's turn is open as soon as it holds the slot");
       // A non-admin's message lands on the thread in that moment and folds in.
       const folding = deliverMessage(SPIRIT, {
@@ -1386,11 +1386,11 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       });
       await waitFor(() => posted.length === 1);
       await new Promise((r) => setTimeout(r, 50));
-      assert.equal(getActiveTurnId(SPIRIT, "main"), undefined);
+      assert.equal(getActiveTurnId(SPIRIT, "main", SPIRIT), undefined);
       // The event's turn then opens.
       releaseTurnSlot(SPIRIT, "main");
       await deliverEvent(SPIRIT, { type: "schedule", body: "tick", thread: "main" });
-      const eventTurn = getActiveTurnId(SPIRIT, "main");
+      const eventTurn = getActiveTurnId(SPIRIT, "main", SPIRIT);
       assert.ok(eventTurn);
       const row = await waitFor(async () => {
         const r = await (await getDb())
@@ -1447,7 +1447,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     let ack!: () => void;
     holdAck = new Promise((r) => (ack = r));
     const firing = deliverEvent(MIND, { type: "schedule", body: "tick", thread: "main" });
-    const eventTurn = await waitFor(() => getActiveTurnId(MIND, "main"));
+    const eventTurn = await waitFor(() => getActiveTurnId(MIND, "main", MIND));
     const folding = deliverMessage(MIND, {
       channel: "@tester",
       sender: "tester",
@@ -1476,7 +1476,7 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       content: "next",
     });
     const next = await waitFor(() => {
-      const t = getActiveTurnId(MIND, "main");
+      const t = getActiveTurnId(MIND, "main", MIND);
       return t && t !== eventTurn ? t : undefined;
     });
     assert.ok(next);

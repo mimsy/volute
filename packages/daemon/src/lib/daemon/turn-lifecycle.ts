@@ -1,4 +1,3 @@
-import { and, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import {
   captureReflection,
   clearDeliveredEvents,
@@ -17,13 +16,16 @@ import { broadcast } from "../events/activity-events.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { getPrompt } from "../prompts.js";
-import { mindHistory, turns } from "../schema.js";
+import { mindHistory } from "../schema.js";
 import log from "../util/logger.js";
 import { classify } from "./error-classify.js";
 import { ManagerNotReadyError } from "./manager-not-ready.js";
+import { isProcessLive } from "./mind-manager.js";
 import { type BudgetScope, getSpendBudget } from "./spend-budget.js";
 import { resumeOnUsage, summarizeTurn } from "./summarizer.js";
+import { SLOT_MAX_AGE_MS } from "./turn-slots.js";
 import {
+  activeOwners,
   adoptInterrupted,
   clearCoveredInterrupts,
   closedTurnFor,
@@ -31,17 +33,19 @@ import {
   createTurn,
   drainedByDelivery,
   getActiveTurnId,
-  getActiveTurnOwner,
   getToolUseEventId,
   linkReportsToTurn,
   linkRowsToTurn,
   markClosing,
   markErrored,
+  markStrayErrored,
   normalizeThread,
   recordClosedTurn,
   recordDrained,
+  recordStrayDrained,
   takeDrained,
   takeErrored,
+  touchTurn,
   trackToolUse,
 } from "./turn-tracker.js";
 import { mindPricingContext, priceUsageMetadata } from "./usage-pricing.js";
@@ -79,16 +83,16 @@ export type MindEvent = {
 };
 
 /**
- * The delivery a mind's event names, if it is one the daemon delivered to that session and
- * no `done` has covered yet — the only ids a turn's error flag or drained notices are keyed
- * by. Anything else a mind sends is read as naming no turn, so a mind can't grow the
- * daemon's per-delivery state with ids of its own.
+ * The delivery a mind's event names, if it is one the daemon delivered to that process on that
+ * session and no `done` has covered yet — the only ids a turn's error flag or drained notices
+ * are keyed by. Anything else a mind sends is read as naming no turn, so a mind can't grow the
+ * daemon's per-delivery state with ids of its own, nor key a flag to another process's.
  */
 function outstandingId(
   mind: string,
   session: string,
   messageId: string | undefined,
-  process?: string,
+  process: string,
 ) {
   if (messageId === undefined) return undefined;
   try {
@@ -105,9 +109,12 @@ function outstandingId(
  * what it drained against that turn. A notice already drained into a delivery `process`
  * still has outstanding — its `done` not yet in — is left out: the prompt is folded into
  * that turn, and the mind has been told (#1233). A notice held only by a variant's turn, or
- * by a drain that named no delivery, is not: that is another context. Held notices are only
- * skipped, never claimed, so if the turn holding one fails, a later turn drains it again —
- * one turn late, when the skipping prompt was the next turn's, racing the holder's `done`.
+ * by a drain that named no delivery, is not: that is another context. A drain on a thread
+ * where `process` has neither a delivery nor a turn — a folded event it runs as a turn of its
+ * own, before that turn opens — goes in its one stray record (see `knownThread`), and is not
+ * held. Held notices are only skipped, never claimed, so if the turn holding one fails, a
+ * later turn drains it again — one turn late, when the skipping prompt was the next turn's,
+ * racing the holder's `done`.
  *
  * Once a `done` arrives its drains are no longer held, but they stay undelivered until its
  * clear commits; a prompt of the next turn drained in that gap is shown them again. That is
@@ -120,26 +127,39 @@ export async function drainNotices(
   messageId?: string,
 ): Promise<SystemEvent[]> {
   const held: number[] = [];
-  for (const [delivery, ids] of drainedByDelivery(mind, session)) {
+  for (const [delivery, ids] of drainedByDelivery(mind, session, process)) {
     if (outstandingId(mind, session, delivery, process)) held.push(...ids);
   }
   const notices = await drainEvents(mind, session, undefined, held);
-  recordDrained(
-    mind,
-    session,
-    notices.map((n) => n.id),
-    outstandingId(mind, session, messageId, process),
-  );
+  const ids = notices.map((n) => n.id);
+  if (knownThread(mind, session, process)) {
+    recordDrained(mind, session, process, ids, outstandingId(mind, session, messageId, process));
+  } else recordStrayDrained(process, session, ids);
   return notices;
+}
+
+/**
+ * Whether `process` has a delivery outstanding or a turn running on the thread: the only
+ * threads per-session error and drain state is kept for. Anything else is a thread name the
+ * mind chose, and keeping state for each would let a mind grow the daemon's memory by naming
+ * threads (#1220): it gets one stray record per process (`strayThreads`).
+ */
+function knownThread(mind: string, session: string, process: string): boolean {
+  if (getActiveTurnId(mind, session, process)) return true;
+  try {
+    return getDeliveryManager().hasOutstanding(mind, session, process);
+  } catch {
+    return false;
+  }
 }
 
 /** What a `done` does to its session, decided the moment it arrives (see `readDone`). */
 type DoneState = {
-  /** The `done` ends a turn — the mind's, or a variant's beside it. */
+  /** The `done` ends a turn of its process's. */
   ends: boolean;
-  /** It closes the session's active turn — or there is none to close. */
-  closes: boolean;
-  /** The active turn it closes, as it stood when the `done` arrived. */
+  /** Another live process of the mind — a parent or a variant — runs a turn on the thread. */
+  beside: boolean;
+  /** Its process's active turn it closes, as it stood when the `done` arrived. */
   turnId: string | undefined;
   /** The turn was recorded already complete by this `done`, which found none running. */
   bornClosed?: boolean;
@@ -160,22 +180,26 @@ type DoneState = {
  * covers everything its process had outstanding. One with `endsTurn: false` ends no turn —
  * it retires a delivery that failed while another turn ran on (pi's rejected followUp).
  *
- * A `done` closes the session's active turn only if it comes from the process that opened
- * it: a variant shares its parent's turn key, and its `done` must not cut the parent's
- * turn short. A `done` that ends a turn takes the drained notices and error flags of the
- * deliveries it finished — and, if it closes the session's turn, those that named none —
- * before anything awaits, so a drain for the next turn is never claimed by this one's. A
- * `done` that ends no turn drops its failed deliveries' flags, whose turns never ran.
+ * A `done` closes only its own process's turn: a variant's turn beside its parent's on the
+ * same thread is its own, and neither's `done` ends the other's (#1177). A `done` that ends
+ * a turn takes its process's drained notices and error flags of the deliveries it finished,
+ * and those that named none, before anything awaits, so a drain for the next turn is never
+ * claimed by this one's. A `done` that ends no turn drops its failed deliveries' flags,
+ * whose turns never ran.
  */
 function readDone(mind: string, event: MindEvent, process: string): DoneState {
   const session = event.session;
   const legacy = event.covers === undefined;
   const ends = event.endsTurn !== false;
-  const turnId = getActiveTurnId(mind, session);
-  const closes = ends && (turnId === undefined || getActiveTurnOwner(mind, session) === process);
-  // A `done` that ends no turn still frees the slot when no turn runs: the one it failed
-  // beside has already ended, and its own `done` could not free what this delivery held.
-  const releases = ends || turnId === undefined;
+  const turnId = getActiveTurnId(mind, session, process);
+  // The slot is the thread's, whichever process holds it: a `done` frees it when it ends a
+  // turn and no other process's runs on beside it — or, ending none, when no turn runs at all:
+  // the one it failed beside has already ended, and its own `done` could not free what this
+  // delivery held. A turn beside counts only while its process runs and it has been heard
+  // from within a slot's lifetime: one that never gets its `done` must not hold the thread.
+  const live = activeOwners(mind, session, SLOT_MAX_AGE_MS).filter(isProcessLive);
+  const beside = live.some((owner) => owner !== process);
+  const releases = (ends && !beside) || live.length === 0;
   let retired: string[] | undefined;
   try {
     const dm = getDeliveryManager();
@@ -193,23 +217,22 @@ function readDone(mind: string, event: MindEvent, process: string): DoneState {
       llog.error(`delivery manager coveredBy failed for ${mind}`, log.errorData(err));
     }
   }
-  const state = { ends, closes, turnId, releases, retired };
+  const state = { ends, beside, turnId, releases, retired };
   if (!session) return { ...state, drained: [], errored: false };
 
   const named = [...new Set([...(event.covers ?? []), ...(retired ?? [])])];
   if (event.messageId !== undefined) named.push(event.messageId);
   if (!ends) {
-    takeDrained(mind, session, named, false);
-    takeErrored(mind, session, named, false);
+    takeDrained(mind, session, process, named, false);
+    takeErrored(mind, session, process, named, false);
     return { ...state, drained: [], errored: false };
   }
-  // A turn that closes the session's reads the whole session for a template that predates
-  // `covers`, as it always did; one beside another process's turn reads only its own.
-  const ids = closes && legacy ? undefined : named;
+  // A template that predates `covers` reads its process's whole session, as it always did.
+  const ids = legacy ? undefined : named;
   return {
     ...state,
-    drained: takeDrained(mind, session, ids, closes),
-    errored: takeErrored(mind, session, ids, closes),
+    drained: takeDrained(mind, session, process, ids),
+    errored: takeErrored(mind, session, process, ids),
   };
 }
 
@@ -224,72 +247,6 @@ function markDeliveredOnCleanTurn(mind: string, session: string, done: DoneState
       llog.warn(`failed to clear delivered notices for ${mind}:${session}`, log.errorData(err)),
     );
   }
-}
-
-/**
- * Link the inbound message(s) that triggered a turn to that turn, and set the turn's
- * `trigger_event_id`. Runs once, at turn creation.
- *
- * Two failure modes this guards against (see #403):
- *
- * 1. **Channel race.** The turn-creating event (`thinking`/`text`/…) only carries a channel
- *    once the template's message→channel mapping is established — a timing race. When it's
- *    absent we fall back to the turn's `session`, which is channel-shaped for the default
- *    routes (`session = ${channel}`, so a DM session *is* the `@handle` slug). A session that
- *    isn't a channel slug (e.g. the `main` default) simply matches no inbound rows — a safe
- *    no-op rather than a mis-tag.
- * 2. **Unbounded sweep.** We only claim untagged inbounds that arrived at/after the previous
- *    turn on this session was created. Without that bound a late turn hoovers stale inbounds
- *    that belonged to (or were abandoned by) an earlier turn. Inbounds older than the bound
- *    stay untagged — they genuinely never got their own turn.
- */
-async function linkPendingInbound(
-  mind: string,
-  turnId: string,
-  channel: string | undefined,
-  session: string | undefined,
-): Promise<void> {
-  const scopeChannel = channel ?? session;
-  if (!scopeChannel) return;
-  const db = await getDb();
-
-  // Lower-bound the sweep by the previous turn on this session (createTurn has already
-  // written this turn's thread, so `id != turnId` excludes it from the max).
-  let lowerBound: string | undefined;
-  if (session) {
-    const prev = await db
-      .select({ max: sql<string | null>`max(${turns.created_at})` })
-      .from(turns)
-      .where(and(eq(turns.mind, mind), eq(turns.thread, session), sql`${turns.id} != ${turnId}`))
-      .get();
-    lowerBound = prev?.max ?? undefined;
-  }
-
-  const conditions = [
-    eq(mindHistory.mind, mind),
-    // "event" rows are system events (see recordEventRow) — not messages, but they
-    // trigger turns the same way, and this linkage is what sets `trigger_event_id` and
-    // thus drives reflection capture. Dropping them here breaks it silently.
-    inArray(mindHistory.type, ["inbound", "event"]),
-    sql`${mindHistory.turn_id} IS NULL`,
-    eq(mindHistory.channel, scopeChannel),
-  ];
-  if (lowerBound) conditions.push(gte(mindHistory.created_at, lowerBound));
-
-  const pending = await db
-    .select({ id: mindHistory.id })
-    .from(mindHistory)
-    .where(and(...conditions))
-    .orderBy(mindHistory.id);
-  if (pending.length === 0) return;
-  const ids = pending.map((r) => r.id);
-  await db.update(mindHistory).set({ turn_id: turnId }).where(inArray(mindHistory.id, ids));
-  // Trigger is the earliest inbound in the window — the message that started the turn —
-  // unless the turn already has one: a delivery it runs, adopted first (`adoptFolded`).
-  await db
-    .update(turns)
-    .set({ trigger_event_id: ids[0] })
-    .where(and(eq(turns.id, turnId), isNull(turns.trigger_event_id)));
 }
 
 /**
@@ -335,7 +292,8 @@ function turnDeliveries(event: MindEvent, done: DoneState): string[] {
  * here so the state machine is unit-testable without a live HTTP server.
  *
  * `mind` is the base name history is kept under; `process` is the mind or variant whose
- * server sent the event (it owns a turn it opens — see `ActiveTurn.owner`).
+ * server sent the event. Turns are its own: a variant's events on its parent's thread land in
+ * the variant's turn there, never the parent's (#1177).
  *
  * Returns the resolved `turnId` (if any) and the persisted mind_history `insertedId`.
  */
@@ -344,23 +302,23 @@ export async function handleMindEvent(
   event: MindEvent,
   process: string = mind,
 ): Promise<{ turnId?: string; insertedId?: number }> {
-  // Look up active turn for this event; create one if missing for substantive events.
-  // Turns are created per-session when the mind starts processing, not when inbound arrives,
-  // and keyed by the event's own thread from the start — never borrowed from a sibling.
-  let turnId = getActiveTurnId(mind, event.session);
+  // Look up this process's active turn for the event; create one if missing for substantive
+  // events. Keyed by the event's own thread and process from the start — never borrowed from
+  // a sibling thread, nor from a parent or variant on the same one.
+  let turnId = getActiveTurnId(mind, event.session, process);
   // Synchronous with the `done`'s arrival — see readDone.
   const done = event.type === "done" ? readDone(mind, event, process) : undefined;
-  // A `done` that doesn't close the running turn isn't that turn's end, and must not be
-  // recorded as one — the wedged-turn sweep reads a turn's `done` rows as its having ended.
-  if (done && !done.closes) turnId = undefined;
-  if (done?.closes && done.turnId) {
-    markClosing(mind, event.session, done.turnId, turnDeliveries(event, done));
+  // A `done` that ends no turn isn't the running turn's end, and must not be recorded as
+  // one — the wedged-turn sweep reads a turn's `done` rows as its having ended.
+  if (done && !done.ends) turnId = undefined;
+  if (done?.ends && done.turnId) {
+    markClosing(mind, event.session, process, done.turnId, turnDeliveries(event, done));
     clearCoveredInterrupts(done.turnId, done.retired ?? []);
   }
   // What a turn reports can be handled after its `done` — the mind POSTs its events
   // concurrently (#1298). Each names its delivery, so it lands on that delivery's turn,
   // closing or closed, whatever has opened on the thread since — never on a new one.
-  const closedTurn = done ? undefined : closedTurnFor(mind, event.session, event.messageId);
+  const closedTurn = done ? undefined : closedTurnFor(event.session, process, event.messageId);
   if (closedTurn) turnId = closedTurn;
   if (!turnId && SUBSTANTIVE_TYPES.has(event.type)) {
     turnId = await createTurn(mind, event.session, process);
@@ -368,25 +326,18 @@ export async function handleMindEvent(
       llog.warn(`skipping turn tracking for ${mind}: createTurn failed`);
     } else {
       publishMindEvent(mind, { mind, type: "turn_created", turnId });
+      // What it runs, by the rows the daemon recorded — never a sweep of untagged rows by a
+      // channel or thread the mind names (#1178).
       await adoptFolded(mind, event.session, process, turnId);
-      // Link the triggering inbound(s) and set the turn's trigger_event_id.
-      try {
-        await linkPendingInbound(mind, turnId, event.channel, event.session);
-      } catch (err) {
-        llog.warn(
-          `failed to link trigger inbound for turn ${turnId} (mind: ${mind})`,
-          log.errorData(err),
-        );
-      }
       // An interrupted turn's message, if the delivery that interrupted it started this one.
-      await adoptInterrupted(mind, event.session, turnId);
+      await adoptInterrupted(mind, event.session, process, turnId);
     }
   }
   // A turn nothing opened — a `silent` mind's, folded in on the daemon's side but run as a
   // turn of its own (#1298) — is recorded by the `done` that names its deliveries: already
   // complete, so no event racing in can join it. Its rows, and the usage that named those
   // deliveries, move to it.
-  if (!turnId && done?.closes && event.session && done.retired?.length) {
+  if (!turnId && done?.ends && event.session && done.retired?.length) {
     turnId = await recordClosedTurn(mind, event.session, process, turnDeliveries(event, done));
     if (turnId) {
       done.turnId = turnId;
@@ -395,7 +346,7 @@ export async function handleMindEvent(
       await linkReportsToTurn(mind, event.session, turnId, turnDeliveries(event, done));
       // And what it sent while it ran with no turn to stamp, before it is judged quiet (#1320).
       await linkRunToTurn(mind, process, event.session, turnId, turnDeliveries(event, done));
-      await adoptInterrupted(mind, event.session, turnId);
+      await adoptInterrupted(mind, event.session, process, turnId);
     }
   }
 
@@ -420,7 +371,7 @@ export async function handleMindEvent(
 
   // A `done` handled while this event awaited may have recorded the turn it names since
   // (`recordClosedTurn`): look again, so the event lands on it rather than on nothing.
-  if (!turnId && !done) turnId = closedTurnFor(mind, event.session, event.messageId);
+  if (!turnId && !done) turnId = closedTurnFor(event.session, process, event.messageId);
 
   // A report naming no delivery, with no turn to land on — a `silent` run's context before
   // the mind knows which delivery it runs — names the one its process is running, so the
@@ -451,6 +402,7 @@ export async function handleMindEvent(
     insertedId = result[0]?.id;
     // A quiet turn held for its usage can now be summarized (see summarizer's awaitingUsage).
     if (event.type === "usage" && turnId) resumeOnUsage(turnId);
+    if (turnId) touchTurn(turnId);
   } catch (err) {
     // A dropped event is a permanent gap in this mind's history/timeline — surface it
     // with enough context to spot which mind/session/channel lost what, rather than
@@ -467,24 +419,19 @@ export async function handleMindEvent(
   // (in metadata.id) so a parallel tool_result resolves to its own tool_use.
   if (event.type === "tool_use" && insertedId != null) {
     const toolUseId = typeof event.metadata?.id === "string" ? event.metadata.id : undefined;
-    trackToolUse(mind, event.session, insertedId, toolUseId);
+    trackToolUse(mind, event.session, process, insertedId, toolUseId);
   }
 
   // Fallback linking via correlation markers. Sends and command activities are attributed
   // at send/publish time from the caller's thread (api/chat.ts, publishTurnActivity);
   // linkToolResultToTurn fills in what that couldn't: a send from this thread made before
   // its turn existed (re-published once, with the turn), or an unstamped activity of this
-  // mind. It never overwrites a turn or crosses threads — or processes: a variant's thread
-  // shares its parent's turn key, so only the process that opened the turn links into it.
-  if (
-    event.type === "tool_result" &&
-    turnId &&
-    event.content &&
-    getActiveTurnOwner(mind, event.session) === process
-  ) {
+  // mind. It never overwrites a turn or crosses threads — or processes: `turnId` is this
+  // process's own, and it links only what this process sent.
+  if (event.type === "tool_result" && turnId && event.content) {
     const resultToolUseId =
       typeof event.metadata?.tool_use_id === "string" ? event.metadata.tool_use_id : undefined;
-    const toolUseEventId = getToolUseEventId(mind, event.session, resultToolUseId);
+    const toolUseEventId = getToolUseEventId(mind, event.session, process, resultToolUseId);
     try {
       await linkToolResultToTurn(mind, turnId, event.content, toolUseEventId, {
         thread: event.session,
@@ -525,9 +472,17 @@ export async function handleMindEvent(
   onMindEvent(mind, event.type, event.channel);
 
   // Turn failure: record a notice and flag the session as errored so the upcoming `done`
-  // does NOT mark notices delivered (failures accumulate until a clean turn).
+  // does NOT mark notices delivered (failures accumulate until a clean turn). On a thread
+  // where this process has neither a delivery nor a turn, it is its one stray record (#1220).
   if (event.type === "error" && event.session) {
-    markErrored(mind, event.session, outstandingId(mind, event.session, event.messageId));
+    // An error naming a delivery whose `done` has been handled — even while this event
+    // awaited — belongs to that finished turn: the two were POSTed concurrently (#1298), and
+    // it flags nothing that runs next.
+    const session = event.session;
+    const finished = closedTurnFor(session, process, event.messageId);
+    if (!finished && knownThread(mind, session, process)) {
+      markErrored(mind, session, process, outstandingId(mind, session, event.messageId, process));
+    } else if (!finished) markStrayErrored(process, session);
     const { reason, detail } = classify(event.content ?? "");
     await recordNotice({
       mind,
@@ -543,12 +498,13 @@ export async function handleMindEvent(
   }
 
   if (done) {
-    if (done.closes) {
+    if (done.ends && !done.beside) {
       // Turn end: clear the persistent typing entries set at delivery (delivery-manager)
       // and push the update to web clients. This is the canonical mid-flight clear — do
       // not clear earlier (e.g. on text/outbound); typing means "on a turn", not "about
-      // to send here". A `done` that closes no turn — a failed delivery's, or a variant's
-      // beside its parent's — leaves the turn running beside it be.
+      // to send here". Typing is the mind's, not a process's: a `done` that ends no turn — a
+      // failed delivery's — or one beside another live process's turn on the thread — a
+      // variant's beside its parent's — leaves the turn running beside it its indicator.
       const map = getTypingMap();
       publishTypingForChannels(map.deleteSender(mind), map);
       broadcast({ type: "mind_done", mind, summary: "Finished processing" });
@@ -562,10 +518,14 @@ export async function handleMindEvent(
         llog.error(`delivery manager sessionDone failed for ${mind}`, log.errorData(err));
       }
     }
-    if (done.closes) await completeTurnAndSummarize(mind, event, insertedId, done);
-    // A variant's turn beside its parent's: nothing of the parent's to complete, but the
-    // notices its own turn drained are delivered all the same.
-    else if (done.ends && event.session) markDeliveredOnCleanTurn(mind, event.session, done);
+    if (done.ends) {
+      // A turn of its own to complete — or, with none, a thread no other process is running
+      // a turn on either, to summarize by its range of rows. Beside another process's turn,
+      // that range is the other's: only the notices this process drained are delivered.
+      if (done.turnId || !done.beside) {
+        await completeTurnAndSummarize(mind, event, process, insertedId, done);
+      } else if (event.session) markDeliveredOnCleanTurn(mind, event.session, done);
+    }
   }
 
   // Record spend against the mind's cap and the install-wide cap. `cost_usd` is set
@@ -697,12 +657,13 @@ async function recordSpendNotice(
 async function completeTurnAndSummarize(
   mind: string,
   event: MindEvent,
+  process: string,
   insertedId: number | undefined,
   done: DoneState,
 ): Promise<void> {
   const completedTurnId = done.bornClosed
     ? done.turnId
-    : await completeTurn(mind, event.session, { turnId: done.turnId });
+    : await completeTurn(mind, event.session, process, { turnId: done.turnId });
   if (event.session) markDeliveredOnCleanTurn(mind, event.session, done);
   // If this turn was triggered by an immediate system event (exact match via the
   // turn's trigger_event_id), record its final text as the event's reflection
@@ -713,7 +674,7 @@ async function completeTurnAndSummarize(
   if (insertedId != null) {
     summarizeTurn(mind, event.session, event.channel, insertedId, completedTurnId, undefined, {
       onDone: true,
-      handOff: true,
+      handOff: process,
     }).catch((err) => llog.error("turn summarization failed", log.errorData(err)));
   }
 }

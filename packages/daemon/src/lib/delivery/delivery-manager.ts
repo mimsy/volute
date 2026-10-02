@@ -14,13 +14,16 @@ import {
   turnSlotHolders,
 } from "../daemon/turn-slots.js";
 import {
+  activeOwners,
   adoptInterrupted,
   closedTurnFor,
+  getActiveTurnId,
+  hasActiveTurn,
   isConnectionRefused,
   linkRowsToTurn,
   markInterrupted,
+  type OrphanedTurn,
   openDeliveredTurn,
-  runningTurnOf,
   unlinkRefused,
   unmarkInterrupted,
 } from "../daemon/turn-tracker.js";
@@ -677,9 +680,8 @@ export class DeliveryManager {
       sessionName = newEphemeralSession();
     }
 
-    // Inbound-to-turn linking happens deterministically at turn creation (see
-    // TurnLifecycle.linkPendingInbound), scoped by the turn's session and channel, so
-    // no proactive time-window tagging is needed here.
+    // Inbound-to-turn linking is exact: the delivery's own row, by its `historyId`, joins
+    // the turn it runs in (`enterTurn`, `foldedRows`), so no time-window tagging is needed.
 
     // Resolve delivery mode for this session (pass matched rule for rule-level batch config)
     const sessionConfig = resolveDeliveryMode(config, sessionName, route.rule);
@@ -1064,12 +1066,20 @@ export class DeliveryManager {
   }
 
   /**
-   * Whether the daemon delivered `deliveryId` to this session — to `process`, if given — and
-   * no `done` has covered it.
+   * Whether the daemon delivered `deliveryId` to `process` on this session and no `done` has
+   * covered it — not even one that has arrived and is still being recorded (`retiring`).
    */
-  isOutstanding(mind: string, session: string, deliveryId: string, process?: string): boolean {
+  isOutstanding(mind: string, session: string, deliveryId: string, process: string): boolean {
     const d = this.sessionStates.get(mind)?.get(session)?.outstanding.get(deliveryId);
-    return d !== undefined && (process === undefined || d.process === process);
+    return d?.process === process && !d.retiring;
+  }
+
+  /** Whether `process` has any delivery on this session that no `done` has covered. */
+  hasOutstanding(mind: string, session: string, process: string): boolean {
+    for (const d of this.sessionStates.get(mind)?.get(session)?.outstanding.values() ?? []) {
+      if (d.process === process && !d.retiring) return true;
+    }
+    return false;
   }
 
   /**
@@ -2279,6 +2289,49 @@ export class DeliveryManager {
   }
 
   /**
+   * Settle what a stopped variant leaves on its parent's threads. Delivery state, slots and
+   * typing are kept under the base name, so the variant's own `clearMindSessions` reaches
+   * none of it, and a parent's `done` beside the variant's turn left them to it (`readDone`).
+   * Its outstanding deliveries go — it will never `done` them — and a thread no turn or
+   * delivery now holds gets its slot back; the mind's typing indicator goes once nothing of
+   * it is running or outstanding anywhere.
+   */
+  releaseStopped(process: string, orphaned: OrphanedTurn[]): void {
+    const threads = new Set<string>();
+    const touched: { mind: string; session: string }[] = [];
+    const touch = (mind: string, session: string) => {
+      const k = `${mind}\n${session}`;
+      if (threads.has(k)) return;
+      threads.add(k);
+      touched.push({ mind, session });
+    };
+    for (const [mind, sessions] of this.sessionStates) {
+      if (mind === process) continue;
+      for (const [session, state] of sessions) {
+        for (const [id, d] of [...state.outstanding]) {
+          if (d.process !== process) continue;
+          this.dropOutstanding(mind, session, id);
+          touch(mind, session);
+        }
+      }
+    }
+    for (const { mind, session } of orphaned) {
+      if (mind !== process && session) touch(mind, session);
+    }
+    const typingMap = getTypingMap();
+    for (const { mind, session } of touched) {
+      if (activeOwners(mind, session).length > 0 || this.isSessionBusy(mind, session)) continue;
+      releaseTurnSlot(mind, session);
+      const busy = [...(this.sessionStates.get(mind)?.keys() ?? [])].some((s) =>
+        this.isSessionBusy(mind, s),
+      );
+      if (!busy && !hasActiveTurn(mind)) {
+        publishTypingForChannels(typingMap.deleteSender(mind), typingMap);
+      }
+    }
+  }
+
+  /**
    * Clear all session state for a specific mind (called on mind stop/crash).
    * Resets active counts, clears typing indicators, and cleans up batch buffers
    * so ghost state doesn't accumulate.
@@ -2868,13 +2921,7 @@ export class DeliveryManager {
           // refusing, and its sender must stay visible to authority checks (#433).
           if (entered?.created) {
             this.unfold(baseName, session, entered.turnId);
-            void unlinkRefused(
-              baseName,
-              session,
-              entered.turnId,
-              [payload.historyId],
-              entered.created,
-            );
+            void unlinkRefused(baseName, entered.turnId, [payload.historyId], entered.created);
           }
           // No turn ran, so give the slot back — but only if this delivery took it. A
           // message that folded into a turn already running does not own that turn's slot,
@@ -2910,13 +2957,7 @@ export class DeliveryManager {
         // connection sent nothing (see `isConnectionRefused`).
         if (entered && !sent) {
           if (entered.created) this.unfold(baseName, session, entered.turnId);
-          void unlinkRefused(
-            baseName,
-            session,
-            entered.turnId,
-            [payload.historyId],
-            entered.created,
-          );
+          void unlinkRefused(baseName, entered.turnId, [payload.historyId], entered.created);
         }
         if (ownsSlot) releaseTurnSlot(baseName, session);
         this.unnoteWake(baseName, session, wakeAt);
@@ -3168,11 +3209,11 @@ export class DeliveryManager {
           // Only if this batch took the slot — see the immediate path.
           if (entered?.created) {
             this.unfold(baseName, session, entered.turnId);
-            void unlinkRefused(baseName, session, entered.turnId, rowIds(), entered.created);
+            void unlinkRefused(baseName, entered.turnId, rowIds(), entered.created);
           } else if (turnId) {
             // Riders ahead of an event, refused: not the event's turn's, but their own turn's
             // when they are sent again.
-            void unlinkRefused(baseName, session, turnId, rowIds(), false);
+            void unlinkRefused(baseName, turnId, rowIds(), false);
           }
           if (ownsSlot) releaseTurnSlot(baseName, session);
           this.unnoteWake(baseName, session, wakeAt);
@@ -3205,7 +3246,7 @@ export class DeliveryManager {
           if (entered?.interrupted) unmarkInterrupted(entered.turnId, deliveryId);
           if (entered) {
             if (entered.created) this.unfold(baseName, session, entered.turnId);
-            void unlinkRefused(baseName, session, entered.turnId, rowIds(), entered.created);
+            void unlinkRefused(baseName, entered.turnId, rowIds(), entered.created);
           }
         }
         if (ownsSlot) releaseTurnSlot(baseName, session);
@@ -3223,7 +3264,7 @@ export class DeliveryManager {
       if (entered?.interrupted) unmarkInterrupted(entered.turnId, deliveryId);
       if (entered) {
         if (entered.created) this.unfold(baseName, session, entered.turnId);
-        void unlinkRefused(baseName, session, entered.turnId, rowIds(), entered.created);
+        void unlinkRefused(baseName, entered.turnId, rowIds(), entered.created);
       }
       if (ownsSlot) releaseTurnSlot(baseName, session);
       this.unnoteWake(baseName, session, wakeAt);
@@ -3655,7 +3696,7 @@ export class DeliveryManager {
       // none, its rows wait for the turn it runs in (`foldedRows`).
       if (d.foldedInto) void linkRowsToTurn(d.foldedInto, rows, { trigger: false });
     } else {
-      const ran = closedTurnFor(mind, session, deliveryId);
+      const ran = closedTurnFor(session, process, deliveryId);
       if (ran) void linkRowsToTurn(ran, rows, { trigger: false });
     }
   }
@@ -3690,7 +3731,7 @@ export class DeliveryManager {
       // Joined a turn of its own process already running: a fold in all but name.
       into = opened.turnId;
     } else {
-      into = runningTurnOf(mind, session, process);
+      into = getActiveTurnId(mind, session, process);
     }
     if (d) d.foldedInto = into;
     if (!into) return undefined;
@@ -3737,7 +3778,7 @@ export class DeliveryManager {
     // and a refused fold may have been read: those stay (#433).
     if (entered && (outcome === "unsent" || (outcome === "rejected" && entered.created))) {
       if (entered.created) this.unfold(baseName, session, entered.turnId);
-      void unlinkRefused(baseName, session, entered.turnId, rows, entered.created);
+      void unlinkRefused(baseName, entered.turnId, rows, entered.created);
     }
   }
 
@@ -3756,7 +3797,7 @@ export class DeliveryManager {
       // has the message: a refused one must not carry them off).
       const turnId = entered.turnId;
       void linkRowsToTurn(turnId, rows).then(() =>
-        entered.created ? adoptInterrupted(mind, session, turnId) : undefined,
+        entered.created ? adoptInterrupted(mind, session, process, turnId) : undefined,
       );
     } else this.linkFolded(mind, session, process, deliveryId, rows);
   }
