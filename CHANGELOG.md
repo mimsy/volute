@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.66.4](https://github.com/mimsy/volute/compare/volute-v0.66.3...volute-v0.66.4) (2026-10-02)
+
+
+### Bug Fixes
+
+* **import:** make skill updates atomic, reclaim .git before skills git, stamp exports with Volute's version ([#1315](https://github.com/mimsy/volute/issues/1315)) ([a1b1b4c](https://github.com/mimsy/volute/commit/a1b1b4c77337036cf21655226e6fab02e66dffa9))
+* **templates:** reply instructions once per model context; interrupt and carry-over hygiene ([#1316](https://github.com/mimsy/volute/issues/1316)) ([e8abe60](https://github.com/mimsy/volute/commit/e8abe60ec17d68a7884268f69e70f64ef8f4e818))
+* **transparency:** open a turn when its delivery takes the slot, so silent minds' turns get a row ([#1318](https://github.com/mimsy/volute/issues/1318)) ([ff50dc2](https://github.com/mimsy/volute/commit/ff50dc2e6cd533be1400d1df886f34b549eb0abe))
+* **upgrade:** leave a mind that fell asleep mid-upgrade or mid-join down for its wake ([#1312](https://github.com/mimsy/volute/issues/1312)) ([c3afcdf](https://github.com/mimsy/volute/commit/c3afcdf6267adc4d8e6c0fcdb1557b9f23fcc38a))
+
 ## [0.66.3](https://github.com/mimsy/volute/compare/volute-v0.66.2...volute-v0.66.3) (2026-10-02)
 
 
