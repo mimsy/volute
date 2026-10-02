@@ -1,17 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { chownMindDir } from "./mind/isolation.js";
-import { mindDir, readRegistry, stateDir } from "./mind/registry.js";
+import { chownMindDir, mindFileOwner } from "./mind/isolation.js";
+import { readMindFile } from "./mind/mind-file-write.js";
+import { getBaseName, mindDir, readRegistry, stateDir } from "./mind/registry.js";
 import {
   getSharedSkill,
   getStandardSkillsWithExtensions,
   installSkill,
+  mindGit,
   mindSkillsDir,
   parseSkillMd,
   removeBinShim,
   removeHookShims,
+  removeSkillDir,
 } from "./skills.js";
-import { gitExec } from "./util/exec.js";
 import log from "./util/logger.js";
 
 const blog = log.child("skill-backfill");
@@ -62,20 +64,17 @@ export function seedSkillBackfillLedger(name: string, skills = BACKFILLED_SKILLS
  * any template's skills dir — `volute skill uninstall` or by hand, before or after a
  * template switch moved it.
  */
-async function wasRemoved(dir: string, skillId: string): Promise<boolean> {
+async function wasRemoved(dir: string, mindName: string, skillId: string): Promise<boolean> {
   try {
-    const out = await gitExec(
-      [
-        "log",
-        "--diff-filter=D",
-        "--format=%H",
-        "-n",
-        "1",
-        "--",
-        `:(glob)home/**/skills/${skillId}/SKILL.md`,
-      ],
-      { cwd: dir },
-    );
+    const out = await mindGit(dir, mindName, [
+      "log",
+      "--diff-filter=D",
+      "--format=%H",
+      "-n",
+      "1",
+      "--",
+      `:(glob)home/**/skills/${skillId}/SKILL.md`,
+    ]);
     return out.trim().length > 0;
   } catch {
     return false; // no history to go on
@@ -86,21 +85,45 @@ async function wasRemoved(dir: string, skillId: string): Promise<boolean> {
  * Undo what a failed install left behind (files copied, shims written, but no commit and
  * no .upstream.json), so the next daemon start retries from a clean slate instead of
  * finding a directory and calling it installed.
+ *
+ * The skills dir is the mind's, and the daemon may be root: SKILL.md is read and the dir
+ * removed through the mind-file walk, so a dir the mind linked elsewhere between two
+ * starts refuses rather than aiming a root rm at what it points to.
  */
-async function removeHalfInstalled(dir: string, skillDir: string, skillId: string) {
-  if (!existsSync(skillDir) || existsSync(join(skillDir, ".upstream.json"))) return;
+async function removeHalfInstalled(
+  dir: string,
+  mindName: string,
+  skillDir: string,
+  skillId: string,
+) {
+  // lstat: anything at all at .upstream.json — even a link — and it isn't ours to remove.
+  const present = (path: string) => {
+    try {
+      lstatSync(path);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!present(skillDir) || present(join(skillDir, ".upstream.json"))) return;
   try {
-    const skillMd = join(skillDir, "SKILL.md");
-    const { bin } = existsSync(skillMd)
-      ? parseSkillMd(readFileSync(skillMd, "utf-8"))
-      : { bin: null };
+    const owner = await mindFileOwner(await getBaseName(mindName));
+    const skillMd = await readMindFile(dir, relative(dir, join(skillDir, "SKILL.md")), {
+      owner,
+    }).catch(() => null);
+    const { bin } = skillMd ? parseSkillMd(skillMd.text) : { bin: null };
     removeHookShims(dir, skillId);
     if (bin) removeBinShim(dir, bin);
-    rmSync(skillDir, { recursive: true, force: true });
-    // Drop anything installSkill had already staged for these paths.
-    await gitExec(["add", "-A", "--", relative(dir, skillDir), join("home", ".local")], {
-      cwd: dir,
-    }).catch(() => {});
+    await removeSkillDir(dir, skillDir, owner);
+    // Unstage anything installSkill had already staged: index entries back to HEAD's.
+    await mindGit(dir, mindName, [
+      "reset",
+      "-q",
+      "--",
+      relative(dir, skillDir),
+      join("home", ".local", "hooks"),
+      join("home", ".local", "bin"),
+    ]).catch(() => {});
   } catch (err) {
     blog.warn(`failed to clean up a half-installed ${skillId}`, log.errorData(err));
   }
@@ -141,7 +164,7 @@ export async function backfillStandardSkills(
       if (ledger[id] === "done") continue;
       const skillDir = join(mindSkillsDir(dir), id);
       const installed = () => existsSync(join(skillDir, ".upstream.json"));
-      // installSkill writes .upstream.json last, so it marks a complete install.
+      // installSkill writes .upstream.json once files and shims are in place: a complete install.
       if (installed()) {
         ledger[id] = "done";
         writeLedger(mind.name, ledger);
@@ -149,12 +172,12 @@ export async function backfillStandardSkills(
       }
       if (ledger[id] === "installing") {
         // Our own install, cut short: clear its leftovers and go again.
-        await removeHalfInstalled(dir, skillDir, id);
+        await removeHalfInstalled(dir, mind.name, skillDir, id);
       } else if (existsSync(skillDir)) {
         // Not ours (a mind's own skill by the same name): leave it, and don't record it.
         blog.warn(`${mind.name} has its own ${id} directory; not installing over it`);
         continue;
-      } else if (await wasRemoved(dir, id)) {
+      } else if (await wasRemoved(dir, mind.name, id)) {
         ledger[id] = "done";
         writeLedger(mind.name, ledger);
         continue;
@@ -167,7 +190,7 @@ export async function backfillStandardSkills(
         blog.info(`installed ${id} for ${mind.name}`);
       } catch (err) {
         blog.warn(`failed to install ${id} for ${mind.name}`, log.errorData(err));
-        await removeHalfInstalled(dir, skillDir, id);
+        await removeHalfInstalled(dir, mind.name, skillDir, id);
       } finally {
         await chownMindDir(dir, mind.name).catch((err) =>
           blog.warn(`failed to chown ${mind.name} after backfill`, log.errorData(err)),

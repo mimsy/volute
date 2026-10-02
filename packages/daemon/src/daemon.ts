@@ -42,6 +42,7 @@ import {
   autoUpdateMindSkills,
   initDefaultSkills,
   isAutoUpdateSkillsEnabled,
+  recordMissingSkillBases,
   syncBuiltinSkills,
 } from "./lib/skills.js";
 import { reportStaleApiPaths } from "./lib/template/stale-api-paths.js";
@@ -207,6 +208,15 @@ export async function startDaemon(opts: {
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/mind/sandbox.js");
   await initSandbox();
+
+  // Give imported minds' skills a merge base their own repo has (#1299). Before the
+  // extension load and the built-in sync below, either of which can move the pool past
+  // the version a mind arrived with — after that, the base can't be recovered.
+  try {
+    await recordMissingSkillBases();
+  } catch (err) {
+    log.warn("failed to record missing skill bases", log.errorData(err));
+  }
 
   // Load extensions (non-fatal). This must run BEFORE the HTTP server binds:
   // extensions mount routes on `app`, and Hono freezes its route matcher on the

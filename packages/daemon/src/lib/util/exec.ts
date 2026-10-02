@@ -69,7 +69,7 @@ export async function exec(
     mindName?: string;
     env?: NodeJS.ProcessEnv;
     maxBuffer?: number;
-    stdin?: string;
+    stdin?: string | Buffer;
     /**
      * Milliseconds before the child's whole process group is killed and the
      * promise rejects with `timedOut: true`. See {@link execTimed}.
@@ -168,7 +168,7 @@ function execTimed(
    * or a mind's lifecycle hook, the mind-authored code #966 exists for.
    */
   env: NodeJS.ProcessEnv,
-  options: { cwd?: string; maxBuffer?: number; stdin?: string },
+  options: { cwd?: string; maxBuffer?: number; stdin?: string | Buffer },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
@@ -343,7 +343,7 @@ export function gitExec(
     mindName?: string;
     env?: NodeJS.ProcessEnv;
     maxBuffer?: number;
-    stdin?: string;
+    stdin?: string | Buffer;
     timeout?: number;
   },
 ): Promise<string> {
