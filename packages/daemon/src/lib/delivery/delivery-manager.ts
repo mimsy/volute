@@ -1605,19 +1605,19 @@ export class DeliveryManager {
     try {
       const db = await getDb();
       for (const p of orderedPromote) {
-        await db.transaction(async (tx) => {
-          const [row] = await tx
-            .insert(mindHistory)
-            .values({
-              mind: baseName,
-              type: "inbound",
-              channel: p.channel,
-              sender: p.sender,
-              sender_id: p.senderId,
-              content: p.content,
-            })
-            .returning({ id: mindHistory.id });
-          await tx
+        // One batch per row: atomic, and run in a single synchronous call so the write
+        // lock is never held across an await (#1344). The update stamps the history id
+        // with last_insert_rowid() — the insert just before it on the same connection.
+        await db.batch([
+          db.insert(mindHistory).values({
+            mind: baseName,
+            type: "inbound",
+            channel: p.channel,
+            sender: p.sender,
+            sender_id: p.senderId,
+            content: p.content,
+          }),
+          db
             .update(deliveryQueue)
             .set({
               status: "pending",
@@ -1625,10 +1625,10 @@ export class DeliveryManager {
               attempts: 0,
               next_attempt_at: null,
               // So the turn it is delivered into links exactly this row.
-              payload: storedPayload({ ...p.payload, historyId: row?.id }),
+              payload: sql`json_set(${storedPayload(p.payload)}, '$.historyId', last_insert_rowid())`,
             })
-            .where(eq(deliveryQueue.id, p.id));
-        });
+            .where(eq(deliveryQueue.id, p.id)),
+        ]);
         committed++;
       }
       dlog.info(`released ${committed} gated message(s) for ${baseName} after route change`);

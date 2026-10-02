@@ -296,9 +296,11 @@ export async function removeMind(name: string) {
 export async function deleteMindDbFootprint(name: string): Promise<void> {
   const db = await getDb();
 
-  // One transaction so cleanup is all-or-nothing — a partial purge would leave the
-  // exact stranded state this is meant to remove.
-  await db.transaction(async (tx) => {
+  // One batch so cleanup is all-or-nothing — a partial purge would leave the exact
+  // stranded state this is meant to remove. A batch, not an async `db.transaction`,
+  // so the write lock is never held across an await (#1344).
+  const mindUser = and(eq(users.username, name), eq(users.user_type, "mind"));
+  await db.batch([
     // Genuinely keyed by this (variant) name:
     // - the mind's user row and the conversations it owns (FK-cascade to their
     //   messages/channels/participants/reads), and its login sessions.
@@ -306,31 +308,28 @@ export async function deleteMindDbFootprint(name: string): Promise<void> {
     //   variant accumulates its own rows.
     // - delivery_queue: `mind` is always the base name, but `target_mind` carries the
     //   variant name for a message routed to the variant — drop those stranded rows.
-    const owner = await tx
-      .select({ id: users.id })
-      .from(users)
-      .where(and(eq(users.username, name), eq(users.user_type, "mind")))
-      .get();
-    if (owner) {
-      await tx.delete(conversations).where(eq(conversations.user_id, owner.id));
-    }
-    await tx.delete(users).where(and(eq(users.username, name), eq(users.user_type, "mind")));
-    await tx.delete(activity).where(eq(activity.mind, name));
-    await tx
+    db
+      .delete(conversations)
+      .where(
+        inArray(conversations.user_id, db.select({ id: users.id }).from(users).where(mindUser)),
+      ),
+    db.delete(users).where(mindUser),
+    db.delete(activity).where(eq(activity.mind, name)),
+    db
       .delete(deliveryQueue)
-      .where(or(eq(deliveryQueue.mind, name), eq(deliveryQueue.target_mind, name)));
+      .where(or(eq(deliveryQueue.mind, name), eq(deliveryQueue.target_mind, name))),
 
     // Normally keyed by the BASE name: the delivery pipeline records these under
     // getBaseName() (handleMindEvent/recordInbound), so a live variant produces no
     // rows here and deleting by the variant name is a no-op for the base mind's data.
     // Kept as a defensive sweep of legacy `name@variant` rows that older flows, which
     // persisted under the delivered name, could have left behind.
-    await tx.delete(turns).where(eq(turns.mind, name));
-    await tx.delete(mindHistory).where(eq(mindHistory.mind, name));
-    await tx.delete(summaries).where(eq(summaries.mind, name));
-    await tx.delete(systemEvents).where(eq(systemEvents.mind, name));
-    await tx.delete(channelGates).where(eq(channelGates.mind, name));
-  });
+    db.delete(turns).where(eq(turns.mind, name)),
+    db.delete(mindHistory).where(eq(mindHistory.mind, name)),
+    db.delete(summaries).where(eq(summaries.mind, name)),
+    db.delete(systemEvents).where(eq(systemEvents.mind, name)),
+    db.delete(channelGates).where(eq(channelGates.mind, name)),
+  ]);
 }
 
 export async function setMindRunning(name: string, running: boolean) {

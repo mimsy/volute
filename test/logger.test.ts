@@ -70,6 +70,17 @@ describe("logger", () => {
     assert.notEqual(log.errorData(eventLike).error, "[object Object]");
   });
 
+  it("errorData carries the cause's SQLite code, which a wrapped query error's stack omits", async () => {
+    const log = (await import("../packages/daemon/src/lib/util/logger.js")).default;
+    const cause = Object.assign(new Error("SQLITE_BUSY: database is locked"), {
+      code: "SQLITE_BUSY",
+      extendedCode: "SQLITE_BUSY_SNAPSHOT",
+    });
+    const data = log.errorData(new Error("Failed query: insert into ...", { cause }));
+    assert.equal(data.cause, "SQLITE_BUSY_SNAPSHOT: SQLITE_BUSY: database is locked");
+    assert.equal(log.errorData(new Error("plain")).cause, undefined);
+  });
+
   it("log writes structured JSON to stderr", async () => {
     // Dynamically import to test the actual log module
     const log = (await import("../packages/daemon/src/lib/util/logger.js")).default;

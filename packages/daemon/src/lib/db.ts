@@ -48,12 +48,14 @@ export async function getDb(): Promise<DbInstance> {
   dbPromise = (async () => {
     try {
       const path = dbPath();
-      const instance = drizzle({ connection: { url: `file:${path}` }, schema });
-      // WAL mode allows concurrent reads during writes; busy_timeout prevents
-      // immediate SQLITE_BUSY failures when the DB is briefly locked.
+      // The client pools connections, and overlapping queries run on different ones, so
+      // anything per-connection must be connection config rather than a PRAGMA run here
+      // (which reaches only the first connection). `timeout` is busy_timeout in ms: without
+      // it, every connection but the first fails SQLITE_BUSY the instant the DB is locked
+      // (#1344). foreign_keys needs nothing: libsql opens every connection with it on.
+      const instance = drizzle({ connection: { url: `file:${path}`, timeout: 5000 }, schema });
+      // WAL mode (persistent, per database) allows concurrent reads during writes.
       await instance.run(sql.raw("PRAGMA journal_mode=WAL"));
-      await instance.run(sql.raw("PRAGMA busy_timeout=5000"));
-      await instance.run(sql.raw("PRAGMA foreign_keys=ON"));
       await migrate(instance, { migrationsFolder });
       await cleanupConversationColumns(instance);
       // Restrict database file permissions to owner only

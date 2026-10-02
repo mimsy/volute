@@ -322,6 +322,10 @@ describe("gated-channel release (#537)", () => {
       assert.equal(after.length, 1, "the released message is recorded as inbound exactly once");
       assert.equal(after[0].channel, "discord:general");
       assert.equal(after[0].content, "hello there");
+
+      // The promoted row links exactly that history row, for the turn it is delivered into.
+      const [queued] = await db.select().from(deliveryQueue).where(eq(deliveryQueue.mind, name));
+      assert.equal(JSON.parse(queued.payload).historyId, after[0].id);
     });
 
     it("a declined channel never produces an inbound row, even after a rule later matches (#420)", async () => {
