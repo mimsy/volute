@@ -13,6 +13,9 @@ export type MindFileOwner = { uid: number; gid: number };
 /** Largest file the daemon will read back from a mind (auth.json, routes.json, a doc). */
 const MAX_READ_BYTES = 1024 * 1024;
 
+/** A read refused because the file is over its cap — the one refusal a caller may answer 413. */
+export class MindFileTooLargeError extends Error {}
+
 /*
  * Reading and writing a mind's files from the daemon, which is root under user isolation,
  * in a tree the mind owns and can rearrange at will. Every access takes the same three
@@ -153,7 +156,7 @@ async function readCappedBytes(
     len += bytesRead;
   }
   if (len > cap) {
-    throw new Error(`refusing to read ${path}: larger than ${cap} bytes`);
+    throw new MindFileTooLargeError(`refusing to read ${path}: larger than ${cap} bytes`);
   }
   return buf.subarray(0, len);
 }

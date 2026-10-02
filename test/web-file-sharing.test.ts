@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { like } from "drizzle-orm";
 import { Hono } from "hono";
@@ -395,5 +406,69 @@ describe("web file-sharing routes", () => {
 
     const res = await app.request("/api/v1/minds/fs-receiver/files/pending");
     assert.equal(res.status, 401);
+  });
+
+  // The daemon reads the sender's file as root under user isolation, in a tree the sender
+  // owns. Anything the sender plants to aim that read elsewhere — or to hang it — must be
+  // refused, and nothing staged (#1272).
+  describe("POST /:name/files/send — refuses what the sender planted", () => {
+    let outside: string;
+    beforeEach(() => {
+      outside = mkdtempSync(join(tmpdir(), "fs-send-outside-"));
+      writeFileSync(join(outside, "secrets.json"), "root-only secret");
+    });
+    afterEach(() => rmSync(outside, { recursive: true, force: true }));
+
+    async function send(filePath: string) {
+      const cookie = await setupAuth();
+      const res = await createApp().request("/api/v1/minds/fs-sender/files/send", {
+        method: "POST",
+        headers: reqHeaders(cookie),
+        body: JSON.stringify({ targetMind: "fs-receiver", filePath }),
+      });
+      return res;
+    }
+
+    it("a symlink at the name", async () => {
+      setupMinds();
+      symlinkSync(join(outside, "secrets.json"), resolve(mindDir("fs-sender"), "home", "x"));
+      const res = await send("x");
+      assert.equal(res.status, 400, await res.clone().text());
+      assert.deepEqual(listPending("fs-receiver"), []);
+    });
+
+    it("a symlinked directory on the way", async () => {
+      setupMinds();
+      symlinkSync(outside, resolve(mindDir("fs-sender"), "home", "d"));
+      const res = await send("d/secrets.json");
+      assert.equal(res.status, 400, await res.clone().text());
+      assert.deepEqual(listPending("fs-receiver"), []);
+    });
+
+    it("a hard link to a file elsewhere", async () => {
+      setupMinds();
+      linkSync(join(outside, "secrets.json"), resolve(mindDir("fs-sender"), "home", "x"));
+      const res = await send("x");
+      assert.equal(res.status, 400, await res.clone().text());
+      assert.deepEqual(listPending("fs-receiver"), []);
+    });
+
+    it("a file over the 50MB cap, as 413", async () => {
+      setupMinds();
+      const big = resolve(mindDir("fs-sender"), "home", "big.bin");
+      writeFileSync(big, "");
+      truncateSync(big, 50 * 1024 * 1024 + 1);
+      const res = await send("big.bin");
+      assert.equal(res.status, 413, await res.clone().text());
+      assert.deepEqual(listPending("fs-receiver"), []);
+    });
+
+    it("a FIFO, without blocking", async () => {
+      setupMinds();
+      execFileSync("mkfifo", [resolve(mindDir("fs-sender"), "home", "x")]);
+      const res = await send("x");
+      assert.equal(res.status, 400, await res.clone().text());
+      assert.deepEqual(listPending("fs-receiver"), []);
+    });
   });
 });

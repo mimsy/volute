@@ -196,4 +196,57 @@ describe("mind profile avatar", () => {
       rmSync(elsewhere, { recursive: true });
     }
   });
+
+  // A mind can swap the avatar for a link between the route's checks and its read, so
+  // the read itself refuses a link at the name — even one pointing inside home/ (#1272).
+  it("refuses an avatar that is a symlink at the name", async () => {
+    const app = createApp();
+    const home = join(mindDir(testMindName), "home");
+    const link = join(home, "linked-avatar.png");
+    rmSync(link, { force: true });
+    symlinkSync(join(home, "top-avatar.png"), link);
+
+    const config = readVoluteConfig(mindDir(testMindName)) ?? {};
+    config.profile = { ...(config.profile ?? {}), avatar: "linked-avatar.png" };
+    await writeVoluteConfig(mindDir(testMindName), config, null);
+
+    const serve = await app.request(`/minds/${testMindName}/avatar`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(serve.status, 400, await serve.clone().text());
+  });
+
+  it("serves a regular avatar file", async () => {
+    const app = createApp();
+    const config = readVoluteConfig(mindDir(testMindName)) ?? {};
+    config.profile = { ...(config.profile ?? {}), avatar: "top-avatar.png" };
+    await writeVoluteConfig(mindDir(testMindName), config, null);
+
+    const serve = await app.request(`/minds/${testMindName}/avatar`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(serve.status, 200, await serve.clone().text());
+    assert.deepEqual(Buffer.from(await serve.arrayBuffer()), PNG_BYTES);
+  });
+
+  // The admin file browser reads the same way: a link at the name is refused, while a
+  // regular file is served.
+  it("GET /:name/files/* refuses a symlink at the name and serves a regular file", async () => {
+    const app = createApp();
+    const home = join(mindDir(testMindName), "home");
+    writeFileSync(join(home, "plain.md"), "plain");
+    rmSync(join(home, "linked.md"), { force: true });
+    symlinkSync(join(home, "plain.md"), join(home, "linked.md"));
+
+    const linked = await app.request(`/minds/${testMindName}/files/linked.md`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(linked.status, 403, await linked.clone().text());
+
+    const plain = await app.request(`/minds/${testMindName}/files/plain.md`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(plain.status, 200, await plain.clone().text());
+    assert.equal(await plain.text(), "plain");
+  });
 });

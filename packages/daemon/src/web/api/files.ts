@@ -1,12 +1,17 @@
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { extname, relative, resolve } from "node:path";
+import { readdir, stat } from "node:fs/promises";
+import { extname, join, relative, resolve } from "node:path";
 import { Hono } from "hono";
 import { syncMindProfile } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { mindFileOwner } from "../../lib/mind/isolation.js";
-import { removeMindFile, replaceMindFile } from "../../lib/mind/mind-file-write.js";
+import {
+  MindFileTooLargeError,
+  readMindFileBytes,
+  removeMindFile,
+  replaceMindFile,
+} from "../../lib/mind/mind-file-write.js";
 import { findMind, getBaseName, mindDir } from "../../lib/mind/registry.js";
 import {
   type MindProfile,
@@ -30,6 +35,19 @@ const AVATAR_MIME: Record<string, string> = {
   ".gif": "image/gif",
   ".webp": "image/webp",
 };
+
+/**
+ * A read the mind-file helpers refused — a link, FIFO or hard link where a file should be,
+ * a path out of the tree, a file over its cap — as opposed to an I/O failure (those carry
+ * an errno code).
+ */
+function isReadRefusal(err: unknown): boolean {
+  return (
+    err instanceof PathTraversalError ||
+    err instanceof MindFileTooLargeError ||
+    (err instanceof Error && (err as NodeJS.ErrnoException).code === undefined)
+  );
+}
 
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
@@ -179,9 +197,17 @@ const app = new Hono<AuthEnv>()
         ETag: etag,
       };
       if (isNotModified(c, etag)) return c.body(null, 304, headers);
-      const body = await readFile(realAvatarPath);
-      return c.body(body, 200, headers);
-    } catch {
+      // The checks above vet a path the mind can swap before the read; the read itself
+      // goes through the mind-file helpers, which refuse a link or FIFO at the name.
+      const avatarRel = relative(dir, resolve(homeDir, config.profile.avatar));
+      const body = await readMindFileBytes(dir, avatarRel, {
+        owner: await mindFileOwner(await getBaseName(name)),
+        maxBytes: MAX_AVATAR_SIZE,
+      });
+      if (!body) return c.json({ error: "Avatar file not found" }, 404);
+      return c.body(body as Uint8Array<ArrayBuffer>, 200, headers);
+    } catch (err) {
+      if (isReadRefusal(err)) return c.json({ error: "Invalid avatar path" }, 400);
       return c.json({ error: "Failed to read avatar file" }, 500);
     }
   })
@@ -210,7 +236,8 @@ const app = new Hono<AuthEnv>()
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const homeDir = resolve(entry.dir ?? mindDir(name), "home");
+    const dir = entry.dir ?? mindDir(name);
+    const homeDir = resolve(dir, "home");
     const wildcard = c.req.path.replace(new RegExp(`^.*/minds/${name}/files`), "") || "/";
     const relativePath = wildcard.slice(1);
 
@@ -255,8 +282,20 @@ const app = new Hono<AuthEnv>()
     const etag = fileEtag(fileStat);
     const headers = { "Content-Type": mime, "Cache-Control": "no-cache", ETag: etag };
     if (isNotModified(c, etag)) return c.body(null, 304, headers);
-    const body = await readFile(resolvedPath);
-    return c.body(body, 200, headers);
+    // As for the avatar: read through the helpers, not the path vetted above.
+    let body: Buffer | null;
+    try {
+      body = await readMindFileBytes(dir, join("home", relativePath), {
+        owner: await mindFileOwner(await getBaseName(name)),
+        maxBytes: MAX_FILE_SIZE,
+      });
+    } catch (err) {
+      if (isReadRefusal(err)) return c.text("Forbidden", 403);
+      console.error(`[files] read failed for ${resolvedPath}:`, err);
+      return c.text("Internal server error", 500);
+    }
+    if (!body) return c.text("Not found", 404);
+    return c.body(body as Uint8Array<ArrayBuffer>, 200, headers);
   });
 
 export default app;

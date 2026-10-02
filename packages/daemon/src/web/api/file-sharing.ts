@@ -1,5 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { join } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -11,8 +10,11 @@ import {
   stageFile,
   validateFilePath,
 } from "../../lib/chat/file-sharing.js";
-import { findMind, mindDir } from "../../lib/mind/registry.js";
+import { mindFileOwner } from "../../lib/mind/isolation.js";
+import { MindFileTooLargeError, readMindFileBytes } from "../../lib/mind/mind-file-write.js";
+import { findMind, getBaseName, mindDir } from "../../lib/mind/registry.js";
 import log from "../../lib/util/logger.js";
+import { PathTraversalError } from "../../lib/util/paths.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 import { refusedSenderMessage } from "./chat.js";
 
@@ -34,7 +36,6 @@ async function notifyMind(mindName: string, message: string): Promise<boolean> {
     if (result.delivered) return true;
     if (result.id == null) return false;
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
-    const { getBaseName } = await import("../../lib/mind/registry.js");
     // Queued for a sleeping — or still-draining (#920) — mind counts as notified: the
     // event flushes to it on wake.
     return getSleepManagerIfReady()?.isQueueingInbound(await getBaseName(mindName)) ?? false;
@@ -63,32 +64,34 @@ const app = new Hono<AuthEnv>()
       const pathErr = validateFilePath(body.filePath);
       if (pathErr) return c.json({ error: pathErr }, 400);
 
-      // Read file from sender's home directory
-      const senderDir = mindDir(senderName);
-      const filePath = resolve(senderDir, "home", body.filePath);
-
+      // Read the file from the sender's home as the daemon — root under user isolation —
+      // in a tree the sender owns. The mind-file helpers refuse a link, FIFO or hard link
+      // it planted anywhere on the way, so a send can't stage bytes the sender itself
+      // could not read (#1272).
       const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
-      const stat = statSync(filePath, { throwIfNoEntry: false });
-      if (!stat) return c.json({ error: `File not found: ${body.filePath}` }, 404);
-      if (stat.size > MAX_FILE_SIZE) {
-        return c.json(
-          {
-            error: `File too large (${formatFileSize(stat.size)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
-          },
-          413,
-        );
-      }
-
-      let content: Buffer;
+      const senderDir = senderEntry.dir ?? mindDir(senderName);
+      let content: Buffer | null;
       try {
-        content = readFileSync(filePath);
+        content = await readMindFileBytes(senderDir, join("home", body.filePath), {
+          owner: await mindFileOwner(await getBaseName(senderName)),
+          maxBytes: MAX_FILE_SIZE,
+        });
       } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === "ENOENT") {
-          return c.json({ error: `File not found: ${body.filePath}` }, 404);
+        if (err instanceof MindFileTooLargeError) {
+          return c.json({ error: `File too large (max ${formatFileSize(MAX_FILE_SIZE)})` }, 413);
         }
-        return c.json({ error: `Failed to read file: ${code ?? (err as Error).message}` }, 500);
+        if (err instanceof PathTraversalError) {
+          return c.json({ error: `Invalid file path: ${body.filePath}` }, 400);
+        }
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === undefined) {
+          // A refusal: a link, FIFO or hard link where the file should be.
+          return c.json({ error: `Not a regular file: ${body.filePath}` }, 400);
+        }
+        if (code === "ENOTDIR") return c.json({ error: `File not found: ${body.filePath}` }, 404);
+        return c.json({ error: `Failed to read file: ${code}` }, 500);
       }
+      if (!content) return c.json({ error: `File not found: ${body.filePath}` }, 404);
 
       const filename = body.filePath;
       const sizeStr = formatFileSize(content.length);
