@@ -31,6 +31,7 @@ import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { buildMindBaseEnv, type IsolationMode } from "../util/mind-env.js";
+import { terminateGroup } from "../util/process-group.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
 import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
@@ -189,6 +190,8 @@ export function composeMindEnv(opts: {
 type TrackedMind = {
   child: ChildProcess;
   port: number;
+  /** The child is `runuser`, supervising the mind as its OS user — see `terminateGroup`. */
+  supervised: boolean;
 };
 
 /**
@@ -655,7 +658,7 @@ export class MindManager {
 
     const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
-    this.minds.set(name, { child, port });
+    this.minds.set(name, { child, port, supervised: spawnCmd === "runuser" });
 
     // Pipe output to log file and check for listening
     child.stdout?.pipe(logStream);
@@ -1089,13 +1092,12 @@ export class MindManager {
           clearTimeout(killTimer);
           resolve();
         });
-        try {
-          // Kill the entire process group (node + any children it spawns)
-          process.kill(-child.pid!, "SIGTERM");
-        } catch {
+        // Signal the entire process group (node + any children it spawns) — but
+        // past runuser, whose own SIGTERM handling would SIGKILL the mind 2s in.
+        terminateGroup(child.pid!, { spareLeader: tracked.supervised }).catch(() => {
           clearTimeout(killTimer);
           resolve();
-        }
+        });
       });
 
       this.stopping.delete(name);
