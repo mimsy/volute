@@ -214,7 +214,8 @@ describe("template wiring", () => {
 
   it("claude commits a cut-short turn's edits on shutdown (mid-turn self-restart)", () => {
     const shutdown = read("claude/src/server.ts").split("setupShutdown(")[1] ?? "";
-    assert.match(shutdown, /mind\.flushFileChanges\(\)/);
+    // Asks git rather than trusting what was pending, so a killed turn-end commit is redone (#1206).
+    assert.match(shutdown, /commitHomeChanges\(resolve\("home"\)\)/);
   });
 
   it("claude does not restart the mind on an identity edit", () => {

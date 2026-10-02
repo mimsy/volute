@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
-import { flushFileChanges } from "./lib/auto-commit.js";
+import { commitHomeChanges } from "./lib/home-changes.js";
 import { log, setLevel } from "./lib/logger.js";
 import { withMechanicsDoc } from "./lib/mechanics-doc.js";
 import { createRouter } from "./lib/router.js";
@@ -60,10 +60,11 @@ server.listen(port, () => {
 });
 
 // Commit edits from a turn the shutdown cut short — e.g. the mind ran `volute mind
-// restart` mid-turn; that turn never reaches its own flush. Stop accepting messages first.
+// restart` mid-turn; that turn never reaches its own flush — or whose turn-end commit the
+// stop's signal killed mid-flight (#1206). Stop accepting messages first.
 setupShutdown(async () => {
   server.close();
-  await flushFileChanges(resolve("home")).catch((err) =>
+  await commitHomeChanges(resolve("home")).catch((err) =>
     log("server", "shutdown commit failed:", err),
   );
 });

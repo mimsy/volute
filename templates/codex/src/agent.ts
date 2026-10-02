@@ -7,7 +7,7 @@ import {
   type ThreadEvent,
   type ThreadItem,
 } from "@openai/codex-sdk";
-import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
+import { trackFileChange } from "./lib/auto-commit.js";
 import {
   clearRolloutLeftBehind,
   findLatestArchivedThread,
@@ -33,7 +33,7 @@ import {
   type EventType,
 } from "./lib/daemon-client.js";
 import { isEventChannel } from "./lib/event-turn.js";
-import { changedPaths } from "./lib/home-changes.js";
+import { commitHomeChanges as commitAllHomeChanges } from "./lib/home-changes.js";
 import { discoverHooks, runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
 import { codexSessionsRoot, rolloutVisibleToCodex } from "./lib/rollout.js";
@@ -847,10 +847,7 @@ export function createMind(options: {
    */
   async function commitHomeChanges() {
     try {
-      for (const dir of [options.cwd, resolvePath(options.cwd, "pages/_system")]) {
-        for (const path of await changedPaths(dir)) trackFileChange(path, options.cwd);
-      }
-      await flushFileChanges(options.cwd);
+      await commitAllHomeChanges(options.cwd);
     } catch (err) {
       warn("mind", "auto-commit failed:", err);
     }

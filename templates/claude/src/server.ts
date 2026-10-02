@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
+import { commitHomeChanges } from "./lib/home-changes.js";
 import { log, setLevel } from "./lib/logger.js";
 import { createRouter } from "./lib/router.js";
 import {
@@ -69,10 +70,13 @@ server.listen(port, () => {
 setupShutdown(async () => {
   server.close();
   // Commit edits from a turn the shutdown cut short — e.g. the mind ran `volute mind
-  // restart` mid-turn to load an identity edit; that turn never reaches its own flush.
-  // Alongside the reap, so a wedged git can't hold the children past the shutdown bound.
+  // restart` mid-turn to load an identity edit; that turn never reaches its own flush —
+  // or whose turn-end commit the stop's signal killed mid-flight (#1206). Alongside the
+  // reap, so a wedged git can't hold the children past the shutdown bound.
   await Promise.all([
-    mind.flushFileChanges().catch((err) => log("server", "shutdown commit failed:", err)),
+    commitHomeChanges(resolve("home")).catch((err) =>
+      log("server", "shutdown commit failed:", err),
+    ),
     mind.reapAllSessions(),
   ]);
 });

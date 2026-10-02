@@ -177,6 +177,7 @@ export function flushFileChanges(cwd?: string): Promise<void> {
   return pending.then(() => {});
 }
 
+/** Settles once every commit already queued has finished or failed. */
 export function waitForCommits(): Promise<void> {
-  return flushFileChanges();
+  return pending.then(() => {});
 }
