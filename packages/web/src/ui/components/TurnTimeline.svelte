@@ -420,6 +420,25 @@ function connectSSE() {
           setStreaming(turnId, dbEvents);
         })
         .catch((err) => console.warn("[TurnTimeline] Failed to fetch turn events:", err));
+    } else if (eventType === "turn_discarded" && turnId) {
+      // The daemon took back a turn nothing ran in (a refused delivery, an interrupted or
+      // orphaned turn): it is gone from history, so it goes from here too.
+      clearTimeout(doneFallbackTimers.get(turnId));
+      doneFallbackTimers.delete(turnId);
+      deleteStreaming(turnId);
+      lastEventAt.delete(turnId);
+      turnsData = turnsData.filter((t) => t.id !== turnId);
+      // Its messages may have moved to a turn already running on the thread: refetch those.
+      const discardedMind = (d.mind as string) ?? name ?? "";
+      for (const turn of turnsData) {
+        if (turn.mind !== discardedMind || !streamingEvents.has(turn.id)) continue;
+        const runningId = turn.id;
+        fetchTurnEvents(discardedMind, { turnId: runningId })
+          .then((dbEvents) => {
+            if (streamingEvents.has(runningId)) setStreaming(runningId, dbEvents);
+          })
+          .catch((err) => console.warn("[TurnTimeline] Failed to refetch turn events:", err));
+      }
     } else if (eventType === "summary" && turnId) {
       // Turn complete — fetch the specific turn row and remove streaming state
       clearTimeout(doneFallbackTimers.get(turnId));

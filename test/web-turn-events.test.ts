@@ -8,10 +8,10 @@ import { isEventTriggeredTurn } from "../packages/web/src/ui/lib/turn-events.js"
  * by a system event — nothing was delivered to anyone, so it must not read like a reply.
  *
  * Getting the condition wrong is not cosmetic: it makes the history lie about what happened.
- * The rule must match the daemon's, which is TRIGGER-based (`linkPendingInbound` tags the turn
- * with the FIRST pending inbound-or-event row, and `captureReflection` only fires when that row
- * is an event). "Contains an event anywhere" is a different, wrong rule — events can land
- * mid-turn via `linkInboundToActiveTurn`.
+ * The rule must match the daemon's, which is TRIGGER-based (`linkRowsToTurn` or
+ * `linkPendingInbound` tags the turn with the FIRST inbound-or-event row, and
+ * `captureReflection` only fires when that row is an event). "Contains an event anywhere" is
+ * a different, wrong rule — events can land mid-turn via `DeliveryManager.enterTurn`.
  */
 const row = (id: number, type: string, extra: Partial<HistoryMessage> = {}): HistoryMessage =>
   ({

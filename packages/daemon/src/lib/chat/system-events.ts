@@ -15,6 +15,7 @@ import {
 } from "drizzle-orm";
 import { getSpiritName } from "../config/setup.js";
 import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
+import { linkRowsToTurn, openDeliveredTurn, unlinkRefused } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { getRoutingConfig, resolveEventRoute } from "../delivery/delivery-router.js";
 import { sinceNoteFor } from "../delivery/since-last-here.js";
@@ -250,31 +251,58 @@ export function eventChannelKind(channel: string | null): string | undefined {
  * render history (web timeline, `volute mind history`) key off this type to show it as a
  * system marker instead of a chat bubble with a phantom sender. The label rides along in
  * the row metadata so those surfaces don't have to re-derive it from `system_events`.
+ * It is linked to the turn the event started, as a delivered message's inbound row is.
  */
-async function recordEventRow(mind: string, event: SystemEvent): Promise<void> {
+async function recordEventRow(
+  mind: string,
+  event: SystemEvent,
+  /** What `postEventEnvelope` reported: the turn the event started, if it did not fold. */
+  posted: { turnId?: string; joined: boolean; afterRiders: boolean },
+): Promise<void> {
   const channel = eventChannel(event.type, event.id);
   const label = eventLabel(event.type, parseMeta(event.meta, `event ${event.id}`));
   const metadata = { systemEventId: event.id, label };
+  let baseName: string;
+  let rowId: number | undefined;
   try {
     const db = await getDb();
-    const baseName = await getBaseName(mind);
-    await db.insert(mindHistory).values({
-      mind: baseName,
-      type: "event",
-      channel,
-      sender: null,
-      content: event.body,
-      metadata: JSON.stringify(metadata),
-    });
+    baseName = await getBaseName(mind);
+    const [row] = await db
+      .insert(mindHistory)
+      .values({
+        mind: baseName,
+        type: "event",
+        channel,
+        sender: null,
+        content: event.body,
+        metadata: JSON.stringify(metadata),
+      })
+      .returning({ id: mindHistory.id });
+    // With the turn it started, if any: that turn is already open on a live timeline, and a
+    // row arriving without one would show as the start of another.
     publishMindEvent(baseName, {
       mind: baseName,
       type: "event",
       channel,
       content: event.body,
       metadata,
+      turnId: posted.turnId,
     });
+    rowId = row?.id;
   } catch (err) {
     elog.warn(`failed to persist event row for ${mind}`, log.errorData(err));
+    return;
+  }
+  // An event that folded into a running turn is not linked to it: the daemon can't tell a
+  // fold from the next turn the mind runs it as (a budget notice raised by a turn's own
+  // `usage`, say). Its row is left as on main, for the turn the mind's first event opens on
+  // its channel to claim (`linkPendingInbound`). An event that went out behind deferred
+  // messages, or into a turn already running, is not the trigger of that turn.
+  const turnId = posted.turnId;
+  if (turnId) {
+    void (async () => {
+      await linkRowsToTurn(turnId, [rowId], { trigger: !posted.afterRiders && !posted.joined });
+    })();
   }
 }
 
@@ -299,12 +327,15 @@ const staleTemplateWarned = new Set<string>();
  * and made to wait, it would stall the very stream whose `done` releases the slot it is
  * waiting for. Those events (and any `force`d one: a farewell, merge context) go straight
  * out. They still take a slot, so the turn they start is accounted for.
+ *
+ * Resolves false if the mind did not take it; otherwise with the turn it started, if it took
+ * the slot rather than folding into the turn already running in the session.
  */
 async function postEventEnvelope(
   mind: string,
   event: SystemEvent,
   opts: { force?: boolean } = {},
-): Promise<boolean> {
+): Promise<false | { turnId?: string; joined: boolean; afterRiders: boolean }> {
   const entry = await findMind(mind);
   if (!entry) {
     elog.warn(`cannot deliver event ${event.id} to ${mind}: mind not found`);
@@ -314,6 +345,11 @@ async function postEventEnvelope(
   const slotMind = await getBaseName(mind);
   const wait = !opts.force && HELD_EVENT_TYPES.has(event.type);
   const slot = await takeTurnSlot(slotMind, event.thread, { wait });
+  // The turn this event starts, opened the moment it holds the slot — before anything else
+  // awaits — so a message delivered on the thread meanwhile folds into it, and its sender
+  // counts toward the turn's authority (#433). Before the riders below, which go first and so
+  // begin it. Its row is linked once written, on the ack.
+  const opening = slot.owned ? openDeliveredTurn(slotMind, event.thread, mind) : undefined;
   if (slot.timedOut) {
     elog.warn(
       `delivering event ${event.id} to ${mind} after waiting ` +
@@ -327,6 +363,7 @@ async function postEventEnvelope(
     );
   }
   let acked = false;
+  let refused = false;
   // A turn this event starts opens with what the mind's other threads did in between (#939).
   // Folding into a running turn (`owned: false`) adds nothing: that turn is current. The
   // deferred riders flushed below fold into this slot and carry no note of their own, so on
@@ -340,6 +377,11 @@ async function postEventEnvelope(
         waited: { ms: slot.waitedMs, behind: slot.behind },
       })
     : null;
+  const opened = await opening;
+  if (opened?.created) {
+    const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
+    tryGetDeliveryManager()?.adoptUnlinked(slotMind, event.thread, mind, opened.turnId);
+  }
   // Messages the mind's routes.json deferred on this thread ride along with the turn this
   // event starts — sent first, since they arrived first, with the event folding into the
   // turn they begin. Routing never sees an event, so it has to be done here. If they went
@@ -347,7 +389,8 @@ async function postEventEnvelope(
   let carried = false;
   try {
     const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
-    carried = (await tryGetDeliveryManager()?.flushDeferred(mind, event.thread)) ?? false;
+    carried =
+      (await tryGetDeliveryManager()?.flushDeferred(mind, event.thread, opened?.turnId)) ?? false;
   } catch (err) {
     elog.warn(`failed to flush deferred messages for ${mind}`, log.errorData(err));
   }
@@ -370,6 +413,7 @@ async function postEventEnvelope(
     });
     if (!res.ok) {
       elog.warn(`mind ${mind} rejected event ${event.id}: HTTP ${res.status}`);
+      refused = true;
       return false;
     }
     acked = true;
@@ -396,11 +440,21 @@ async function postEventEnvelope(
         );
       }
     }
-    return true;
+    // The turn it started — or joined, one of its own process's already running — and
+    // whether deferred messages went ahead of it into that turn.
+    return { turnId: opened?.turnId, joined: opened?.created === false, afterRiders: carried };
   } catch (err) {
     elog.warn(`failed to POST event ${event.id} to ${mind}`, log.errorData(err));
     return false;
   } finally {
+    // A turn it opened goes, if the mind refused it — not if the POST failed to answer, when
+    // the mind may be running it — and first, so the freed slot's next taker can't join it.
+    if (refused && !carried && opened?.created) {
+      // What folded into it waits for the turn it runs in, as on every refusal.
+      const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
+      tryGetDeliveryManager()?.unfold(slotMind, event.thread, opened.turnId);
+      void unlinkRefused(slotMind, event.thread, opened.turnId, [], true);
+    }
     // An event the mind never took starts no turn, so its slot goes straight back — but
     // only if this call is what took it. `owned: false` means the event folded into a turn
     // already running in that session, and freeing that turn's slot would open the gate
@@ -618,11 +672,12 @@ export async function deliverEvent(
 
     if (!queued) {
       const event = await db.select().from(systemEvents).where(eq(systemEvents.id, eventId)).get();
-      if (event && (await postEventEnvelope(mind, event, { force: input.force }))) {
+      const posted = event && (await postEventEnvelope(mind, event, { force: input.force }));
+      if (event && posted) {
         await markDelivered(eventId);
         // Record the row only on actual delivery — history must not claim the mind
         // heard something it never received (#420).
-        await recordEventRow(mind, event);
+        await recordEventRow(mind, event, posted);
         return { id: eventId, delivered: true };
       }
       elog.warn(
@@ -886,9 +941,10 @@ export async function flushQueuedEvents(mind: string): Promise<number> {
         await markDelivered(event.id, { expired: true });
         continue;
       }
-      if (await postEventEnvelope(mind, event)) {
+      const posted = await postEventEnvelope(mind, event);
+      if (posted) {
         await markDelivered(event.id);
-        await recordEventRow(mind, event);
+        await recordEventRow(mind, event, posted);
         delivered++;
       } else {
         elog.warn(`flush could not deliver event ${event.id} (${event.type}) to ${mind}`);

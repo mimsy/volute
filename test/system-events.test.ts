@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { before, describe, it } from "node:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   captureReflection,
   cleanExpiredEvents,
@@ -99,6 +99,7 @@ async function cleanupMind(mind: string): Promise<void> {
   await db.delete(mindHistory).where(eq(mindHistory.mind, mind));
   await db.delete(turns).where(eq(turns.mind, mind));
   clearMind(mind);
+  releaseTurnSlot(mind);
   await removeMind(mind);
 }
 
@@ -807,14 +808,19 @@ describe("system-events reflection attribution", () => {
     const mind = uniqueMind();
     const stub = await stubMind(mind);
     try {
-      const { id } = await deliverEvent(mind, { type: "schedule", body: "morning check" });
-
-      // A normal chat turn on the same session completes before the event turn: its
-      // trigger links to the chat inbound, so it must record nothing on the event.
+      // A normal chat turn on the same session, delivered and running when the event
+      // arrives: its trigger is the chat inbound, and the event folds into it mid-turn, so it
+      // must record nothing on the event.
       const { recordInbound } = await import(
         "../packages/daemon/src/lib/delivery/message-delivery.js"
       );
-      await recordInbound(mind, "@alice", "alice", null, "hey, private question");
+      const { linkRowsToTurn, openDeliveredTurn } = await import(
+        "../packages/daemon/src/lib/daemon/turn-tracker.js"
+      );
+      const aliceId = await recordInbound(mind, "@alice", "alice", null, "hey, private question");
+      acquireTurnSlot(mind, "main"); // the slot alice's delivery took, opening its turn
+      await linkRowsToTurn((await openDeliveredTurn(mind, "main", mind))!.turnId, [aliceId]);
+      const { id } = await deliverEvent(mind, { type: "schedule", body: "morning check" });
       await handleMindEvent(mind, {
         type: "text",
         session: "main",
@@ -830,10 +836,49 @@ describe("system-events reflection attribution", () => {
         null,
         "chat turn's closing text must not become the event's reflection",
       );
+      // A folded event's row is not claimed by the turn it folded into: the daemon can't
+      // tell that from the next turn the mind runs it as.
+      const db = await getDb();
+      const eventRows = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, mind), eq(mindHistory.type, "event")));
+      assert.deepEqual(
+        eventRows.map((r) => r.turn_id),
+        [null],
+      );
 
-      // The event's own turn then completes and is attributed exactly.
-      await runEventTurn(mind, id!, "schedule", "The garden is fine.");
-      assert.equal(await waitForReflection(id!), "The garden is fine.");
+      // A later event gets its own turn, attributed exactly.
+      const { id: later } = await deliverEvent(mind, { type: "schedule", body: "evening check" });
+      await runEventTurn(mind, later!, "schedule", "The garden is fine.");
+      assert.equal(await waitForReflection(later!), "The garden is fine.");
+    } finally {
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("an event that folded in is claimed by the turn the mind runs it as", async () => {
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    try {
+      acquireTurnSlot(mind, "main"); // a turn is running: the event folds in
+      const { id } = await deliverEvent(mind, { type: "schedule", body: "after this" });
+      releaseTurnSlot(mind);
+      const db = await getDb();
+      const row = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, mind), eq(mindHistory.type, "event")))
+        .get();
+      assert.equal(row!.turn_id, null, "not linked into the running turn");
+      // The mind runs it next, as a turn of its own.
+      await runEventTurn(mind, id!, "schedule", "Done with it.");
+      const linked = await db.select().from(mindHistory).where(eq(mindHistory.id, row!.id)).get();
+      assert.ok(linked!.turn_id, "claimed by its turn");
+      const turn = await db.select().from(turns).where(eq(turns.id, linked!.turn_id!)).get();
+      assert.equal(turn!.trigger_event_id, row!.id);
+      assert.equal(await waitForReflection(id!), "Done with it.");
     } finally {
       stub.close();
       await cleanupMind(mind);
@@ -845,9 +890,8 @@ describe("system-events reflection attribution", () => {
     const stub = await stubMind(mind);
     try {
       const { id: id1 } = await deliverEvent(mind, { type: "schedule", body: "first event" });
-      const { id: id2 } = await deliverEvent(mind, { type: "webhook", body: "second event" });
-
       await runEventTurn(mind, id1!, "schedule", "Reflection one.");
+      const { id: id2 } = await deliverEvent(mind, { type: "webhook", body: "second event" });
       await runEventTurn(mind, id2!, "webhook", "Reflection two.");
 
       assert.equal(await waitForReflection(id1!), "Reflection one.");

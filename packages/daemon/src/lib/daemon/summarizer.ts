@@ -211,6 +211,49 @@ function buildTurnDeterministicSummary(
 }
 
 /**
+ * A turn that left no visible output but ended cleanly — a `done`, no error — having produced
+ * output: a `silent` (or `private`) mind's turn, whose thinking, text and tool calls never
+ * reached the daemon. An interrupted turn produced nothing, or failed, and fails this.
+ */
+function isQuietTurn(events: HistoryRow[]): boolean {
+  if (!events.some((ev) => ev.type === "done")) return false;
+  if (events.some((ev) => ev.type === "error")) return false;
+  return events.some((ev) => {
+    if (ev.type !== "usage" || !ev.metadata) return false;
+    try {
+      const output = (JSON.parse(ev.metadata) as { output_tokens?: unknown }).output_tokens;
+      return typeof output === "number" && output > 0;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * A quiet turn's summary: what reached it — who, on which channel, or which event — and that
+ * the mind took a turn. Nothing it kept from observers exists to be told, and nothing is
+ * guessed in its place.
+ */
+function quietTurnSummary(
+  events: HistoryRow[],
+  parsedMeta: Map<number, Record<string, unknown>>,
+): string {
+  const parts: string[] = [];
+  for (const ev of events) {
+    if (ev.type === "inbound") {
+      const from = ev.sender ? ` from ${ev.sender}` : "";
+      const on = ev.channel ? ` on ${ev.channel}` : "";
+      parts.push(`Received a message${from}${on}`);
+    } else if (ev.type === "event") {
+      const label = parsedMeta.get(ev.id)?.label;
+      parts.push(typeof label === "string" && label ? `System event: ${label}` : "System event");
+    }
+  }
+  parts.push("Took a turn with no visible output");
+  return `${[...new Set(parts)].join(". ")}.`;
+}
+
+/**
  * Per-message cap on inbound content. Inbound is somebody else's words arriving from a channel
  * — its length is set by whoever is talking, not by anything Volute controls, so a single pasted
  * document could otherwise carry the whole transcript (and its cost) with it.
@@ -413,6 +456,104 @@ async function getMindIdentityLine(mind: string): Promise<string> {
   }
 }
 
+/**
+ * Turns whose `done` arrived with no visible output and no `usage` yet, held for the usage
+ * that decides whether they were quiet or interrupted (#1298). A turn's `usage` is a
+ * separate POST, often handled after its `done`; summarizing on the `done` alone would
+ * delete every quiet turn. A turn opening next on the thread proves nothing about it, so the
+ * hold ends only when the usage lands (`resumeOnUsage`) or after `USAGE_HOLD_MS` — soon
+ * enough that an interrupted turn's message still reaches the turn that answers it.
+ */
+const awaitingUsage = new Map<
+  string,
+  { mind: string; session: string | undefined; at: number; timer: ReturnType<typeof setTimeout> }
+>();
+const USAGE_HOLD_MS = 2 * 60_000;
+
+/** Turns being summarized now: the hold's timer and the tick must not both take one. */
+const summarizing = new Set<string>();
+
+/** End a held turn's hold and summarize it as it now stands. Exported for tests. */
+export function settleHeld(turnId: string): void {
+  const held = awaitingUsage.get(turnId);
+  if (!held) return;
+  clearTimeout(held.timer);
+  if (summarizing.has(turnId)) {
+    // A pass on it is still running: try again once it has finished.
+    held.timer = setTimeout(() => settleHeld(turnId), 1000);
+    held.timer.unref?.();
+    return;
+  }
+  awaitingUsage.delete(turnId);
+  void (async () => {
+    // A usage that named the turn's delivery but was written with no turn — handled across
+    // the `done` that recorded it — is the turn's: link it before judging the turn.
+    const { deliveriesOf, linkReportsToTurn } = await import("./turn-tracker.js");
+    const deliveries = deliveriesOf(held.mind, held.session, turnId);
+    if (held.session && deliveries.length > 0) {
+      await linkReportsToTurn(held.mind, held.session, turnId, deliveries);
+    }
+    await summarizeTurn(held.mind, held.session, undefined, 0, turnId, undefined, {
+      handOff: true,
+    });
+  })().catch((err) => sLog.error("turn summarization failed", log.errorData(err)));
+}
+
+/** Summarize a held turn now that its `usage` has been recorded. */
+export function resumeOnUsage(turnId: string): void {
+  settleHeld(turnId);
+}
+
+/**
+ * Summarize turns that ended (a `done`) and went quiet past `idleMs` with no summary — ones
+ * held for a `usage` when the daemon restarted, whose hold died with it. Quiet, they are
+ * summarized; interrupted, taken back, as `summarizeTurn` decides. Looks back a day.
+ */
+async function settleUnsummarizedTurns(idleMs: number): Promise<void> {
+  const db = await getDb();
+  const stamp = (ms: number) =>
+    new Date(Date.now() - ms).toISOString().slice(0, 19).replace("T", " ");
+  let rows: { id: string; mind: string; thread: string | null }[];
+  try {
+    rows = await db
+      .select({ id: turns.id, mind: turns.mind, thread: turns.thread })
+      .from(turns)
+      .innerJoin(mindHistory, eq(mindHistory.turn_id, turns.id))
+      .where(
+        and(
+          eq(turns.status, "complete"),
+          gte(turns.created_at, stamp(24 * 60 * 60_000)),
+          sql`not exists (select 1 from ${summaries} where ${summaries.mind} = ${turns.mind} and ${summaries.period} = 'turn' and ${summaries.period_key} = ${turns.id})`,
+        ),
+      )
+      .groupBy(turns.id)
+      .having(
+        sql`max(${mindHistory.created_at}) < ${stamp(idleMs)} and sum(case when ${mindHistory.type} = 'done' then 1 else 0 end) > 0`,
+      );
+  } catch (err) {
+    sLog.error("failed to query unsummarized turns", log.errorData(err));
+    return;
+  }
+  for (const r of rows) {
+    if (awaitingUsage.has(r.id)) {
+      settleHeld(r.id);
+      continue;
+    }
+    await summarizeTurn(r.mind, r.thread ?? undefined, undefined, 0, r.id).catch((err) =>
+      sLog.error("turn summarization failed", log.errorData(err)),
+    );
+  }
+}
+
+/** Drop a mind's held turns (on its stop): the tick settles them from the database. */
+export function forgetAwaitingUsage(mind: string): void {
+  for (const [turnId, held] of awaitingUsage) {
+    if (held.mind !== mind) continue;
+    clearTimeout(held.timer);
+    awaitingUsage.delete(turnId);
+  }
+}
+
 export async function summarizeTurn(
   mind: string,
   session: string | undefined,
@@ -420,12 +561,65 @@ export async function summarizeTurn(
   doneId: number,
   turnId?: string,
   complete: Complete = (system, user) => completeAsMind(mind, system, user),
+  opts: {
+    /** Called on the turn's `done`: hold a turn whose `usage` is still to come. */
+    onDone?: boolean;
+    /**
+     * The turn has just ended, so an interrupted one's message goes to the turn that answers
+     * it (`holdInterrupted`). Settled later, the thread has moved on: it doesn't.
+     */
+    handOff?: boolean;
+  } = {},
+): Promise<void> {
+  if (turnId) {
+    if (summarizing.has(turnId)) return;
+    summarizing.add(turnId);
+  }
+  try {
+    await summarizeTurnOnce(mind, session, channel, doneId, turnId, complete, opts);
+  } finally {
+    if (turnId) summarizing.delete(turnId);
+  }
+}
+
+async function summarizeTurnOnce(
+  mind: string,
+  session: string | undefined,
+  channel: string | undefined,
+  doneId: number,
+  turnId?: string,
+  complete: Complete = (system, user) => completeAsMind(mind, system, user),
+  opts: {
+    /** Called on the turn's `done`: hold a turn whose `usage` is still to come. */
+    onDone?: boolean;
+    /**
+     * The turn has just ended, so an interrupted one's message goes to the turn that answers
+     * it (`holdInterrupted`). Settled later, the thread has moved on: it doesn't.
+     */
+    handOff?: boolean;
+  } = {},
 ): Promise<void> {
   const { events, fromId, toId } = turnId
     ? await gatherTurnEventsByTurnId(turnId)
     : await gatherTurnEvents(mind, session, doneId);
 
-  if (events.length === 0) return;
+  if (events.length === 0) {
+    // A turn opened for a delivery that never reached the mind, and nothing since: there is
+    // nothing to summarize, and no row should stand for it.
+    if (turnId) {
+      try {
+        const db = await getDb();
+        const [gone] = await db
+          .delete(turns)
+          .where(and(eq(turns.id, turnId), eq(turns.status, "complete")))
+          .returning({ id: turns.id });
+        if (gone) publishMindEvent(mind, { mind, type: "turn_discarded", turnId });
+      } catch (err) {
+        sLog.warn(`failed to drop empty turn ${turnId}`, log.errorData(err));
+      }
+    }
+    return;
+  }
 
   // Resolve the turn this summary belongs to. When called without an explicit `turnId`
   // (completeTurn returned undefined because a wedged-turn sweep already completed the turn),
@@ -438,17 +632,48 @@ export async function summarizeTurn(
   // this also short-circuits the redundant AI call.
   if (effectiveTurnId && (await summaryExists(mind, "turn", effectiveTurnId))) return;
 
-  // Detect interrupted turns
+  // Detect interrupted turns. A turn with no visible output that still ended cleanly having
+  // produced output is a quiet one, not an interrupted one: a `silent` mind's turn spent on
+  // file work, say (#1298). It keeps its row and its own memory.
   const substantiveTypes = new Set(["text", "outbound", "tool_use", "tool_result", "thinking"]);
   const hasSubstantiveOutput = events.some((ev) => substantiveTypes.has(ev.type));
-  if (!hasSubstantiveOutput) {
+  const { wasInterrupted } = await import("./turn-tracker.js");
+  const quiet =
+    !hasSubstantiveOutput &&
+    !(effectiveTurnId && wasInterrupted(effectiveTurnId)) &&
+    isQuietTurn(events);
+  if (
+    !hasSubstantiveOutput &&
+    !quiet &&
+    opts.onDone &&
+    effectiveTurnId &&
+    // A failed turn sends no usage to wait for; nor does waiting change an interrupted one.
+    !events.some((ev) => ev.type === "usage" || ev.type === "error") &&
+    !wasInterrupted(effectiveTurnId)
+  ) {
+    const turnToSettle = effectiveTurnId;
+    const timer = setTimeout(() => settleHeld(turnToSettle), USAGE_HOLD_MS);
+    timer.unref?.();
+    awaitingUsage.set(effectiveTurnId, { mind, session, at: Date.now(), timer });
+    // A usage recorded since the events were read found nothing held to resume.
+    const db = await getDb();
+    const usage = await db
+      .select({ id: mindHistory.id })
+      .from(mindHistory)
+      .where(and(eq(mindHistory.turn_id, effectiveTurnId), eq(mindHistory.type, "usage")))
+      .get();
+    // Resumed once this pass is done (it holds the turn's `summarizing` place).
+    if (usage) setImmediate(() => resumeOnUsage(turnToSettle));
+    return;
+  }
+  if (!hasSubstantiveOutput && !quiet) {
     sLog.info(
       `skipping summary for interrupted turn ${effectiveTurnId ?? "(no turn)"} (no substantive output)`,
     );
     if (effectiveTurnId) {
       try {
         const db = await getDb();
-        await db
+        const released = await db
           .update(mindHistory)
           .set({ turn_id: null })
           .where(
@@ -458,6 +683,24 @@ export async function summarizeTurn(
               // re-linked to the turn that actually processes it.
               inArray(mindHistory.type, ["inbound", "event"]),
             ),
+          )
+          .returning({ id: mindHistory.id });
+        // The mind's next turn on the thread is normally the answer to them: it adopts them.
+        const thread = (
+          await db
+            .select({ thread: turns.thread })
+            .from(turns)
+            .where(eq(turns.id, effectiveTurnId))
+            .get()
+        )?.thread;
+        // Only when the turn has just ended: settled later, the thread has moved on, and its
+        // next turn is no answer to these.
+        const { holdInterrupted } = await import("./turn-tracker.js");
+        if (opts.handOff)
+          await holdInterrupted(
+            mind,
+            thread,
+            released.map((r) => r.id).sort((a, b) => a - b),
           );
         await db
           .update(messages)
@@ -466,6 +709,8 @@ export async function summarizeTurn(
         // The turn produced nothing — no output, no summary. Delete the row so it can't come
         // back from /history/turns as a junk "(no summary)" orphan (see #395).
         await db.delete(turns).where(eq(turns.id, effectiveTurnId));
+        // A live timeline showing it as running drops it (it was opened on delivery).
+        publishMindEvent(mind, { mind, type: "turn_discarded", turnId: effectiveTurnId });
       } catch (err) {
         sLog.error(`failed to clean up interrupted turn ${effectiveTurnId}`, log.errorData(err));
       }
@@ -490,7 +735,9 @@ export async function summarizeTurn(
   let deterministic: boolean;
   const written: Record<string, unknown> = {};
 
-  const transcript = buildTranscript(events, parsedMeta, mind);
+  // A quiet turn's transcript is only what reached it, so a model asked to summarize it
+  // could only guess at what the mind did — and its guess would become the mind's memory.
+  const transcript = quiet ? "" : buildTranscript(events, parsedMeta, mind);
   const outcome = transcript.trim()
     ? await complete(
         await getPrompt("turn_summary", { mind }),
@@ -503,7 +750,9 @@ export async function summarizeTurn(
     if (outcome.model) written.model = outcome.model;
     if (outcome.costUsd !== undefined) written.cost_usd = outcome.costUsd;
   } else {
-    summaryText = buildTurnDeterministicSummary(events, parsedMeta);
+    summaryText = quiet
+      ? quietTurnSummary(events, parsedMeta)
+      : buildTurnDeterministicSummary(events, parsedMeta);
     deterministic = true;
   }
 
@@ -1827,10 +2076,12 @@ export class Summarizer {
 
 /**
  * Complete + summarize turns wedged in `active` despite already finishing, and forget the
- * deliveries their sessions still hold outstanding, which no `done` will now cover. Run on
- * the summarizer tick; exported for direct testing.
+ * deliveries their sessions still hold outstanding, which no `done` will now cover; and
+ * settle turns whose `usage` never came. Run on the summarizer tick; exported for direct
+ * testing.
  */
 export async function reconcileWedgedTurns(idleMs: number): Promise<void> {
+  await settleUnsummarizedTurns(idleMs);
   const { sweepWedgedTurns, summarizeOrphanedTurns } = await import("./turn-tracker.js");
   const wedged = await sweepWedgedTurns(idleMs);
   if (wedged.length === 0) return;
