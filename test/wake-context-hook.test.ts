@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -9,9 +17,13 @@ import {
   resolveScriptToken,
   revokeMindToken,
 } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
-import { SleepManager, type SleepState } from "../packages/daemon/src/lib/daemon/sleep-manager.js";
+import {
+  SleepManager,
+  type SleepState,
+  wakeHookFailureMessage,
+} from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 import { mindDir, voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
-import { exec } from "../packages/daemon/src/lib/util/exec.js";
+import { type ExecError, exec } from "../packages/daemon/src/lib/util/exec.js";
 
 /** Reach the private hook runner the way the other sleep tests reach privates. */
 function runHook(sm: SleepManager, name: string, sleepingSince: string, duration: string) {
@@ -20,6 +32,17 @@ function runHook(sm: SleepManager, name: string, sleepingSince: string, duration
       runWakeContextScript: (n: string, s: string, d: string) => Promise<string>;
     }
   ).runWakeContextScript(name, sleepingSince, duration);
+}
+
+/** The `hook_failed` notices recorded for a mind, cleared once read. */
+async function takeHookNotices(name: string): Promise<{ thread: string; body: string }[]> {
+  const { getDb } = await import("../packages/daemon/src/lib/db.js");
+  const { systemEvents } = await import("../packages/daemon/src/lib/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const db = await getDb();
+  const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, name)).all();
+  await db.delete(systemEvents).where(eq(systemEvents.mind, name));
+  return rows.filter((r) => (r.meta ?? "").includes('"hook_failed"'));
 }
 
 function writeHook(name: string, body: string): void {
@@ -141,6 +164,12 @@ describe("wake-context hook", () => {
     const sm = new SleepManager();
     const out = await runHook(sm, name, new Date().toISOString(), "3 hours");
     assert.equal(out, "", "hook must not run outside the sandbox when sandbox mode is on");
+    // The mind still hears its wake context is missing — but not that it's theirs to
+    // fix: a missing sandbox runtime is the host's problem.
+    const notices = await takeHookNotices(name);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0].body, /couldn't be started/);
+    assert.doesNotMatch(notices[0].body, /yours to look into/);
   });
 
   // Drives the whole chain — runWakeContextScript → runMindScript → exec — with a
@@ -163,6 +192,39 @@ describe("wake-context hook", () => {
     // The wake path asks for 5s. Anything near the hook's own 120s means the cap
     // was lost somewhere between the call site and execFile.
     assert.ok(elapsed < 30_000, `wake waited ${elapsed}ms on a hanging hook`);
+    const notices = await takeHookNotices(name);
+    assert.equal(notices.length, 1, "the mind is told its wake hook was cut off");
+    assert.match(notices[0].body, /timed out after 5s/);
+  });
+
+  // #1162: a failed wake hook used to reach only the daemon log, which the mind can't
+  // read — the orientation it exists to give vanished without a trace.
+  it("tells the mind, mind-level, when its wake hook fails", async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    delete process.env.VOLUTE_SANDBOX_OPTIONAL;
+    const name = "wake-fail-notice-mind";
+    writeHook(name, "#!/bin/bash\necho 'no such file: notes.md' >&2\nexit 2\n");
+
+    const out = await runHook(new SleepManager(), name, new Date().toISOString(), "3 hours");
+
+    assert.equal(out, "");
+    const notices = await takeHookNotices(name);
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].thread, "", "mind-level, so any thread's next turn carries it");
+    assert.match(notices[0].body, /wake-context\.sh exited with code 2/);
+    assert.match(notices[0].body, /no such file: notes\.md/, "with what the hook said");
+  });
+
+  it("records no notice for a hook that succeeds", async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    delete process.env.VOLUTE_SANDBOX_OPTIONAL;
+    const name = "wake-ok-notice-mind";
+    writeHook(name, "#!/bin/bash\necho 'you dreamt of rivers'\n");
+
+    const out = await runHook(new SleepManager(), name, new Date().toISOString(), "3 hours");
+
+    assert.equal(out, "you dreamt of rivers");
+    assert.deepEqual(await takeHookNotices(name), []);
   });
 
   // The hook now runs through execFile, where a 1MB stdout cap would be easy to end
@@ -249,5 +311,56 @@ describe("wake-context hook", () => {
     assert.equal(sm.stateOf(name)?.wakeFailures, 0, "backoff count untouched");
     assert.equal(sm.stateOf(name)?.nextWakeAttemptAt, null, "no retry scheduled");
     assert.equal(sm.stateOf(name)?.sleeping, true, "the wake itself is unaffected");
+  });
+});
+
+// Whose fault a failure is decides whether the mind is told to go look at its hook.
+// Telling it so for a host-side failure sends it hunting for a bug it doesn't have.
+describe("wake-context failure notice wording", () => {
+  const OWN = /yours to look into/;
+  const fail = (props: Partial<ExecError>, message = "Command failed") =>
+    Object.assign(new Error(message), props) as ExecError;
+
+  it("a hook that exits non-zero is the mind's to look into", () => {
+    const msg = wakeHookFailureMessage(fail({ code: 3 }), "oops");
+    assert.match(msg, /exited with code 3/);
+    assert.match(msg, OWN);
+    assert.match(msg, /It said:\noops/);
+  });
+
+  it("a hook that floods its output ran and caused that itself", () => {
+    // execTimed's overflow carries no code or signal; execFile's carries a string code.
+    for (const err of [
+      fail({}, "stdout maxBuffer length exceeded"),
+      fail({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }, "stdout maxBuffer length exceeded"),
+    ]) {
+      const msg = wakeHookFailureMessage(err, undefined);
+      assert.match(msg, /more output than a wake can take/);
+      assert.match(msg, OWN);
+    }
+  });
+
+  it("an isolation front-end failure is not blamed on the mind", () => {
+    for (const stderr of [
+      "runuser: user mind-ash does not exist or the user entry does not contain all the required fields",
+      "sudo: unknown user mind-ash",
+    ]) {
+      const msg = wakeHookFailureMessage(fail({ code: 1 }), stderr);
+      assert.match(msg, /couldn't be run as you/);
+      assert.doesNotMatch(msg, OWN);
+      assert.match(msg, /host's side/);
+    }
+  });
+
+  it("speaks with the same voice as the mind-side hook loader", () => {
+    // The two can't share code across the template/daemon boundary; this keeps the
+    // ownership line one sentence, not two that drift apart under "[Your hooks]".
+    const loader = readFileSync(
+      resolve(import.meta.dirname, "../templates/_base/src/lib/hook-loader.ts"),
+      "utf-8",
+    );
+    const line = "It's part of your own machinery — yours to look into.";
+    assert.ok(loader.includes(line), "hook-loader's ownership line changed");
+    assert.ok(wakeHookFailureMessage(fail({ code: 1 }), undefined).includes(line));
   });
 });

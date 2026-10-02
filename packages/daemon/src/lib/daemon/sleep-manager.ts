@@ -39,6 +39,7 @@ import { readVoluteConfig, resolveWakeTriggers, type SleepConfig } from "../mind
 import { getPrompt } from "../prompts.js";
 import { deliveryQueue } from "../schema.js";
 import { collectTurnContext } from "../turn-context.js";
+import type { ExecError } from "../util/exec.js";
 import log from "../util/logger.js";
 import { parseDbTimestamp } from "../util/time.js";
 import { ManagerNotReadyError } from "./manager-not-ready.js";
@@ -133,6 +134,47 @@ function formatDuration(from: Date, to: Date): string {
   const minutes = Math.floor((ms % 3_600_000) / 60_000);
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+}
+
+/**
+ * The isolation front-ends a mind's hook runs behind. A failure they print themselves
+ * (the mind's OS user is missing, the sandbox refused to start) is the host's, even
+ * though it surfaces as the hook's exit status.
+ */
+const ISOLATION_FRONTEND_ERROR = /^(sudo|runuser|sandbox-exec|bwrap): /;
+
+/**
+ * What the mind is told when its wake-context hook fails — worded like the hook
+ * loader's `hook_failed` notices, so both read the same under "[Your hooks]".
+ * "Yours to look into" is said only when the hook itself ran and caused the failure.
+ */
+export function wakeHookFailureMessage(err: ExecError, stderr: string | undefined): string {
+  const firstLine = stderr?.split("\n")[0] ?? "";
+  let summary: string;
+  let hostSide = false;
+  if (err.timedOut) summary = err.message;
+  else if (/maxBuffer/.test(err.message) || err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+    summary = "printed more output than a wake can take";
+  else if (ISOLATION_FRONTEND_ERROR.test(firstLine)) {
+    summary = "couldn't be run as you";
+    hostSide = true;
+  } else if (typeof err.code === "number") summary = `exited with code ${err.code}`;
+  else if (err.signal) summary = `was killed by ${err.signal}`;
+  else {
+    summary = "couldn't be started";
+    hostSide = true;
+  }
+  const whose = hostSide
+    ? " That looks like a problem on your host's side, not in your hook."
+    : " It's part of your own machinery — yours to look into.";
+  const MAX = 1000;
+  const output = stderr
+    ? `\nIt said:\n${stderr.length > MAX ? `…${stderr.slice(-MAX)}` : stderr}`
+    : "";
+  return (
+    `Your wake hook .local/hooks/wake-context.sh ${summary}, so the context it adds ` +
+    `was missing from this wake.${whose}${output}`
+  );
 }
 
 const globRegexCache = new Map<string, RegExp>();
@@ -1189,6 +1231,21 @@ export class SleepManager {
         ...log.errorData(err),
         ...(stderr ? { stderr } : {}),
       });
+      // The daemon log is out of the mind's reach, so without this the orientation
+      // the hook exists to give would just vanish (#1162). Same `hook_failed` notice
+      // the mind-side hook loader sends, mind-level so any thread's next turn has it.
+      // Never let reporting fail the wake itself.
+      try {
+        await recordNotice({
+          mind: name,
+          thread: MIND_LEVEL_THREAD,
+          kind: "hook_failed",
+          reason: "hook_failed",
+          detail: wakeHookFailureMessage(err as ExecError, stderr),
+        });
+      } catch (noticeErr) {
+        slog.warn(`failed to record wake-context failure for ${name}`, log.errorData(noticeErr));
+      }
       return "";
     }
   }

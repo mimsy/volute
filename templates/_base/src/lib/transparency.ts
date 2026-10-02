@@ -4,9 +4,16 @@ import type { DaemonEvent, EventType } from "./daemon-client.js";
 
 export type TransparencyPreset = "transparent" | "standard" | "private" | "silent";
 
-// `error` is an internal daemon signal (emitted directly, never channel-facing), so it
-// isn't subject to transparency filtering — exclude it alongside the communication records.
-type FilterableEventType = Exclude<EventType, "inbound" | "outbound" | "context" | "error">;
+// Communication records, and the daemon's own bookkeeping, bypass transparency
+// filtering. `error` records a turn failure, `usage` is what spend caps are counted
+// from, and `done` is how the daemon learns a turn ended (turn-slot release, turn
+// summaries). Transparency hides a mind's inner life from observers, never from the
+// daemon — a silent mind that dropped these would hold its turn slot for half an hour
+// and run uncapped (#1175).
+const ALWAYS_ALLOWED = ["inbound", "outbound", "context", "error", "usage", "done"] as const;
+const alwaysAllowed: ReadonlySet<string> = new Set(ALWAYS_ALLOWED);
+
+type FilterableEventType = Exclude<EventType, (typeof ALWAYS_ALLOWED)[number]>;
 
 const PRESET_RULES: Record<
   TransparencyPreset,
@@ -18,9 +25,7 @@ const PRESET_RULES: Record<
     tool_use: "yes",
     tool_result: "yes",
     log: "yes",
-    usage: "yes",
     session_start: "yes",
-    done: "yes",
   },
   standard: {
     thinking: "no",
@@ -28,9 +33,7 @@ const PRESET_RULES: Record<
     tool_use: "name_only",
     tool_result: "no",
     log: "yes",
-    usage: "yes",
     session_start: "yes",
-    done: "yes",
   },
   private: {
     thinking: "no",
@@ -38,9 +41,7 @@ const PRESET_RULES: Record<
     tool_use: "no",
     tool_result: "no",
     log: "no",
-    usage: "yes",
     session_start: "yes",
-    done: "yes",
   },
   silent: {
     thinking: "no",
@@ -48,14 +49,9 @@ const PRESET_RULES: Record<
     tool_use: "no",
     tool_result: "no",
     log: "no",
-    usage: "no",
     session_start: "no",
-    done: "no",
   },
 };
-
-// Communication records and the internal error signal bypass transparency filtering
-const ALWAYS_ALLOWED: ReadonlySet<string> = new Set(["inbound", "outbound", "context", "error"]);
 
 export function loadTransparencyPreset(): TransparencyPreset {
   for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {
@@ -72,7 +68,7 @@ export function loadTransparencyPreset(): TransparencyPreset {
 }
 
 export function filterEvent(preset: TransparencyPreset, event: DaemonEvent): DaemonEvent | null {
-  if (ALWAYS_ALLOWED.has(event.type)) return event;
+  if (alwaysAllowed.has(event.type)) return event;
 
   const rules = PRESET_RULES[preset];
   const rule = rules[event.type as FilterableEventType];

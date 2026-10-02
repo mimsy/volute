@@ -22,6 +22,19 @@ describe("filterEvent", () => {
     }
   });
 
+  // The daemon's own bookkeeping: `done` releases the turn slot and closes the turn,
+  // `usage` is counted against the spend cap, `error` records the turn's failure (#1175).
+  describe("daemon lifecycle signals always pass through", () => {
+    for (const preset of ["transparent", "standard", "private", "silent"] as TransparencyPreset[]) {
+      for (const type of ["done", "usage", "error"] as EventType[]) {
+        it(`${type} passes in ${preset}`, () => {
+          const e: DaemonEvent = { type, content: "x", metadata: { cost_usd: 0.01 } };
+          assert.deepEqual(filterEvent(preset, e), e);
+        });
+      }
+    }
+  });
+
   describe("transparent preset", () => {
     const preset: TransparencyPreset = "transparent";
 
@@ -162,16 +175,8 @@ describe("filterEvent", () => {
       assert.equal(filterEvent(preset, event("log")), null);
     });
 
-    it("drops usage", () => {
-      assert.equal(filterEvent(preset, event("usage")), null);
-    });
-
     it("drops session_start", () => {
       assert.equal(filterEvent(preset, event("session_start")), null);
-    });
-
-    it("drops done", () => {
-      assert.equal(filterEvent(preset, event("done")), null);
     });
   });
 

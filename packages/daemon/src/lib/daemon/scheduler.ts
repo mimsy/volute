@@ -95,6 +95,13 @@ export type ScheduleState = {
    * a cron is recognised as an edit, not mistaken for an entry from before these
    * fields existed. */
   fireAt?: string;
+  /**
+   * Set while the schedule is disabled. `tick` passes a disabled schedule by
+   * without moving its `slot`, so on re-enable the cron minutes it slept through
+   * would read as missed fires — a stale-skip notice for a pause the mind chose,
+   * or a late fire. Seeing this flag go away is what re-baselines it (#1165).
+   */
+  disabled?: true;
 };
 
 /** Read `scheduler-state.json`. Entries that aren't well-formed are skipped. */
@@ -117,6 +124,7 @@ function loadScheduleStates(path: string): Map<string, ScheduleState> {
         ...(typeof v.dueAt === "number" ? { dueAt: v.dueAt } : {}),
         ...(typeof v.cron === "string" ? { cron: v.cron } : {}),
         ...(typeof v.fireAt === "string" ? { fireAt: v.fireAt } : {}),
+        ...(v.disabled === true ? { disabled: true as const } : {}),
       });
     }
   } catch (err) {
@@ -272,6 +280,18 @@ export class Scheduler {
         // in between as missed.
         this.mark(key, spec);
         delete entry.cron;
+      }
+      const current = this.state.get(key)!;
+      if (!schedule.enabled) {
+        if (!current.disabled) this.mark(key, { disabled: true });
+      } else if (current.disabled) {
+        // Re-enabled: the minutes it was paused through were not missed, so count
+        // from the minute before this one, keeping the fire history. Not this one: a
+        // cron due right now whose tick hasn't run yet is a fire, not a pause. A
+        // one-timer only needs the flag cleared — its slot is just the same-minute
+        // guard, and a past-due fireAt is still delivered late by design.
+        this.mark(key, schedule.cron ? { slot: epochMinute - 1 } : {});
+        delete current.disabled;
       }
     }
     if (this.stateDirty) {
