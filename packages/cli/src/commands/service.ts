@@ -85,6 +85,28 @@ async function status(): Promise<void> {
 }
 
 /**
+ * Reload systemd after `reconcile` has rewritten the unit. The file has already
+ * changed by then, so a failed reload has to say so: a raw stack left the host unable
+ * to tell whether the unit was touched (#1270).
+ */
+export async function reloadRewrittenUnit(
+  path: string,
+  run: (cmd: string, args: string[]) => Promise<unknown> = execFileAsync,
+): Promise<void> {
+  try {
+    await run("systemctl", ["daemon-reload"]);
+  } catch (err) {
+    const e = err as { stderr?: string; message?: string };
+    const reason = (e.stderr || e.message || String(err)).trim();
+    console.error(`Rewrote ${path}, but \`systemctl daemon-reload\` failed: ${reason}`);
+    console.error(
+      "systemd still has the old definition loaded. Reload it by hand: systemctl daemon-reload",
+    );
+    process.exit(1);
+  }
+}
+
+/**
  * Bring the installed system service file up to date with what this version's setup
  * writes (#874, #1224). Setup is the only thing that ever writes it, so without this a
  * fix to the unit reaches new installs only.
@@ -130,7 +152,7 @@ async function reconcile(): Promise<void> {
     process.exit(1);
   }
   writeFileSync(installed.path, plan.rewrite);
-  if (installed.kind === "systemd") await execFileAsync("systemctl", ["daemon-reload"]);
+  if (installed.kind === "systemd") await reloadRewrittenUnit(installed.path);
   console.log(
     `Removed them. The change takes effect when the service next restarts: volute restart`,
   );
