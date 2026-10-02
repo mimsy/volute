@@ -161,6 +161,7 @@ describe("daemon git in a mind's repo runs as the mind (#961, #1284)", () => {
     "mind/upgrade.ts",
     "mind/variant-cleanup.ts",
     "mind/variants.ts",
+    "skills.ts",
   ];
   // Every other file under lib/ that runs git, and why it isn't held to the rule.
   const EXEMPT: Record<string, string> = {
@@ -169,9 +170,6 @@ describe("daemon git in a mind's repo runs as the mind (#961, #1284)", () => {
     // named and fsmonitor pinned off (#1059), and sharesTemplateBase's read-only
     // rev-parse/merge-base. Nothing there commits, checks out or refreshes the index.
     "mind/archive.ts": "host-side CLI export, read-only and pinned",
-    // Still root git in the mind's repo; converting them is #1284's skills follow-up.
-    "skills.ts": "#1284 follow-up (skills)",
-    "skill-backfill.ts": "#1284 follow-up (skills)",
   };
 
   // The cwd options in scanned files that are not git, counted, and why. Anything else
@@ -183,6 +181,9 @@ describe("daemon git in a mind's repo runs as the mind (#961, #1284)", () => {
     "mind/npm-install.ts": { "{ cwd, env }": 2 },
     // The spirit's first npm install, as the host, before its user exists.
     "mind/spirit.ts": { "{ cwd: dir, env: hostNpmEnv() }": 1 },
+    // merge-file on the daemon's own temp files, in a fresh mkdtemp dir with repo
+    // discovery stopped there: no mind repo is involved.
+    "skills.ts": { "{ cwd: tmpBase, env: { GIT_CEILING_DIRECTORIES: dirname(tmpBase) } }": 1 },
   };
 
   /** The innermost `{ … }` around every `cwd` key, whitespace collapsed. */

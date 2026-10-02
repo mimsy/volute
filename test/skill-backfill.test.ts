@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/config/setup.js";
@@ -138,6 +138,28 @@ describe("backfillStandardSkills", () => {
     await backfillStandardSkills([SKILL]);
     assert.ok(existsSync(join(half, ".upstream.json")));
     assert.notEqual(readFileSync(join(half, "SKILL.md"), "utf-8"), "partial");
+  });
+
+  it("never removes a half-install through a skills dir linked out of the mind", async () => {
+    const dir = await makeMind("bf-mind-link");
+    // Between two starts the mind points its skills dir at a tree outside itself that
+    // holds a same-named dir: the cleanup must refuse, not rm what the link reaches.
+    const outside = join(voluteHome(), "tmp-bf-outside");
+    mkdirSync(join(outside, SKILL), { recursive: true });
+    writeFileSync(join(outside, SKILL, "keep.txt"), "not the mind's");
+    rmSync(mindSkillsDir(dir), { recursive: true });
+    symlinkSync(outside, mindSkillsDir(dir));
+    mkdirSync(stateDir("bf-mind-link"), { recursive: true });
+    writeFileSync(
+      join(stateDir("bf-mind-link"), "skill-backfill.json"),
+      JSON.stringify({ [SKILL]: "installing" }),
+    );
+    try {
+      await backfillStandardSkills([SKILL]);
+      assert.equal(readFileSync(join(outside, SKILL, "keep.txt"), "utf-8"), "not the mind's");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("respects a skill deleted by hand and committed, even without a ledger", async () => {
