@@ -65,6 +65,18 @@ export function clearUpgradeFailure(name: string): void {
   alertedReason.delete(name);
 }
 
+/**
+ * The "upgrade blocked" badge for a mind: the recorded reason, but only while its
+ * template is still stale. Once it is current — upgraded by any path — there is no
+ * upgrade left to be blocked, so a record that outlived it is never shown (#974).
+ */
+export function upgradeBlockedReason(
+  entry: MindEntry,
+  templateStale: boolean = isTemplateStale(entry),
+): string | undefined {
+  return templateStale ? blocked.get(entry.name)?.reason : undefined;
+}
+
 /** Test seam: forget every in-memory auto-upgrade failure/alert record. */
 export function resetAutoUpgradeState(): void {
   blocked.clear();

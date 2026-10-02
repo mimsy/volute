@@ -701,6 +701,64 @@ describe("web minds routes", () => {
     }
   });
 
+  it("POST /:name/upgrade — a successful upgrade, fresh or continued, clears the blocked record (#974)", async () => {
+    const { mkdirSync, rmSync } = await import("node:fs");
+    const { addMind, findMind, mindDir, removeMind } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { autoUpgradeOne, getUpgradeBlocked, resetAutoUpgradeState } = await import(
+      "../packages/daemon/src/lib/daemon/auto-upgrade.js"
+    );
+    const { upgradeOps } = await import("../packages/daemon/src/web/api/minds.js");
+
+    const name = `web-upgraded-${Date.now()}`;
+    const dir = mindDir(name);
+    mkdirSync(dir, { recursive: true });
+    await addMind(name, 4197, undefined, "claude");
+    const entry = (await findMind(name))!;
+    const fail = () =>
+      autoUpgradeOne(entry, false, {
+        isUpOrRecovering: () => false,
+        runUpgrade: async () => {
+          throw new Error("hook refused");
+        },
+        abortUpgrade: async () => {},
+        alertHost: async () => {},
+        delay: async () => {},
+      });
+
+    const real = { ...upgradeOps };
+    upgradeOps.runUpgrade = async () => ({ status: "upgraded" });
+    upgradeOps.continueUpgrade = async () => ({ status: "upgraded" });
+    try {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const upgrade = (body: object) =>
+        app.request(`http://localhost/api/v1/minds/${name}/upgrade`, {
+          method: "POST",
+          headers: { ...postHeaders(cookie), "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+      await fail();
+      assert.ok(getUpgradeBlocked(name));
+      assert.equal((await upgrade({})).status, 200);
+      assert.equal(getUpgradeBlocked(name), undefined, "a fresh upgrade left the record");
+
+      resetAutoUpgradeState();
+      await fail();
+      assert.ok(getUpgradeBlocked(name));
+      mkdirSync(`${dir}/.variants/upgrade`, { recursive: true }); // an upgrade in progress
+      assert.equal((await upgrade({ continue: true })).status, 200);
+      assert.equal(getUpgradeBlocked(name), undefined, "a continued upgrade left the record");
+    } finally {
+      Object.assign(upgradeOps, real);
+      resetAutoUpgradeState();
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("GET /:name — a mind mid-wake reports waking, but only while its process is up (#920)", async () => {
     const { mkdirSync, rmSync } = await import("node:fs");
     const { createServer } = await import("node:http");

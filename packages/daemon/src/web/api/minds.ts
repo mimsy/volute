@@ -18,7 +18,7 @@ import {
   recordNotice,
 } from "../../lib/chat/system-events.js";
 import { getSpiritName } from "../../lib/config/setup.js";
-import { clearUpgradeFailure, getUpgradeBlocked } from "../../lib/daemon/auto-upgrade.js";
+import { clearUpgradeFailure, upgradeBlockedReason } from "../../lib/daemon/auto-upgrade.js";
 import {
   forgetCredentialDegraded,
   getCredentialDegraded,
@@ -139,6 +139,9 @@ import {
 } from "../middleware/auth.js";
 import { hasAdminAuthority } from "../middleware/effective-principal.js";
 import { refusedSenderMessage } from "./chat.js";
+
+/** The upgrade operations the upgrade route runs — a seam so its tests can stub them. */
+export const upgradeOps = { runUpgrade, continueUpgrade };
 
 const _lastActiveCache: { map: Map<string, string>; ts: number } = { map: new Map(), ts: 0 };
 const _LAST_ACTIVE_TTL = 60_000;
@@ -474,9 +477,7 @@ const app = new Hono<AuthEnv>()
           ...mindStatus,
           hasPages,
           templateStale,
-          // A blocked upgrade outlives nothing it blocked: once the template is current
-          // (upgraded by any path), there is no upgrade left to be blocked (#974).
-          upgradeBlocked: templateStale ? getUpgradeBlocked(entry.name)?.reason : undefined,
+          upgradeBlocked: upgradeBlockedReason(entry, templateStale),
           credentialDegraded: credentialDegradedField(entry.name),
           lastActiveAt,
         };
@@ -530,7 +531,7 @@ const app = new Hono<AuthEnv>()
       variants: variantStatuses,
       hasPages,
       templateStale,
-      upgradeBlocked: templateStale ? getUpgradeBlocked(name)?.reason : undefined,
+      upgradeBlocked: upgradeBlockedReason(entry, templateStale),
       credentialDegraded: credentialDegradedField(name),
       ...(notice && {
         lastNotice: {
@@ -1445,7 +1446,7 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: "No upgrade in progress" }, 400);
       }
       try {
-        const result = await continueUpgrade(mindName, { template });
+        const result = await upgradeOps.continueUpgrade(mindName, { template });
         if (result.status === "conflicts") {
           return c.json({
             ok: false,
@@ -1484,7 +1485,7 @@ const app = new Hono<AuthEnv>()
     // Fresh upgrade. A stale worktree from an orphaned prior run self-heals inside
     // runUpgrade; only a worktree that's genuinely mid-conflict-resolution 409s.
     try {
-      const result = await runUpgrade(mindName, { template });
+      const result = await upgradeOps.runUpgrade(mindName, { template });
       if (result.status === "conflicts") {
         return c.json({
           ok: false,
