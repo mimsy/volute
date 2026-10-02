@@ -18,6 +18,7 @@ import {
   readdirSync,
   readSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -174,6 +175,16 @@ export function worktreeGitDir(repoDir: string, worktree: string): string | null
   }
 }
 
+/** Whether the worktree's `.git` names a gitdir that no longer exists. */
+function isDanglingWorktree(wt: string): boolean {
+  try {
+    const match = readPointerFile(resolve(wt, ".git")).match(/^gitdir:\s*(.+)$/);
+    return !!match && !existsSync(resolve(wt, match[1]));
+  } catch {
+    return false;
+  }
+}
+
 /** Path to the collaborative pages repo within the extension data directory. */
 export function pagesRepoDir(dataDir: string): string {
   return resolve(dataDir, "repo");
@@ -274,7 +285,18 @@ const REPO_CONFIG_KEYS = new Set([
   "extensions.objectformat",
   "extensions.refstorage",
   "extensions.relativeworktrees",
+  "receive.denynonfastforwards",
 ]);
+
+/** Whether `path` is a regular file the daemon owns, with no second name. */
+function isDaemonFile(path: string): boolean {
+  try {
+    const st = lstatSync(path);
+    return st.isFile() && st.uid === process.getuid?.() && !isMultiplyLinkedFile(st);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Keep the repo's own config, hooks and attributes the daemon's alone (#1285).
@@ -286,43 +308,60 @@ const REPO_CONFIG_KEYS = new Set([
  * Minds need only `objects/` and `refs/` (and their own gitdir under `worktrees/`)
  * to commit in their worktrees, so:
  *
- * - the work tree, `.git`, `hooks/`, `info/` and `worktrees/` go to 2755. They are
- *   not group-writable at all, so no sticky bit is needed for a mind to be unable
- *   to rename `config` away or replace another mind's gitdir;
- * - `config` and `HEAD` go to 0644, and `config` keeps only the keys `git init` writes;
- * - an entry in `hooks/` or `info/` the daemon doesn't own is removed, and the rest
- *   lose group write;
+ * - `.git`, `hooks/`, `info/` and `worktrees/` go to 2755. They are not
+ *   group-writable at all, so no sticky bit is needed for a mind to be unable to
+ *   rename `config` away or replace another mind's gitdir;
+ * - a `config` or `HEAD` that isn't the daemon's own file is replaced, and history
+ *   kept: `HEAD` names `main` again, and `git init` writes a fresh config. Both go
+ *   to 0644, and `config` keeps only the keys `git init` writes;
+ * - `hooks/` is emptied (hooks never run here), and `info/` keeps only an
+ *   `exclude` that is the daemon's own file;
  * - `commondir`, `gitdir` and `config.worktree` in `.git` are removed: a main repo
  *   never has them, and each would change where git reads config from.
  *
  * Runs at every daemon start, so it also repairs installs from before it existed.
- * Throws if `.git`, one of those directories, `config` or `HEAD` is not the daemon's
- * own: the repo can't be trusted, and the caller re-initializes it.
+ * Throws if `.git` or one of those directories is not the daemon's own: the repo
+ * can't be trusted, and the caller re-initializes it.
  */
-export async function hardenPagesRepo(dir: string): Promise<void> {
+export async function hardenPagesRepo(dir: string, isolation?: IsolationInfo): Promise<void> {
   const gitDir = resolve(dir, ".git");
-  setDaemonMode(dir, 0o2755, true);
   setDaemonMode(gitDir, 0o2755, true);
   for (const sub of ["hooks", "info", "worktrees"]) {
     const path = resolve(gitDir, sub);
     mkdirSync(path, { recursive: true });
     setDaemonMode(path, 0o2755, true);
   }
-  for (const file of ["config", "HEAD"]) setDaemonMode(resolve(gitDir, file), 0o644, false);
   for (const name of ["commondir", "gitdir", "config.worktree"]) {
     rmSync(resolve(gitDir, name), { recursive: true, force: true });
   }
-  for (const sub of ["hooks", "info"]) {
-    for (const name of readdirSync(resolve(gitDir, sub))) {
-      const path = resolve(gitDir, sub, name);
-      const st = lstatSync(path);
-      if (st.isFile() && st.uid === process.getuid?.()) chmodSync(path, st.mode & 0o755);
-      else rmSync(path, { recursive: true, force: true });
-    }
+  for (const name of readdirSync(resolve(gitDir, "hooks"))) {
+    rmSync(resolve(gitDir, "hooks", name), { recursive: true, force: true });
+  }
+  for (const name of readdirSync(resolve(gitDir, "info"))) {
+    const path = resolve(gitDir, "info", name);
+    if (name === "exclude" && isDaemonFile(path)) chmodSync(path, 0o644);
+    else rmSync(path, { recursive: true, force: true });
   }
 
-  // Read and edited as a plain file, never as a repo's config: no include followed.
+  const head = resolve(gitDir, "HEAD");
   const config = resolve(gitDir, "config");
+  if (!isDaemonFile(head)) {
+    console.warn("[pages] replacing a pages repo HEAD that isn't the daemon's");
+    rmSync(head, { recursive: true, force: true });
+    writeFileSync(head, "ref: refs/heads/main\n");
+  }
+  if (!isDaemonFile(config)) {
+    console.warn("[pages] replacing a pages repo config that isn't the daemon's");
+    rmSync(config, { recursive: true, force: true });
+    const shared = isolation?.isIsolationEnabled() ? ["--shared=group"] : [];
+    await gitExec(["init", "-q", ...shared], { cwd: dir }, isolation);
+    // A re-init re-applies the shared permissions it would give a new repo.
+    return hardenPagesRepo(dir, isolation);
+  }
+  setDaemonMode(head, 0o644, false);
+  setDaemonMode(config, 0o644, false);
+
+  // Read and edited as a plain file, never as a repo's config: no include followed.
   const keys = await gitExec(
     ["config", "--file", config, "--no-includes", "--name-only", "--list"],
     { cwd: dirname(dir) },
@@ -338,20 +377,23 @@ export async function hardenPagesRepo(dir: string): Promise<void> {
 export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo): Promise<void> {
   const dir = pagesRepoDir(dataDir);
   mkdirSync(dir, { recursive: true });
+  // The work tree itself is never wiped: if it isn't the daemon's own directory,
+  // nothing here can be trusted to repair, so fail and leave it to a host.
+  setDaemonMode(dir, 0o2755, true);
 
   if (existsSync(resolve(dir, ".git"))) {
     let trusted = true;
     try {
-      await hardenPagesRepo(dir);
+      await hardenPagesRepo(dir, isolation);
     } catch (err) {
       console.warn(`[pages] repo tampered with: ${(err as Error).message}`);
       trusted = false;
     }
     if (trusted && (await isRepoValid(dir, isolation))) return;
-    // Any invalid or incomplete state — a husk .git from an interrupted init, or
-    // a repo with no commits — is wiped and re-initialized. The repo's content
-    // is regenerable (it's synced from minds' pages), so aggressive re-init is
-    // safe, and it self-heals boxes stuck with a broken repo on next daemon start.
+    // What's left — a husk .git from an interrupted init, a repo with no commits, or
+    // a .git that isn't the daemon's — is wiped and re-initialized. That drops every
+    // mind's branch, unpublished commits included; `addPagesWorktree` relinks each
+    // worktree to the new repo on the mind's next start, keeping its files.
     console.warn("[pages] repo invalid or incomplete, re-initializing");
     rmSync(resolve(dir, ".git"), { recursive: true, force: true });
   }
@@ -372,7 +414,7 @@ export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo
       console.warn("[pages] failed to chgrp pages repo to volute group");
     }
   }
-  await hardenPagesRepo(dir);
+  await hardenPagesRepo(dir, isolation);
 }
 
 /** Add a git worktree at <mindDir>/home/pages/_system/ on a per-mind branch. */
@@ -407,7 +449,8 @@ export async function addPagesWorktree(
     mkdirSync(pages, { recursive: true });
   }
 
-  const wt = resolve(pages, "_system");
+  let wt = resolve(pages, "_system");
+  let relink = false;
   if (existsSync(wt)) {
     // A real worktree has a `.git` file. A plain directory here is what a mind
     // creates by hand when publishing failed for lack of a worktree (#795) — say
@@ -417,8 +460,20 @@ export async function addPagesWorktree(
       console.warn(
         `[pages] ${wt} exists but is not a worktree — shared publishing will fail for ${mindName}. Move it aside and restart the mind to provision one.`,
       );
+      return;
     }
-    return;
+    if (!isDanglingWorktree(wt)) return;
+    // The repo was re-initialized under it: relink it, keeping the mind's files.
+    if (isolation?.isIsolationEnabled()) {
+      try {
+        wt = await isolation.containMindPath(mindName, wt);
+      } catch (err) {
+        console.warn(`[pages] refused ${mindName}'s worktree: ${(err as Error).message}`);
+        return;
+      }
+    }
+    console.warn(`[pages] ${mindName}'s worktree lost its gitdir; relinking it`);
+    relink = true;
   }
 
   let branchExists = false;
@@ -429,10 +484,19 @@ export async function addPagesWorktree(
     // branch doesn't exist
   }
 
+  // A relink checks the branch out nowhere, then moves its `.git` into the worktree.
+  const target = relink ? resolve(pages, "._system.relink") : wt;
+  if (relink) rmSync(target, { recursive: true, force: true });
+  const add = relink ? ["worktree", "add", "--no-checkout"] : ["worktree", "add"];
   if (branchExists) {
-    await gitExec(["worktree", "add", wt, mindName], { cwd: dir }, isolation);
+    await gitExec([...add, target, mindName], { cwd: dir }, isolation);
   } else {
-    await gitExec(["worktree", "add", "-b", mindName, wt], { cwd: dir }, isolation);
+    await gitExec([...add, "-b", mindName, target], { cwd: dir }, isolation);
+  }
+  if (relink) {
+    renameSync(resolve(target, ".git"), resolve(wt, ".git"));
+    rmSync(target, { recursive: true, force: true });
+    await gitExec(["worktree", "repair", wt], { cwd: dir }, isolation);
   }
 
   if (isolation?.isIsolationEnabled()) {
@@ -461,6 +525,10 @@ export async function addPagesWorktree(
       }
     }
   }
+  // The index starts empty after `--no-checkout`: read it from the branch, as the
+  // mind, so the mind's files show as its changes against the branch.
+  if (relink)
+    await gitExec(["reset", "-q"], await mindWorktree(mindName, mindDir, isolation), isolation);
 }
 
 /** Remove the worktree and branch for a mind. */

@@ -152,10 +152,10 @@ describe("exec env scrub (#966)", () => {
     const repo = join(dataDir, "repo");
     await gitExec(["config", "filter.probe.clean", filter], { cwd: repo });
     await gitExec(["config", "filter.probe.smudge", filter], { cwd: repo });
-    writeFileSync(join(repo, ".git/info/attributes"), "*.md filter=probe\n");
 
     await ensurePagesRepo(dataDir); // the next daemon start
     await addPagesWorktree("alpha", mindDir, dataDir);
+    writeFileSync(join(mindDir, "home/pages/_system/.gitattributes"), "*.md filter=probe\n");
     writeFileSync(join(mindDir, "home/pages/_system/lore.md"), "# Lore\n");
     const r = await pagesPullAndMerge("alpha", mindDir, dataDir, "start lore");
     assert.equal(r.ok, true, JSON.stringify(r));
