@@ -38,14 +38,16 @@ export class BridgeManager {
    */
   private pendingRestarts = new Map<string, NodeJS.Timeout>();
   /**
-   * Bumped by every start and stop. A start that had to wait (terminating the bridge it
-   * replaces) spawns only if no later start or stop came in meanwhile — so a stop always
-   * wins over a start already in flight.
+   * Each platform's starts and stops, run one at a time in call order — every one to
+   * completion, the old child's exit included, before the next begins. Whatever was
+   * asked last is what holds, without each operation reasoning about the others.
    */
-  private generations = new Map<string, number>();
+  private ops = new Map<string, Promise<void>>();
   /** SIGTERM-to-SIGKILL grace when stopping, and when replacing a running bridge. */
   private stopGraceMs = 5000;
   private replaceGraceMs = 3000;
+  /** How long to wait for the exit a SIGKILL should bring before giving up on it. */
+  private killWaitMs = 2000;
   /**
    * Every child spawned and not yet exited, with its platform — tracked or not (one a
    * replacing start is still terminating, say).
@@ -83,20 +85,39 @@ export class BridgeManager {
     };
   }
 
-  async startBridge(platform: string, daemonPort: number): Promise<void> {
+  startBridge(platform: string, daemonPort: number): Promise<void> {
+    return this.serialize(platform, () => this.doStartBridge(platform, daemonPort));
+  }
+
+  stopBridge(platform: string): Promise<void> {
+    // Cancelled now as well as when the stop runs: a restart timer firing while this
+    // stop waits its turn would otherwise queue a start behind it (#1352).
+    this.cancelPendingRestart(platform);
+    return this.serialize(platform, () => this.doStopBridge(platform));
+  }
+
+  private serialize(platform: string, op: () => Promise<void>): Promise<void> {
+    const run = (this.ops.get(platform) ?? Promise.resolve()).then(op);
+    this.ops.set(
+      platform,
+      run.catch(() => {}),
+    );
+    return run;
+  }
+
+  private async doStartBridge(platform: string, daemonPort: number): Promise<void> {
+    if (this.shuttingDown) {
+      blog.info(`not starting bridge ${platform} — the daemon is shutting down`);
+      return;
+    }
     // This start supersedes any pending crash restart, which would otherwise kill it.
     this.cancelPendingRestart(platform);
-    const generation = this.bumpGeneration(platform);
 
     // Replace the running bridge, if any. The kill is deliberate, so its exit must not
     // count as a crash — that would spend a restart attempt and schedule a restart that
     // then kills the replacement.
     const existing = this.bridges.get(platform);
-    if (existing) {
-      await this.terminate(platform, existing.child, this.replaceGraceMs);
-      // Stopped (shutdown included) or restarted since: that later call owns the outcome.
-      if (this.generations.get(platform) !== generation) return;
-    }
+    if (existing) await this.terminate(platform, existing.child, this.replaceGraceMs);
 
     // Kill orphan from previous daemon session
     this.killOrphanBridge(platform);
@@ -152,6 +173,17 @@ export class BridgeManager {
 
     this.live.set(child, platform);
     this.bridges.set(platform, { child, platform });
+    // A spawn that fails outright (the runtime vanished, say) gets no pid and never
+    // emits 'exit', so this is the only place it can be forgotten.
+    child.on("error", (err) => {
+      blog.error(`bridge ${platform} process error`, log.errorData(err));
+      if (child.pid) return; // a running child's 'exit' handler owns it
+      this.live.delete(child);
+      if (this.bridges.get(platform)?.child === child) {
+        this.restartTracker.cancelHealthyReset(platform);
+        this.bridges.delete(platform);
+      }
+    });
     // Clear the crash budget only once this spawn has proved it can stay up —
     // resetting here at spawn time let a bridge that dies immediately refresh its
     // own budget forever, so it never backed off and never gave up (#1033).
@@ -192,13 +224,11 @@ export class BridgeManager {
     blog.info(`started bridge ${platform}`);
   }
 
-  async stopBridge(platform: string): Promise<void> {
+  private async doStopBridge(platform: string): Promise<void> {
     // A crashed bridge waiting out its backoff is untracked, so the pending restart is
     // the only thing left to stop (#1352).
     const cancelled = this.cancelPendingRestart(platform);
-    this.bumpGeneration(platform);
-    // Every child of this platform still alive — the tracked one, and one a replacing
-    // start is still terminating — so a stop returns only once the bridge is gone.
+    // Every child of this platform still alive, so a stop returns only once it's gone.
     const children = [...this.live].filter(([, p]) => p === platform).map(([c]) => c);
     await Promise.all(children.map((c) => this.terminate(platform, c, this.stopGraceMs)));
 
@@ -212,46 +242,53 @@ export class BridgeManager {
   }
 
   /**
-   * Kill `child` on purpose and wait for it to exit (SIGKILL after `graceMs`). It is
-   * untracked first, which is what tells its exit handler the exit is not a crash.
+   * Kill `child` on purpose and wait for it to exit: SIGTERM, then SIGKILL after
+   * `graceMs`, then a short wait for that. It is untracked first, which is what tells
+   * its exit handler the exit is not a crash; resolving on the exit itself means that
+   * handler — PID file included — has run by the time this returns.
    */
   private async terminate(platform: string, child: ChildProcess, graceMs: number): Promise<void> {
     if (this.bridges.get(platform)?.child === child) this.bridges.delete(platform);
-    let killTimer: NodeJS.Timeout | undefined;
-    await new Promise<void>((res) => {
-      child.on("exit", () => {
-        // Disarm the SIGKILL so it can't later land on a reused pgid.
-        clearTimeout(killTimer);
-        res();
+    const exited =
+      child.exitCode !== null || child.signalCode !== null
+        ? Promise.resolve(true)
+        : new Promise<boolean>((res) => child.once("exit", () => res(true)));
+    const within = async (ms: number) => {
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<boolean>((res) => {
+        timer = setTimeout(() => res(false), ms);
       });
       try {
-        if (child.pid) {
-          process.kill(-child.pid, "SIGTERM");
-        } else {
-          child.kill("SIGTERM");
-        }
-      } catch (err: unknown) {
-        if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ESRCH") {
-          blog.warn(`failed to stop bridge ${platform}`, log.errorData(err));
-        }
-        // Never arm a SIGKILL for a group we couldn't signal: it may be gone and its
-        // pgid reused by the time the grace runs out.
-        res();
-        return;
+        return await Promise.race([exited, timeout]);
+      } finally {
+        clearTimeout(timer);
       }
-      killTimer = setTimeout(() => {
-        try {
-          if (child.pid) {
-            process.kill(-child.pid, "SIGKILL");
-          } else {
-            child.kill("SIGKILL");
-          }
-        } catch {
-          // SIGKILL cleanup — process likely already exited
-        }
-        res();
-      }, graceMs);
-    });
+    };
+    const signal = (sig: NodeJS.Signals): NodeJS.ErrnoException | undefined => {
+      try {
+        if (child.pid) process.kill(-child.pid, sig);
+        else child.kill(sig);
+        return undefined;
+      } catch (err) {
+        return err as NodeJS.ErrnoException;
+      }
+    };
+
+    const termErr = signal("SIGTERM");
+    if (termErr) {
+      // Never follow with a SIGKILL for a group we couldn't signal: it may be gone and
+      // its pgid reused by the time the grace runs out.
+      if (termErr.code !== "ESRCH") {
+        blog.warn(`failed to stop bridge ${platform}`, log.errorData(termErr));
+      }
+      await within(this.killWaitMs);
+      return;
+    }
+    if (await within(graceMs)) return;
+    signal("SIGKILL");
+    if (!(await within(this.killWaitMs))) {
+      blog.warn(`bridge ${platform} (pid ${child.pid}) did not exit after SIGKILL`);
+    }
   }
 
   /** Arm a crash restart, replacing any already pending for this platform. */
@@ -272,7 +309,8 @@ export class BridgeManager {
   async stopAll(): Promise<void> {
     this.shuttingDown = true;
     for (const platform of [...this.pendingRestarts.keys()]) this.cancelPendingRestart(platform);
-    // Including a platform whose replacing start is mid-terminate, which is untracked.
+    // Every platform with a child still alive — one a replacing start is terminating
+    // included. (A start that hasn't run yet sees shuttingDown and refuses.)
     const platforms = new Set([...this.bridges.keys(), ...this.live.values()]);
     await Promise.all([...platforms].map((p) => this.stopBridge(p)));
   }
@@ -287,12 +325,6 @@ export class BridgeManager {
   isRunning(platform: string): boolean {
     const tracked = this.bridges.get(platform);
     return tracked != null && !tracked.child.killed;
-  }
-
-  private bumpGeneration(platform: string): number {
-    const next = (this.generations.get(platform) ?? 0) + 1;
-    this.generations.set(platform, next);
-    return next;
   }
 
   /** Whether `pid` is a child of ours that hasn't exited yet. */

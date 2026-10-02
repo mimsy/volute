@@ -269,62 +269,149 @@ describe("crash recovery wiring", () => {
       assert.equal(mgr.pendingRestarts.size, 0);
     });
 
-    it("a stop wins over a start still terminating the bridge it replaces", async () => {
+    /** A bridge fixture that ignores SIGTERM, so only the SIGKILL ends it. */
+    const stubborn = (name: string, marker: string) =>
+      writeFixture(name, marker, `process.on("SIGTERM", () => {});\nsetInterval(() => {}, 1000);`);
+    /** A bridge fixture that takes a moment to wind down on SIGTERM. */
+    const slow = (name: string, marker: string) =>
+      writeFixture(
+        name,
+        marker,
+        `process.on("SIGTERM", () => setTimeout(() => process.exit(0), 300));\nsetInterval(() => {}, 1000);`,
+      );
+    const gone = (child: AnyMgr) => child.exitCode !== null || child.signalCode !== null;
+
+    it("a stop queued behind a replacing start is what holds", async () => {
       const marker = resolve(fixtureDir, "race-spawns.txt");
       const mgr = new BridgeManager() as AnyMgr;
-      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 300, maxDelay: 2000 });
-      // Takes a moment to wind down on SIGTERM, so the replacing start is mid-terminate.
-      mgr.resolveBuiltinBridge = () =>
-        writeFixture(
-          "race",
-          marker,
-          `process.on("SIGTERM", () => setTimeout(() => process.exit(0), 300));\nsetInterval(() => {}, 1000);`,
-        );
+      mgr.resolveBuiltinBridge = () => slow("race", marker);
       try {
         await mgr.startBridge("race", 1618);
         assert.ok(await waitFor(() => spawnTimes(marker).length === 1, 5000));
+        await delay(100);
         const old = mgr.bridges.get("race").child;
-
         const start = mgr.startBridge("race", 1618);
         await mgr.stopBridge("race");
-        assert.ok(
-          old.exitCode !== null || old.signalCode !== null,
-          "the stop returned while the bridge it stopped was still alive",
-        );
+        assert.ok(gone(old), "the stop returned while a bridge it stopped was still alive");
         await start;
-
         await delay(300);
-        assert.equal(spawnTimes(marker).length, 1, "the stopped bridge was spawned anyway");
-        assert.equal(mgr.isRunning("race"), false);
+        assert.equal(mgr.isRunning("race"), false, "the stop didn't hold");
+        assert.equal(mgr.live.size, 0, "a bridge outlived the stop");
       } finally {
         await mgr.stopBridge("race");
       }
     });
 
-    it("a shutdown wins over a start still terminating the bridge it replaces", async () => {
+    it("a stop cancels a crash restart that would fire while it waits its turn", async () => {
+      const marker = resolve(fixtureDir, "queued-stop-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.resolveBuiltinBridge = () => slow("queuedstop", marker);
+      try {
+        await mgr.startBridge("queuedstop", 1618);
+        assert.ok(await waitFor(() => spawnTimes(marker).length === 1, 5000));
+        await delay(100); // its SIGTERM handler is in place, so replacing it takes ~300ms
+        const start = mgr.startBridge("queuedstop", 1618);
+        await delay(20); // that start is running now
+        mgr.scheduleRestart("queuedstop", 1618, 100); // a crash restart, pending meanwhile
+        const stop = mgr.stopBridge("queuedstop");
+        await Promise.all([start, stop]);
+        await delay(400);
+        assert.equal(mgr.isRunning("queuedstop"), false, "the restart came back after the stop");
+      } finally {
+        await mgr.stopBridge("queuedstop");
+      }
+    });
+
+    it("a start queued behind a stop is what holds", async () => {
+      const marker = resolve(fixtureDir, "restart-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.resolveBuiltinBridge = () => slow("restart", marker);
+      try {
+        await mgr.startBridge("restart", 1618);
+        assert.ok(await waitFor(() => spawnTimes(marker).length === 1, 5000));
+        await delay(100);
+        const stop = mgr.stopBridge("restart");
+        await mgr.startBridge("restart", 1618);
+        await stop;
+        await delay(300);
+        assert.equal(mgr.isRunning("restart"), true, "the stop clobbered the later start");
+        assert.equal(mgr.live.size, 1);
+      } finally {
+        await mgr.stopBridge("restart");
+      }
+    });
+
+    it("a replacing start spawns only once the old bridge has exited", async () => {
+      const marker = resolve(fixtureDir, "replace-wait-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.replaceGraceMs = 200;
+      mgr.resolveBuiltinBridge = () => stubborn("replacewait", marker);
+      try {
+        await mgr.startBridge("replacewait", 1618);
+        assert.ok(await waitFor(() => spawnTimes(marker).length === 1, 5000));
+        await delay(100);
+        const old = mgr.bridges.get("replacewait").child;
+        await mgr.startBridge("replacewait", 1618);
+        assert.ok(gone(old), "spawned the replacement while the old bridge was still alive");
+        assert.equal(mgr.live.size, 1);
+      } finally {
+        await mgr.stopBridge("replacewait");
+      }
+    });
+
+    it("a stop returns only after the stopped bridge's PID file is gone", async () => {
+      const marker = resolve(fixtureDir, "pidgone-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.stopGraceMs = 200;
+      mgr.resolveBuiltinBridge = () => stubborn("pidgone", marker);
+      try {
+        await mgr.startBridge("pidgone", 1618);
+        // Past the fixture's startup, so its SIGTERM handler is in place.
+        assert.ok(await waitFor(() => spawnTimes(marker).length === 1, 5000));
+        await delay(100);
+        await mgr.stopBridge("pidgone");
+        assert.equal(existsSync(mgr.bridgePidPath("pidgone")), false);
+      } finally {
+        await mgr.stopBridge("pidgone");
+      }
+    });
+
+    it("a shutdown stops a start already in flight, and refuses a later one", async () => {
       const marker = resolve(fixtureDir, "shutdown-race-spawns.txt");
       const mgr = new BridgeManager() as AnyMgr;
-      mgr.resolveBuiltinBridge = () =>
-        writeFixture(
-          "shutdownrace",
-          marker,
-          `process.on("SIGTERM", () => setTimeout(() => process.exit(0), 300));\nsetInterval(() => {}, 1000);`,
-        );
+      mgr.resolveBuiltinBridge = () => slow("shutdownrace", marker);
       try {
         await mgr.startBridge("shutdownrace", 1618);
         assert.ok(await waitFor(() => spawnTimes(marker).length === 1, 5000));
-
+        await delay(100);
         const start = mgr.startBridge("shutdownrace", 1618);
         await mgr.stopAll();
         await start;
+        assert.equal(mgr.live.size, 0, "a bridge outlived the shutdown");
+        const spawned = spawnTimes(marker).length;
 
+        await mgr.startBridge("shutdownrace", 1618);
         await delay(300);
-        assert.equal(spawnTimes(marker).length, 1, "a bridge was spawned during shutdown");
+        assert.equal(spawnTimes(marker).length, spawned, "a bridge was spawned after shutdown");
         assert.equal(mgr.live.size, 0);
       } finally {
         mgr.shuttingDown = false;
         await mgr.stopBridge("shutdownrace");
       }
+    });
+
+    it("forgets a bridge whose spawn failed outright", async () => {
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.resolveBuiltinBridge = () => writeFixture("nospawn", resolve(fixtureDir, "x.txt"), "");
+      const realExecPath = process.execPath;
+      try {
+        process.execPath = resolve(fixtureDir, "no-such-runtime");
+        await mgr.startBridge("nospawn", 1618);
+      } finally {
+        process.execPath = realExecPath;
+      }
+      assert.ok(await waitFor(() => mgr.live.size === 0, 2000), "the failed spawn stayed live");
+      assert.equal(mgr.isRunning("nospawn"), false);
     });
 
     it("never arms a SIGKILL for a group its SIGTERM couldn't reach", async () => {
@@ -392,6 +479,7 @@ describe("crash recovery wiring", () => {
       const marker = resolve(fixtureDir, "survivor-spawns.txt");
       const mgr = new BridgeManager() as AnyMgr;
       mgr.stopGraceMs = 200;
+      mgr.killWaitMs = 200;
       mgr.resolveBuiltinBridge = () =>
         writeFixture("survivor", marker, "setInterval(() => {}, 1000);");
       const realKill = process.kill;
