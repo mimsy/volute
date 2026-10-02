@@ -8,14 +8,15 @@ import {
   fstatSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
+import { rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
@@ -25,9 +26,13 @@ import { readInitLedgerFile, writeLedgerFile } from "./mind/init-ledger.js";
 import { chownMindDir, mindFileOwner } from "./mind/isolation.js";
 import {
   ensureMindDir,
+  type MindFileOwner,
+  MindFileRefusedError,
+  readMindFile,
   readMindFileBytes,
   readMindFileSync,
   removeMindFile,
+  resolveMindDir,
   writeMindFile,
 } from "./mind/mind-file-write.js";
 import { npmInstallAsMind } from "./mind/npm-install.js";
@@ -35,6 +40,7 @@ import { getBaseName, mindDir, readRegistry, stateDir, voluteHome } from "./mind
 import { sharedSkills } from "./schema.js";
 import { exec, gitExec } from "./util/exec.js";
 import log from "./util/logger.js";
+import { PathTraversalError } from "./util/paths.js";
 
 const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
 
@@ -192,13 +198,29 @@ export async function getSharedSkill(id: string): Promise<SharedSkill | undefine
   return db.select().from(sharedSkills).where(eq(sharedSkills.id, id)).get();
 }
 
-export async function importSkillFromDir(sourceDir: string, author: string): Promise<SharedSkill> {
+/**
+ * Import a skill into the shared pool. `untrusted` is for content someone else wrote (a
+ * mind's skill, staged out of its tree by publishSkill; an upload): it must hold only
+ * directories and plain files — a link, a hard link to a file elsewhere, or a FIFO refuses
+ * the whole import — since the pool's later readers would follow it and hand its target to
+ * every installer. It is checked, not raced: neither source is in a tree its author can
+ * still change. Trusted sources (built-ins, extensions) may be hard-linked by their package
+ * manager. `id` defaults to the source dir's name.
+ */
+export async function importSkillFromDir(
+  sourceDir: string,
+  author: string,
+  opts: { untrusted?: boolean } = {},
+): Promise<SharedSkill> {
   const skillMdPath = join(sourceDir, "SKILL.md");
   if (!existsSync(skillMdPath)) {
     throw new Error("SKILL.md not found in source directory");
   }
 
-  const content = readFileSync(skillMdPath, "utf-8");
+  if (opts.untrusted) assertPlainTree(sourceDir);
+  const content = opts.untrusted
+    ? readMindFileSync(skillMdPath)
+    : readFileSync(skillMdPath, "utf-8");
   const { name, description } = parseSkillMd(content);
   const id = basename(sourceDir);
 
@@ -348,6 +370,84 @@ export type InstallResult = {
   npmInstalled: string[];
 };
 
+/**
+ * A refusal to touch something a mind planted: a walk out of its tree, a link, a FIFO, a
+ * hard link (O_NOFOLLOW at the name surfaces as a bare ELOOP).
+ */
+function isRefusal(err: unknown): boolean {
+  return (
+    err instanceof MindFileRefusedError ||
+    err instanceof PathTraversalError ||
+    (err as NodeJS.ErrnoException)?.code === "ELOOP"
+  );
+}
+
+/** Refuse anything but a directory or a regular file with a single link. */
+function assertPlainEntry(path: string): void {
+  const st = lstatSync(path);
+  if (!st.isDirectory() && !(st.isFile() && st.nlink === 1)) {
+    throw new MindFileRefusedError(
+      `refusing ${path}: not a directory or a regular file with a single link`,
+    );
+  }
+}
+
+function assertPlainTree(dir: string): void {
+  assertPlainEntry(dir);
+  for (const entry of readdirSync(dir)) {
+    const path = join(dir, entry);
+    assertPlainEntry(path);
+    if (lstatSync(path).isDirectory()) assertPlainTree(path);
+  }
+}
+
+/** Read a file from the shared pool, refusing anything but a plain file. */
+function readPoolFile(path: string): Buffer {
+  const st = lstatSync(path);
+  if (!st.isFile() || st.nlink !== 1) {
+    throw new MindFileRefusedError(`refusing ${path}: not a regular file with a single link`);
+  }
+  return readFileSync(path);
+}
+
+/**
+ * Copy a skill from the pool into a mind, file by file through {@link writeMindFile}: every
+ * directory on the way is walked (a link out of the mind refuses) and created as the
+ * mind's, and every file is opened without following a link — so a dir the mind swaps for
+ * a link once the copy has started refuses rather than redirecting the daemon's writes (up
+ * to the resolve-to-open race mind-file-write.ts names). Modes are kept (scripts may be
+ * executable).
+ */
+export async function copySkillTree(
+  sourceDir: string,
+  dir: string,
+  relDest: string,
+  owner: MindFileOwner | null,
+): Promise<void> {
+  for (const file of listFilesRecursive(sourceDir)) {
+    const src = join(sourceDir, file);
+    await writeMindFile(dir, join(relDest, file), readPoolFile(src), {
+      owner,
+      mode: lstatSync(src).mode & 0o777,
+    });
+  }
+}
+
+/**
+ * Remove a directory in a mind: its parent is re-contained first (a link out of the mind
+ * refuses), and a link at the name is removed itself — never what it points at, which may
+ * be the mind's own work elsewhere in its tree.
+ */
+async function removeMindTree(dir: string, rel: string, owner: MindFileOwner | null) {
+  const parent = await resolveMindDir(dir, dirname(rel), owner);
+  if (!parent) return;
+  await rm(join(parent, basename(rel)), { recursive: true, force: true });
+}
+
+async function removeSkillDir(dir: string, skillDir: string, owner: MindFileOwner | null) {
+  await removeMindTree(dir, relative(dir, skillDir), owner);
+}
+
 export async function installSkill(
   mindName: string,
   dir: string,
@@ -363,25 +463,29 @@ export async function installSkill(
   const destDir = join(mindSkillsDir(dir), skillId);
   if (lexists(destDir)) throw new Error(`Skill already installed: ${skillId}`);
 
-  // The skills dir is the mind's, and the daemon may be root: create the skill's dir
-  // through the mind-file walk (a skills dir linked out of the mind refuses) and copy
-  // into the real path it vouches for, which this call just made and nothing else has.
+  // The skills dir is the mind's, and the daemon may be root: copy through the mind-file
+  // helpers, so nothing the mind plants on the way can aim a write elsewhere.
   const owner = await mindFileOwner(await getBaseName(mindName));
-  const realDestDir = await ensureMindDir(dir, relative(dir, destDir), owner);
-  cpSync(sourceDir, realDestDir, { recursive: true });
+  try {
+    await copySkillTree(sourceDir, dir, relative(dir, destDir), owner);
+  } catch (e) {
+    // A partial copy would wedge every retry on the "already installed" guard.
+    await removeSkillDir(dir, destDir, owner).catch(() => {});
+    throw e;
+  }
 
   // Parse SKILL.md once for npm dependencies, hooks, and bin
   const npmInstalled: string[] = [];
   const skillMdPath = join(sourceDir, "SKILL.md");
   if (existsSync(skillMdPath)) {
-    const { npmDependencies, hooks, bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+    const { npmDependencies, hooks, bin } = parseSkillMd(readPoolFile(skillMdPath).toString());
     if (npmDependencies.length > 0) {
       try {
         await npmInstallAsMind(dir, mindName, npmDependencies);
         npmInstalled.push(...npmDependencies);
       } catch (e) {
         // Clean up partial install so the skill can be retried
-        rmSync(destDir, { recursive: true });
+        await removeSkillDir(dir, destDir, owner);
         const msg = e instanceof Error ? e.message : String(e);
         throw new Error(
           `Failed to install npm dependencies (${npmDependencies.join(", ")}): ${msg}`,
@@ -397,16 +501,16 @@ export async function installSkill(
       // here — e.g. a bin-shim collision with another skill — doesn't leave
       // destDir behind and wedge every retry on the "already installed" guard.
       removeHookShims(dir, skillId);
-      rmSync(destDir, { recursive: true });
+      await removeSkillDir(dir, destDir, owner);
       throw e;
     }
   }
 
-  // Read install notes if present
+  // Read install notes if present — from the pool: the mind's copy is the mind's to relink
   let installNotes: string | null = null;
-  const installMdPath = join(destDir, "references", "INSTALL.md");
+  const installMdPath = join(sourceDir, "references", "INSTALL.md");
   if (existsSync(installMdPath)) {
-    installNotes = readFileSync(installMdPath, "utf-8");
+    installNotes = readPoolFile(installMdPath).toString();
   }
 
   // Write upstream tracking file
@@ -442,7 +546,7 @@ export async function installSkill(
 }
 
 export async function uninstallSkill(
-  _mindName: string,
+  mindName: string,
   dir: string,
   skillId: string,
 ): Promise<void> {
@@ -450,15 +554,26 @@ export async function uninstallSkill(
   const skillDir = join(mindSkillsDir(dir), skillId);
   if (!existsSync(skillDir)) throw new Error(`Skill not installed: ${skillId}`);
 
+  // The skill dir is the mind's: read and remove it through the mind-file walk, so a
+  // skills dir linked out of the mind refuses instead of aiming a root rm elsewhere.
+  // A SKILL.md the walk refuses (a link, a FIFO, a dir linked out of the mind) only costs
+  // the bin shim's removal; the skill itself still goes.
+  const owner = await mindFileOwner(await getBaseName(mindName));
+  const skillMd = await readMindFile(dir, relative(dir, join(skillDir, "SKILL.md")), {
+    owner,
+  }).catch((err) => {
+    if (isRefusal(err)) return null;
+    throw err;
+  });
+
   // Remove hook shims and bin command for this skill
   removeHookShims(dir, skillId);
-  const skillMdPath = join(skillDir, "SKILL.md");
-  if (existsSync(skillMdPath)) {
-    const { bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+  if (skillMd) {
+    const { bin } = parseSkillMd(skillMd.text);
     if (bin) removeBinShim(dir, bin);
   }
 
-  rmSync(skillDir, { recursive: true });
+  await removeSkillDir(dir, skillDir, owner);
   await gitExec(["add", join(relSkillsPath(dir), skillId)], { cwd: dir });
   // Also stage hook shim and bin removals
   await gitExec(["add", join("home", ".local", "hooks")], { cwd: dir }).catch(() => {});
@@ -466,9 +581,18 @@ export async function uninstallSkill(
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
 }
 
+/**
+ * A skill's parsed SKILL.md, or null when it has none. A mind's (and a pool entry a mind
+ * published) is read without following a link or blocking on a FIFO — the daemon reads
+ * these at startup, and a hung read would hang it. Throws on such a file.
+ */
 function readSkillMd(skillDir: string): ReturnType<typeof parseSkillMd> | null {
-  const skillMdPath = join(skillDir, "SKILL.md");
-  return existsSync(skillMdPath) ? parseSkillMd(readFileSync(skillMdPath, "utf-8")) : null;
+  try {
+    return parseSkillMd(readMindFileSync(join(skillDir, "SKILL.md")));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
 }
 
 export type UpdateResult =
@@ -524,6 +648,14 @@ export async function updateSkill(
     ) ?? null;
   const writeCurrent = (file: string, content: string | Buffer, mode?: number) =>
     writeMindFile(dir, inSkill(file), content, { owner, mode });
+  // The mind's SKILL.md through the anchored walk (a skills dir linked out of the mind
+  // refuses). Read once before the merge writes anything, so one that can't be read fails
+  // the update before it starts rather than after half of it.
+  const readMindSkillMd = async () => {
+    const md = await readMindFile(dir, inSkill("SKILL.md"), { owner });
+    return md ? parseSkillMd(md.text) : null;
+  };
+  await readMindSkillMd();
 
   try {
     for (const file of allFiles) {
@@ -534,7 +666,7 @@ export async function updateSkill(
 
       if (!currentExists && newExists) {
         // New file — just copy (keeping its mode: skill scripts may be executable)
-        await writeCurrent(file, readFileSync(newPath), statSync(newPath).mode & 0o777);
+        await writeCurrent(file, readPoolFile(newPath), lstatSync(newPath).mode & 0o777);
         continue;
       }
 
@@ -575,7 +707,7 @@ export async function updateSkill(
       }
 
       const currentContent = (await readCurrent(file)) ?? "";
-      const newContent = readFileSync(newPath, "utf-8");
+      const newContent = readPoolFile(newPath).toString();
 
       // If current hasn't changed from base, just take the new version
       if (currentContent === baseContent) {
@@ -626,7 +758,7 @@ export async function updateSkill(
   // Wire the merged skill up the way installSkill does — otherwise a mind that
   // installed it before hooks (#228) or bins (#231) existed keeps the files but
   // none of the npm deps or shims they rely on.
-  const merged = readSkillMd(skillDir);
+  const merged = await readMindSkillMd();
   const npmDependencies = merged?.npmDependencies ?? [];
   if (npmDependencies.length > 0) {
     try {
@@ -688,14 +820,16 @@ export async function listMindSkills(dir: string): Promise<MindSkillInfo[]> {
   const results: MindSkillInfo[] = [];
   for (const entry of entries) {
     const skillDir = join(skillsDir, entry.name);
-    const skillMdPath = join(skillDir, "SKILL.md");
     let name = entry.name;
     let description = "";
 
-    if (existsSync(skillMdPath)) {
-      const parsed = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
-      if (parsed.name) name = parsed.name;
-      description = parsed.description;
+    try {
+      const parsed = readSkillMd(skillDir);
+      if (parsed?.name) name = parsed.name;
+      description = parsed?.description ?? "";
+    } catch (err) {
+      // A SKILL.md that isn't a plain file is listed by its dir name alone.
+      if (!isRefusal(err)) throw err;
     }
 
     const upstream = readUpstream(skillDir);
@@ -718,13 +852,53 @@ export async function publishSkill(
   dir: string,
   skillId: string,
 ): Promise<SharedSkill> {
+  // Before anything is joined with it: the id names both the mind's dir and the staging one.
+  validateSkillId(skillId);
   const skillDir = join(mindSkillsDir(dir), skillId);
   if (!existsSync(skillDir)) throw new Error(`Skill not found: ${skillId}`);
 
   const skillMdPath = join(skillDir, "SKILL.md");
   if (!existsSync(skillMdPath)) throw new Error(`SKILL.md not found in ${skillId}`);
 
-  return importSkillFromDir(skillDir, mindName);
+  // Stage the skill out of the mind first, file by file through the mind-file helpers: the
+  // daemon reads it as root, and anything but a plain dir or file — or one the mind swaps
+  // for a link or FIFO mid-copy — refuses rather than handing a host file to the pool.
+  const owner = await mindFileOwner(await getBaseName(mindName));
+  const staging = mkdtempSync(join(tmpdir(), "volute-publish-"));
+  try {
+    const staged = join(staging, skillId);
+    await stageMindTree(dir, relative(dir, skillDir), staged, owner);
+    return await importSkillFromDir(staged, mindName, { untrusted: true });
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+/** Copy a dir out of a mind into `dest` (made here), through the mind-file walk. */
+async function stageMindTree(
+  dir: string,
+  rel: string,
+  dest: string,
+  owner: MindFileOwner | null,
+): Promise<void> {
+  const real = await resolveMindDir(dir, rel, owner);
+  if (!real) throw new Error(`not found: ${rel}`);
+  mkdirSync(dest);
+  for (const entry of readdirSync(real, { withFileTypes: true })) {
+    const entryRel = join(rel, entry.name);
+    if (entry.isDirectory()) {
+      await stageMindTree(dir, entryRel, join(dest, entry.name), owner);
+    } else if (entry.isFile()) {
+      const bytes = await readMindFileBytes(dir, entryRel, { owner, maxBytes: 64 * 1024 * 1024 });
+      // Keeps the permission bits (scripts may be executable), never setuid/setgid.
+      const mode = lstatSync(join(real, entry.name)).mode & 0o777;
+      if (bytes) writeFileSync(join(dest, entry.name), bytes, { flag: "wx", mode });
+    } else {
+      throw new MindFileRefusedError(
+        `refusing ${join(dir, entryRel)}: not a directory or a regular file`,
+      );
+    }
+  }
 }
 
 // --- Hook shim management ---
@@ -771,16 +945,28 @@ export function installHookShims(
 }
 
 export function removeHookShims(dir: string, skillId: string): void {
+  // Only under plain dirs (a linked .local/hooks would aim the rm elsewhere); an event
+  // dirent that is a link is not a directory here. A link at the shim's name is unlinked
+  // itself, and anything but a file or link is left alone.
+  if (!realDirChain(dir, "home/.local/hooks", false)) return;
   const hooksBase = join(dir, "home", ".local", "hooks");
-  if (!existsSync(hooksBase)) return;
-
   for (const eventDir of readdirSync(hooksBase, { withFileTypes: true })) {
     if (!eventDir.isDirectory()) continue;
     for (const prefix of [HOOK_SHIM_PREFIX, ...LEGACY_HOOK_SHIM_PREFIXES]) {
-      const shimPath = join(hooksBase, eventDir.name, `${prefix}${skillId}.sh`);
-      if (existsSync(shimPath)) rmSync(shimPath);
+      removeShimEntry(join(hooksBase, eventDir.name, `${prefix}${skillId}.sh`));
     }
   }
+}
+
+/** Unlink a shim — a file, or a link itself — and nothing else. */
+function removeShimEntry(abs: string): void {
+  let st: ReturnType<typeof lstatSync>;
+  try {
+    st = lstatSync(abs);
+  } catch {
+    return;
+  }
+  if (st.isFile() || st.isSymbolicLink()) rmSync(abs);
 }
 
 // --- Bin shim management ---
@@ -807,11 +993,9 @@ function binCommandName(scriptPath: string): string {
   return basename(scriptPath).replace(/\.[^.]+$/, "");
 }
 
-/** Read the owning skill id from an existing bin shim, or undefined if unmarked. */
+/** Read the owning skill id from an existing bin shim, or undefined if unmarked (or not a shim). */
 function binShimOwner(shimPath: string): string | undefined {
-  const line = readFileSync(shimPath, "utf-8")
-    .split("\n")
-    .find((l) => l.startsWith(BIN_SHIM_MARKER));
+  const line = (readShim(shimPath) ?? "").split("\n").find((l) => l.startsWith(BIN_SHIM_MARKER));
   return line?.slice(BIN_SHIM_MARKER.length).trim() || undefined;
 }
 
@@ -845,8 +1029,9 @@ function replaceShim(dir: string, relDir: string, abs: string, content: string):
  */
 function assertBinShimAvailable(dir: string, skillId: string, scriptPath: string): void {
   const cmdName = binCommandName(scriptPath);
+  if (!realDirChain(dir, "home/.local/bin", false)) return;
   const shimPath = join(dir, "home", ".local", "bin", cmdName);
-  if (!existsSync(shimPath)) return;
+  if (!lexists(shimPath)) return;
   const owner = binShimOwner(shimPath);
   if (owner && owner !== skillId) {
     throw new Error(
@@ -856,9 +1041,10 @@ function assertBinShimAvailable(dir: string, skillId: string, scriptPath: string
 }
 
 export function removeBinShim(dir: string, scriptPath: string): void {
-  const cmdName = binCommandName(scriptPath);
-  const shimPath = join(dir, "home", ".local", "bin", cmdName);
-  if (existsSync(shimPath)) rmSync(shimPath);
+  // The name comes from the mind's own SKILL.md, so .local/bin must be a plain dir: a
+  // link there (to /etc, with `bin: passwd`) would aim a root unlink outside the mind.
+  if (!realDirChain(dir, "home/.local/bin", false)) return;
+  removeShimEntry(join(dir, "home", ".local", "bin", binCommandName(scriptPath)));
 }
 
 // --- Shim reconciliation ---
@@ -1083,43 +1269,49 @@ export function reconcileSkillShims(
  * while their bin/hook shims keep pointing at the old path. Move each installed
  * skill directory (preserving .upstream.json) into the new template's skills dir
  * and regenerate its shims so their embedded paths match. Returns migrated ids.
+ *
+ * Both skills dirs are the mind's, and the daemon may be root: they are resolved through
+ * the mind-file walk, so one the mind linked out of its tree refuses rather than moving
+ * skills in from, or out to, somewhere else.
  */
-export function migrateSkillsToTemplate(
+export async function migrateSkillsToTemplate(
   dir: string,
   oldTemplate: string,
   newTemplate: string,
-): string[] {
-  const home = resolve(dir, "home");
+  owner: MindFileOwner | null,
+): Promise<string[]> {
   const oldSubdir = TEMPLATE_SKILLS_DIR[oldTemplate] ?? TEMPLATE_SKILLS_DIR.claude;
   const newSubdir = TEMPLATE_SKILLS_DIR[newTemplate] ?? TEMPLATE_SKILLS_DIR.claude;
   if (oldSubdir === newSubdir) return [];
 
-  const oldDir = resolve(home, oldSubdir);
-  const newDir = resolve(home, newSubdir);
-  if (!existsSync(oldDir)) return [];
+  const oldDir = await resolveMindDir(dir, join("home", oldSubdir), owner);
+  if (!oldDir) return [];
 
+  // Dirent.isDirectory() doesn't follow links, so a linked entry is left behind.
   const skillIds = readdirSync(oldDir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => e.name);
 
   const migrated: string[] = [];
   if (skillIds.length > 0) {
-    mkdirSync(newDir, { recursive: true });
+    const newDir = await ensureMindDir(dir, join("home", newSubdir), owner);
     for (const skillId of skillIds) {
       const from = join(oldDir, skillId);
       const to = join(newDir, skillId);
       // The new template starts with no skills, so a collision is unexpected —
-      // but be safe and let the migrated copy win.
-      if (existsSync(to)) rmSync(to, { recursive: true, force: true });
-      renameSync(from, to);
+      // but be safe and let the migrated copy win. rm on a link removes the link.
+      await rm(to, { recursive: true, force: true });
+      await rename(from, to);
 
       // Regenerate shims with the new skills subdir. The shim files live at the
       // same .local/hooks|bin paths regardless of template, so reinstalling
       // overwrites the stale ones in place.
       removeHookShims(dir, skillId);
-      const skillMdPath = join(to, "SKILL.md");
-      if (existsSync(skillMdPath)) {
-        const { hooks, bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+      const skillMd = await readMindFile(dir, join("home", newSubdir, skillId, "SKILL.md"), {
+        owner,
+      });
+      if (skillMd) {
+        const { hooks, bin } = parseSkillMd(skillMd.text);
         installHookShims(dir, skillId, hooks, newSubdir);
         if (bin) installBinShim(dir, skillId, bin, newSubdir);
       }
@@ -1127,8 +1319,9 @@ export function migrateSkillsToTemplate(
     }
   }
 
-  // Remove the now-empty old skills dir so marker-based detection stays clean.
-  rmSync(oldDir, { recursive: true, force: true });
+  // Remove the now-empty old skills dir so marker-based detection stays clean — or, if
+  // the mind made it a link into its own tree, just the link.
+  await removeMindTree(dir, join("home", oldSubdir), owner);
   return migrated;
 }
 

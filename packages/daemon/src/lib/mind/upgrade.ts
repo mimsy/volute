@@ -548,7 +548,12 @@ async function mergeUpgradeAndRestart(
       // Move installed skills into the new template's skills dir and regenerate
       // their shims, so they aren't stranded (invisible + shims pointing at the
       // old path) after the switch.
-      const migratedSkills = migrateSkillsToTemplate(dir, oldTemplate, template);
+      const migratedSkills = await migrateSkillsToTemplate(
+        dir,
+        oldTemplate,
+        template,
+        await mindFileOwner(mindName),
+      );
       await gitExec(["add", "home/"], asMind);
       try {
         await gitExec(["diff", "--cached", "--quiet"], asMind);

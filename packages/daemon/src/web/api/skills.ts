@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { readGlobalConfig, writeGlobalConfig } from "../../lib/config/setup.js";
 import { getExtensionStandardSkills } from "../../lib/extensions.js";
+import { MindFileRefusedError } from "../../lib/mind/mind-file-write.js";
 import {
   getSharedSkill,
   getStandardSkillsWithExtensions,
@@ -141,10 +142,13 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: "No SKILL.md found in zip (checked root and one level deep)" }, 400);
       }
 
-      const skill = await importSkillFromDir(skillDir, "upload");
+      const skill = await importSkillFromDir(skillDir, "upload", { untrusted: true });
       return c.json(skill);
     } catch (e) {
-      if (e instanceof Error && e.message.includes("Invalid skill ID")) {
+      if (
+        e instanceof MindFileRefusedError ||
+        (e instanceof Error && e.message.includes("Invalid skill ID"))
+      ) {
         return c.json({ error: e.message }, 400);
       }
       throw e;
