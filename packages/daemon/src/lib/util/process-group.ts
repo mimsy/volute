@@ -52,6 +52,24 @@ export async function readStat(
   return { ppid: Number(fields[1]), pgrp: Number(fields[2]), start: fields[19] };
 }
 
+/** A process from a scan of `/proc`. */
+export type ProcStat = Member & { ppid: number; pgrp: number };
+
+/** Every process in `/proc`, from its `stat`. Linux only: throws when `/proc` can't be read. */
+export async function scanProcs(procDir = "/proc"): Promise<ProcStat[]> {
+  const pids = (await readdir(procDir)).filter((e) => /^\d+$/.test(e)).map(Number);
+  const procs: ProcStat[] = [];
+  for (let i = 0; i < pids.length; i += SCAN_CONCURRENCY) {
+    const batch = pids.slice(i, i + SCAN_CONCURRENCY);
+    const stats = await Promise.all(batch.map((pid) => readStat(procDir, pid)));
+    batch.forEach((pid, j) => {
+      const stat = stats[j];
+      if (stat) procs.push({ pid, ...stat });
+    });
+  }
+  return procs;
+}
+
 /**
  * The members of process group `pgid`, other than `exclude`, from a scan of every
  * `/proc/<pid>/stat`. Linux only: throws when `/proc` can't be read.
@@ -60,21 +78,9 @@ export async function groupMembers(
   pgid: number,
   opts: { procDir?: string; exclude?: number } = {},
 ): Promise<Member[]> {
-  const procDir = opts.procDir ?? "/proc";
-  const pids = (await readdir(procDir))
-    .filter((e) => /^\d+$/.test(e))
-    .map(Number)
-    .filter((pid) => pid !== opts.exclude);
-  const members: Member[] = [];
-  for (let i = 0; i < pids.length; i += SCAN_CONCURRENCY) {
-    const batch = pids.slice(i, i + SCAN_CONCURRENCY);
-    const stats = await Promise.all(batch.map((pid) => readStat(procDir, pid)));
-    batch.forEach((pid, j) => {
-      const stat = stats[j];
-      if (stat?.pgrp === pgid) members.push({ pid, start: stat.start });
-    });
-  }
-  return members;
+  return (await scanProcs(opts.procDir))
+    .filter((p) => p.pgrp === pgid && p.pid !== opts.exclude)
+    .map(({ pid, start }) => ({ pid, start }));
 }
 
 /** The direct children of `pid`, across its threads; [] once it has exited. Linux only. */
@@ -114,13 +120,13 @@ export async function isRunuser(pid: number, procDir = "/proc"): Promise<boolean
 }
 
 /**
- * Signal each process that is still itself (same start time, and same group when
- * `pgid` is given). ESRCH is fine; anything else is logged.
+ * Signal each process that is still itself (same start time, same group when `pgid`
+ * is given, and passing `verify` when given). ESRCH is fine; anything else is logged.
  */
 export async function signalEach(
   members: Member[],
   signal: NodeJS.Signals,
-  opts: GroupOpts & { pgid?: number } = {},
+  opts: GroupOpts & { pgid?: number; verify?: (pid: number) => Promise<boolean> } = {},
 ): Promise<void> {
   const kill = opts.kill ?? defaultKill;
   const procDir = opts.procDir ?? "/proc";
@@ -129,6 +135,7 @@ export async function signalEach(
       const now = await readStat(procDir, member.pid);
       if (!now || now.start !== member.start) continue;
       if (opts.pgid !== undefined && now.pgrp !== opts.pgid) continue;
+      if (opts.verify && !(await opts.verify(member.pid))) continue;
       kill(member.pid, signal);
     } catch (err) {
       if (!isGone(err)) plog.warn(`${signal} to pid ${member.pid} failed`, log.errorData(err));

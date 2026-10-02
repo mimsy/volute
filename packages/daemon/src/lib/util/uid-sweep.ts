@@ -1,87 +1,91 @@
-import { readdir, readFile } from "node:fs/promises";
-import { exec } from "./exec.js";
+import { readFile } from "node:fs/promises";
 import log from "./logger.js";
-import { defaultKill, isGone, type Kill, readStat } from "./process-group.js";
+import {
+  type Kill,
+  type Member,
+  type ProcStat,
+  readStat,
+  scanProcs,
+  signalEach,
+} from "./process-group.js";
 
 /**
- * Sweeping up what a stopped mind left running outside its process group (#1374).
+ * Ending what a mind left running outside its process group (#1374).
  *
  * The Claude CLI starts each Bash command in its own session, so a `nohup … &` a mind
  * runs that way leaves the mind's group, is reparented to init, and outlives a stop
- * that signals the group. Under user isolation the mind's OS user owns nothing but the
- * mind's own processes, so once the group is stopped, whatever else still runs as that
- * uid is the mind's — except what the daemon itself is running as it right now
- * (scheduled scripts, git, npm), which descends from the daemon and is spared.
+ * that signals the group. Under user isolation such a process runs as the mind's own OS
+ * user, and it carries the `VOLUTE_MIND=<name>` the daemon gave the mind's server, which
+ * every process the mind starts inherits. Both together mark it as the mind's: a host's
+ * `sudo -u mind-<name>` shell has the uid but not the marker, and a variant's jobs have
+ * the uid but their own name. What the daemon itself is running as the mind (scheduled
+ * scripts, git, npm) descends from the daemon and is spared.
+ *
+ * Linux only: it reads `/proc`. On macOS (`sudo -u` isolation) nothing is swept, and a
+ * mind's background jobs outlive its stop there.
  */
 
 const slog = log.child("uid-sweep");
 
-/** A process as the sweep sees it. `start` tells it from a later process on a reused pid. */
-type Proc = { pid: number; ppid: number; pgrp: number; uid: number; start: string };
+/** How many processes' `status` and `environ` are read at once. */
+const SCAN_CONCURRENCY = 64;
 
 export type SweepOpts = {
-  /** Spare this process and its descendants: the daemon's own children. */
+  /** Spare this process and its descendants: the daemon and its children. */
   ancestor: number;
-  /** Leave this group alone: the stopped mind's own, which its stop's deadline covers. */
-  spareGroup?: number;
-  /** Asked before each signal pass; false calls the sweep off (a variant came up). */
-  proceed?: () => boolean;
   /** How long the SIGTERMed get before the SIGKILL. */
   boundMs: number;
-  /** Read processes from this `/proc` instead of the platform's (tests). */
+  /**
+   * Read a file as the mind's own user. Root needs CAP_SYS_PTRACE to read another
+   * uid's `environ`, and Docker withholds it by default; the process's own uid needs
+   * nothing.
+   */
+  readAsOwner?: (path: string) => Promise<string>;
+  /** Read processes from this `/proc` instead of the real one (tests). */
   procDir?: string;
   kill?: Kill;
 };
 
-const SCAN_CONCURRENCY = 64;
-
-/** The real uid on the `Uid:` line of `/proc/<pid>/status`; null once it has exited. */
+/** The real uid on the `Uid:` line of `/proc/<pid>/status`; null if unreadable. */
 async function readUid(procDir: string, pid: number): Promise<number | null> {
-  let status: string;
   try {
-    status = await readFile(`${procDir}/${pid}/status`, "utf-8");
+    const uid = (await readFile(`${procDir}/${pid}/status`, "utf-8")).match(/^Uid:\s+(\d+)/m);
+    return uid ? Number(uid[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether `/proc/<pid>/environ` holds exactly `entry`: read directly, or as the owner
+ * when that is refused. False if it can't be read either way.
+ */
+async function hasEnv(
+  procDir: string,
+  pid: number,
+  entry: string,
+  readAsOwner?: (path: string) => Promise<string>,
+): Promise<boolean> {
+  const path = `${procDir}/${pid}/environ`;
+  let environ: string;
+  try {
+    environ = await readFile(path, "utf-8");
   } catch (err) {
-    if (isGone(err)) return null;
-    throw err;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (!readAsOwner || (code !== "EACCES" && code !== "EPERM")) return false;
+    try {
+      environ = await readAsOwner(path);
+    } catch {
+      return false;
+    }
   }
-  const uid = status.match(/^Uid:\s+(\d+)/m)?.[1];
-  return uid === undefined ? null : Number(uid);
-}
-
-async function readProc(procDir: string, pid: number): Promise<Proc | null> {
-  const [stat, uid] = await Promise.all([readStat(procDir, pid), readUid(procDir, pid)]);
-  return stat && uid !== null ? { pid, uid, ...stat } : null;
-}
-
-async function scanProc(procDir: string): Promise<Proc[]> {
-  const pids = (await readdir(procDir)).filter((e) => /^\d+$/.test(e)).map(Number);
-  const procs: Proc[] = [];
-  for (let i = 0; i < pids.length; i += SCAN_CONCURRENCY) {
-    const batch = await Promise.all(
-      pids.slice(i, i + SCAN_CONCURRENCY).map((pid) => readProc(procDir, pid)),
-    );
-    for (const p of batch) if (p) procs.push(p);
-  }
-  return procs;
-}
-
-/** Without `/proc` (macOS): one `ps` of every process. `lstart` holds spaces, so it's last. */
-async function scanPs(): Promise<Proc[]> {
-  const out = await exec("ps", ["-A", "-o", "pid=,ppid=,pgid=,ruid=,lstart="], {
-    env: { LC_ALL: "C", TZ: "UTC" },
-  });
-  return out.split("\n").flatMap((line) => {
-    const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/);
-    if (!m) return [];
-    const [pid, ppid, pgrp, uid] = m.slice(1, 5).map(Number);
-    return [{ pid, ppid, pgrp, uid, start: m[5] }];
-  });
+  return environ.split("\0").includes(entry);
 }
 
 /** Whether `p` is `ancestor` or descends from it, by following ppid through `table`. */
-function descendsFrom(p: Proc, ancestor: number, table: Map<number, Proc>): boolean {
+function descendsFrom(p: ProcStat, ancestor: number, table: Map<number, ProcStat>): boolean {
   const seen = new Set<number>();
-  for (let cur: Proc | undefined = p; cur && !seen.has(cur.pid); cur = table.get(cur.ppid)) {
+  for (let cur: ProcStat | undefined = p; cur && !seen.has(cur.pid); cur = table.get(cur.ppid)) {
     if (cur.pid === ancestor || cur.ppid === ancestor) return true;
     seen.add(cur.pid);
   }
@@ -89,61 +93,53 @@ function descendsFrom(p: Proc, ancestor: number, table: Map<number, Proc>): bool
 }
 
 /**
- * SIGTERM every process whose real uid is `uid` — other than `ancestor`'s descendants
- * and `spareGroup`'s members — wait up to `boundMs` for them to go, then SIGKILL any
- * still left, along with any started meanwhile. Resolves to how many were SIGTERMed.
+ * SIGTERM every process the mind `name` started that still runs as its `uid` — other
+ * than the descendants of `ancestor` — wait up to `boundMs` for them to go, then SIGKILL
+ * any still there. Resolves to how many were SIGTERMed.
  *
- * Only for a uid that belongs to one mind alone (user isolation): it signals whatever
- * runs as that uid. Refuses root and the daemon's own uid outright. Never throws: a
- * failure is logged and leaves things as they were.
+ * Only for a uid that belongs to one mind alone (user isolation). Refuses root and the
+ * daemon's own uid outright. Never throws: a failure is logged and leaves things as
+ * they were.
  */
-export async function sweepUid(uid: number, opts: SweepOpts): Promise<number> {
+export async function sweepMindProcesses(
+  uid: number,
+  name: string,
+  opts: SweepOpts,
+): Promise<number> {
   if (!(uid > 0) || uid === process.getuid?.()) {
     slog.warn(`refusing to sweep uid ${uid}: it isn't a mind's own`);
     return 0;
   }
-  const kill = opts.kill ?? defaultKill;
-  const useProc = opts.procDir !== undefined || process.platform === "linux";
+  if (opts.procDir === undefined && process.platform !== "linux") return 0;
   const procDir = opts.procDir ?? "/proc";
-  const strays = async (): Promise<Proc[]> => {
-    const all = useProc ? await scanProc(procDir) : await scanPs();
-    const table = new Map(all.map((p) => [p.pid, p]));
-    return all.filter(
-      (p) => p.uid === uid && p.pgrp !== opts.spareGroup && !descendsFrom(p, opts.ancestor, table),
-    );
-  };
-  // Signal each only while it is still itself: the same process (start time) of the
-  // same uid. `ps` has no cheap per-process re-read, so there the fresh scan stands in.
-  const signal = async (procs: Proc[], sig: NodeJS.Signals) => {
-    for (const p of procs) {
-      try {
-        if (useProc) {
-          const now = await readProc(procDir, p.pid);
-          if (!now || now.start !== p.start || now.uid !== uid) continue;
-        }
-        kill(p.pid, sig);
-      } catch (err) {
-        if (!isGone(err)) slog.warn(`${sig} to pid ${p.pid} failed`, log.errorData(err));
-      }
-    }
-  };
-  const proceed = opts.proceed ?? (() => true);
+  const marker = `VOLUTE_MIND=${name}`;
+  const isMinds = async (pid: number) =>
+    (await readUid(procDir, pid)) === uid && (await hasEnv(procDir, pid, marker, opts.readAsOwner));
   try {
-    if (!proceed()) return 0;
-    const found = await strays();
-    if (!found.length) return 0;
-    await signal(found, "SIGTERM");
-    const deadline = Date.now() + opts.boundMs;
-    let left = found;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 100));
-      left = await strays();
-      if (!left.length) return found.length;
+    const all = await scanProcs(procDir);
+    const table = new Map(all.map((p) => [p.pid, p]));
+    const candidates = all.filter((p) => !descendsFrom(p, opts.ancestor, table));
+    const strays: Member[] = [];
+    for (let i = 0; i < candidates.length; i += SCAN_CONCURRENCY) {
+      const batch = candidates.slice(i, i + SCAN_CONCURRENCY);
+      const marked = await Promise.all(batch.map((p) => isMinds(p.pid)));
+      for (const [j, { pid, start }] of batch.entries()) if (marked[j]) strays.push({ pid, start });
     }
-    if (proceed()) await signal(left, "SIGKILL");
-    return found.length;
+    if (!strays.length) return 0;
+    const signal = { procDir, kill: opts.kill, verify: isMinds };
+    await signalEach(strays, "SIGTERM", signal);
+    // Watch only what was signalled: the same process (start time) still there.
+    const deadline = Date.now() + opts.boundMs;
+    let left = strays;
+    while (left.length && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+      const now = await Promise.all(left.map((m) => readStat(procDir, m.pid)));
+      left = left.filter((m, i) => now[i]?.start === m.start);
+    }
+    if (left.length) await signalEach(left, "SIGKILL", signal);
+    return strays.length;
   } catch (err) {
-    slog.warn(`could not sweep uid ${uid}`, log.errorData(err));
+    slog.warn(`could not sweep ${name}'s processes`, log.errorData(err));
     return 0;
   }
 }

@@ -4,8 +4,13 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
-import { MindManager } from "../packages/daemon/src/lib/daemon/mind-manager.js";
-import { addMind, removeMind, stateDir } from "../packages/daemon/src/lib/mind/registry.js";
+import { isOurMindServer, MindManager } from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import {
+  addMind,
+  mindDir,
+  removeMind,
+  stateDir,
+} from "../packages/daemon/src/lib/mind/registry.js";
 import log from "../packages/daemon/src/lib/util/logger.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -184,14 +189,14 @@ describe("MindManager.stopMind signals", () => {
   });
 });
 
-describe("MindManager stop sweep of the mind's OS user (#1374)", () => {
+describe("MindManager sweep of what a mind left running (#1374)", () => {
   /** A manager whose sweep and owner lookup are stubbed; returns what it was asked to sweep. */
   function sweeper() {
     const mgr = new MindManager() as AnyMgr;
-    const calls: { uid: number; opts: AnyMgr }[] = [];
+    const calls: { uid: number; name: string; opts: AnyMgr }[] = [];
     mgr.mindOwner = async () => ({ uid: 1234, gid: 1234 });
-    mgr.sweepUid = async (uid: number, opts: AnyMgr) => {
-      calls.push({ uid, opts });
+    mgr.sweepMindProcesses = async (uid: number, name: string, opts: AnyMgr) => {
+      calls.push({ uid, name, opts });
       return 0;
     };
     return { mgr, calls };
@@ -208,13 +213,16 @@ describe("MindManager stop sweep of the mind's OS user (#1374)", () => {
     }
   }
 
-  it("a stop sweeps the stopped mind's uid, sparing the daemon's children and the stopped group", () =>
+  it("a stop sweeps the stopped mind's processes, sparing the daemon's children", () =>
     withIsolation(async () => {
       const { mgr, calls } = sweeper();
       const name = `sweeper-${Math.random().toString(36).slice(2, 8)}`;
       await addMind(name, 4994);
       const child = spawn("true", [], { detached: true, stdio: "ignore" });
       await new Promise((r) => child.once("exit", r));
+      // A variant running as the same user doesn't hold the sweep off: its jobs carry
+      // its own name.
+      mgr.minds.set(`${name}-v`, { child, port: 4995, baseName: name, supervised: false });
       try {
         mgr.minds.set(name, { child, port: 4994, baseName: name, supervised: false });
         await mgr.stopMind(name);
@@ -223,32 +231,41 @@ describe("MindManager stop sweep of the mind's OS user (#1374)", () => {
       }
       assert.equal(calls.length, 1);
       assert.equal(calls[0].uid, 1234);
+      assert.equal(calls[0].name, name);
       assert.equal(calls[0].opts.ancestor, process.pid);
-      assert.equal(calls[0].opts.spareGroup, child.pid);
-      assert.equal(calls[0].opts.proceed(), true);
-      // A variant coming up as the same user calls the rest of the sweep off.
-      mgr.minds.set(`${name}-v`, { child, port: 4995, baseName: name, supervised: false });
-      assert.equal(calls[0].opts.proceed(), false);
     }));
 
-  it("does not sweep while a variant of the same base runs", () =>
-    withIsolation(async () => {
-      const { mgr, calls } = sweeper();
-      mgr.minds.set("base-v", { child: new EventEmitter(), port: 1, baseName: "base" });
-      await mgr.sweepMindUser("base", "base", 100);
-      assert.equal(calls.length, 0);
-      // Another base's variant is no reason to hold off.
-      mgr.minds.clear();
-      mgr.minds.set("other-v", { child: new EventEmitter(), port: 1, baseName: "other" });
-      await mgr.sweepMindUser("base", "base", 100);
-      assert.equal(calls.length, 1);
-    }));
+  it("a start sweeps before it spawns, and an early exit is reported as one", async () => {
+    const name = `sweepstart-${Math.random().toString(36).slice(2, 8)}`;
+    await addMind(name, 4997);
+    mkdirSync(mindDir(name), { recursive: true }); // no src/server.ts: the server exits at once
+    const mgr = new MindManager() as AnyMgr;
+    const order: string[] = [];
+    mgr.sweepMindUser = async (n: string, base: string) => order.push(`sweep ${n} ${base}`);
+    // An identity read slower than the server's exit must not hide that exit.
+    mgr.processIdentity = async () => {
+      await delay(3000);
+      return null;
+    };
+    try {
+      await assert.rejects(mgr.startMind(name, { healthTimeoutMs: 2000 }), /exited with code/);
+      assert.deepEqual(order, [`sweep ${name} ${name}`]);
+      assert.ok(
+        !existsSync(resolve(stateDir(name), "mind.pid")),
+        "a failed start leaves no PID file",
+      );
+    } finally {
+      await removeMind(name);
+    }
+  });
 
   it("never sweeps without user isolation, or the spirit's user", async () => {
     const { mgr, calls } = sweeper();
-    await mgr.sweepMindUser("m", "m", 100);
-    await withIsolation(() => mgr.sweepMindUser("volute", "volute", 100));
+    await mgr.sweepMindUser("m", "m");
+    await withIsolation(() => mgr.sweepMindUser("volute", "volute"));
     assert.equal(calls.length, 0);
+    await withIsolation(() => mgr.sweepMindUser("m", "m"));
+    assert.equal(calls.length, 1);
   });
 });
 
@@ -265,6 +282,7 @@ describe("MindManager stale mind.pid (#1366)", () => {
   async function stale(
     fileText: (pid: number) => string,
     identity: { args: string; start: string; boot: string | null } | null,
+    port = PORT,
   ): Promise<{ signalled: boolean; removed: boolean }> {
     const name = `stale-${Math.random().toString(36).slice(2, 8)}`;
     const dir = stateDir(name);
@@ -275,7 +293,7 @@ describe("MindManager stale mind.pid (#1366)", () => {
     const mgr = new MindManager() as AnyMgr;
     mgr.processIdentity = async () => identity;
     try {
-      await mgr.killStaleMind(name, PORT, null);
+      await mgr.killStaleMind(name, port, null);
       const signalled = await Promise.race([exited, delay(300).then(() => false)]);
       return { signalled, removed: !existsSync(resolve(dir, "mind.pid")) };
     } finally {
@@ -292,9 +310,37 @@ describe("MindManager stale mind.pid (#1366)", () => {
     assert.deepEqual(r, { signalled: true, removed: true });
   });
 
-  it("never signals a reused pid: another command, another start, another boot", async () => {
+  it("recognises the server inside the sandbox's wrap, on macOS and Linux", async () => {
+    const fixture = JSON.parse(
+      readFileSync(resolve(import.meta.dirname, "fixtures/sandbox-wrapped-server.json"), "utf-8"),
+    );
+    for (const platform of ["darwin", "linux"]) {
+      const args = (fixture[platform] as string[]).join(" ");
+      const id = { args, start: "777", boot: "b1" };
+      assert.equal(isOurMindServer(fixture.port, { pid: 1, start: "777", boot: "b1" }, id), true);
+      assert.equal(
+        isOurMindServer(fixture.port + 1, { pid: 1, start: null, boot: null }, id),
+        false,
+      );
+    }
+    assert.deepEqual(
+      await stale(
+        record,
+        {
+          args: (fixture.linux as string[]).join(" "),
+          start: "777",
+          boot: "b1",
+        },
+        fixture.port,
+      ),
+      { signalled: true, removed: true },
+    );
+  });
+
+  it("never signals a reused pid: another command, another port, another start, another boot", async () => {
     for (const id of [
-      { args: "node other-dev-server/server.ts --port 3000", start: "777", boot: "b1" },
+      { args: "node other-dev-server/server.ts --port 4996", start: "777", boot: "b1" },
+      { args: "node src/server.ts --port 49960", start: "777", boot: "b1" },
       { args: serverArgs(PORT + 1), start: "777", boot: "b1" },
       { args: serverArgs(), start: "778", boot: "b1" },
       { args: serverArgs(), start: "777", boot: "b2" },
@@ -319,21 +365,24 @@ describe("MindManager stale mind.pid (#1366)", () => {
     assert.deepEqual(await stale(record, null), { signalled: false, removed: true });
   });
 
-  it("records the spawned server's identity, and nothing for a child no longer tracked", async () => {
+  it("records the pid at once, then the identity, and no identity for a server already gone", async () => {
     const name = `pidrec-${Math.random().toString(36).slice(2, 8)}`;
     const dir = stateDir(name);
     mkdirSync(dir, { recursive: true });
+    const pidFile = () => JSON.parse(readFileSync(resolve(dir, "mind.pid"), "utf-8"));
     const mgr = new MindManager() as AnyMgr;
-    mgr.processIdentity = async () => ({ args: serverArgs(), start: "4242", boot: "bx" });
-    const child = { pid: 9999 };
+    let seenAtRead: unknown;
+    mgr.processIdentity = async () => {
+      seenAtRead = pidFile();
+      return { args: serverArgs(), start: "4242", boot: "bx" };
+    };
+    const child = { pid: 9999, exitCode: null, signalCode: null };
     await mgr.saveMindPid(name, child, null);
-    assert.ok(!existsSync(resolve(dir, "mind.pid")), "an untracked child is not recorded");
-    mgr.minds.set(name, { child, port: PORT, baseName: name, supervised: false });
-    await mgr.saveMindPid(name, child, null);
-    assert.deepEqual(JSON.parse(readFileSync(resolve(dir, "mind.pid"), "utf-8")), {
-      pid: 9999,
-      start: "4242",
-      boot: "bx",
-    });
+    assert.deepEqual(seenAtRead, { pid: 9999, start: null, boot: null });
+    assert.deepEqual(pidFile(), { pid: 9999, start: "4242", boot: "bx" });
+
+    const gone = { pid: 9998, exitCode: 1, signalCode: null };
+    await mgr.saveMindPid(name, gone, null);
+    assert.deepEqual(pidFile(), { pid: 9998, start: null, boot: null });
   });
 });

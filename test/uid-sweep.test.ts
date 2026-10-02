@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, describe, it } from "node:test";
-import { sweepUid } from "../packages/daemon/src/lib/util/uid-sweep.js";
+import log from "../packages/daemon/src/lib/util/logger.js";
+import { sweepMindProcesses } from "../packages/daemon/src/lib/util/uid-sweep.js";
 
 const tempDirs: string[] = [];
 after(() => {
@@ -12,8 +13,10 @@ after(() => {
 
 const DAEMON = 50;
 const MIND_UID = 1234;
+const MIND = "alice";
+const OURS = `VOLUTE_MIND=${MIND}`;
 
-type FakeProc = { ppid: number; pgrp: number; uid: number; start?: number };
+type FakeProc = { ppid: number; pgrp: number; uid: number; env?: string[]; start?: number };
 
 function writeProc(dir: string, pid: number, p: FakeProc): void {
   mkdirSync(resolve(dir, String(pid)), { recursive: true });
@@ -26,6 +29,7 @@ function writeProc(dir: string, pid: number, p: FakeProc): void {
     resolve(dir, String(pid), "status"),
     `Name:\tp\nPPid:\t${p.ppid}\nUid:\t${p.uid}\t${p.uid}\t${p.uid}\t${p.uid}\n`,
   );
+  writeFileSync(resolve(dir, String(pid), "environ"), (p.env ?? []).map((e) => `${e}\0`).join(""));
 }
 
 function fakeProc(procs: Record<number, FakeProc>): string {
@@ -41,17 +45,19 @@ function fakeProc(procs: Record<number, FakeProc>): string {
 const world = (): Record<number, FakeProc> => ({
   1: { ppid: 0, pgrp: 1, uid: 0 },
   [DAEMON]: { ppid: 1, pgrp: DAEMON, uid: 0 },
-  // a `setsid nohup sleep &` from the Claude CLI, reparented to init
-  300: { ppid: 1, pgrp: 300, uid: MIND_UID },
-  301: { ppid: 300, pgrp: 300, uid: MIND_UID },
+  // a `setsid nohup sleep &` from the Claude CLI, reparented to init, and its child
+  300: { ppid: 1, pgrp: 300, uid: MIND_UID, env: ["PATH=/bin", OURS, "HOME=/m"] },
+  301: { ppid: 300, pgrp: 300, uid: MIND_UID, env: [OURS] },
   // a scheduled script the daemon is running as the mind: runuser → sh → its child
-  400: { ppid: DAEMON, pgrp: 400, uid: 0 },
-  401: { ppid: 400, pgrp: 400, uid: MIND_UID },
-  402: { ppid: 401, pgrp: 400, uid: MIND_UID },
-  // a straggler of the stopped mind's own group, which its stop's deadline covers
-  500: { ppid: 1, pgrp: 500, uid: MIND_UID },
+  400: { ppid: DAEMON, pgrp: 400, uid: 0, env: [OURS] },
+  401: { ppid: 400, pgrp: 400, uid: MIND_UID, env: [OURS] },
+  402: { ppid: 401, pgrp: 400, uid: MIND_UID, env: [OURS] },
+  // a host's `sudo -u mind-alice bash`: the uid, not the marker
+  500: { ppid: 1, pgrp: 500, uid: MIND_UID, env: ["USER=mind-alice"] },
+  // a variant's background job: the uid, its own name
+  501: { ppid: 1, pgrp: 501, uid: MIND_UID, env: [`VOLUTE_MIND=${MIND}-v`, `X=${OURS}`] },
   // another mind's
-  600: { ppid: 1, pgrp: 600, uid: 4321 },
+  600: { ppid: 1, pgrp: 600, uid: 4321, env: [OURS] },
 });
 
 function recorder(onKill?: (pid: number, sig: string) => void) {
@@ -64,109 +70,145 @@ function recorder(onKill?: (pid: number, sig: string) => void) {
   return { sent, kill };
 }
 
-const opts = (procDir: string, kill: ReturnType<typeof recorder>["kill"]) => ({
+const opts = (procDir: string, kill: ReturnType<typeof recorder>["kill"], boundMs = 300) => ({
   procDir,
   kill,
   ancestor: DAEMON,
-  spareGroup: 500,
-  boundMs: 300,
+  boundMs,
 });
 
-describe("sweepUid", () => {
-  it("SIGTERMs the uid's strays, and nothing the daemon runs, the stopped group or another uid", async () => {
+const sorted = (sent: [number, string][], sig: string) =>
+  sent
+    .filter(([, s]) => s === sig)
+    .map(([p]) => p)
+    .sort();
+
+describe("sweepMindProcesses", () => {
+  it("SIGTERMs the mind's own strays, and nothing the daemon runs, a host's shell, a variant's or another uid's", async () => {
     const procDir = fakeProc(world());
     // The strays exit on SIGTERM.
     const { sent, kill } = recorder((pid) =>
       rmSync(resolve(procDir, String(pid)), { recursive: true }),
     );
-    const swept = await sweepUid(MIND_UID, opts(procDir, kill));
-    assert.equal(swept, 2);
-    assert.deepEqual(
-      sent.sort((a, b) => a[0] - b[0]),
-      [
-        [300, "SIGTERM"],
-        [301, "SIGTERM"],
-      ],
-    );
+    assert.equal(await sweepMindProcesses(MIND_UID, MIND, opts(procDir, kill)), 2);
+    assert.deepEqual(sorted(sent, "SIGTERM"), [300, 301]);
+    assert.deepEqual(sorted(sent, "SIGKILL"), []);
   });
 
-  it("SIGKILLs what is still there at the bound", async () => {
+  it("SIGKILLs what is still there at the bound, and only what it SIGTERMed", async () => {
     const procDir = fakeProc(world());
-    const { sent, kill } = recorder();
-    await sweepUid(MIND_UID, opts(procDir, kill));
-    assert.deepEqual(
-      sent
-        .filter(([, s]) => s === "SIGKILL")
-        .map(([p]) => p)
-        .sort(),
-      [300, 301],
-    );
+    // A job forked after the scan is not the one it watched.
+    const { sent, kill } = recorder((pid, sig) => {
+      if (sig === "SIGTERM" && pid === 300) {
+        writeProc(procDir, 302, { ppid: 1, pgrp: 302, uid: MIND_UID, env: [OURS] });
+      }
+    });
+    await sweepMindProcesses(MIND_UID, MIND, opts(procDir, kill));
+    assert.deepEqual(sorted(sent, "SIGKILL"), [300, 301]);
   });
 
   it("does not signal a pid that became another process between the scan and the signal", async () => {
     const procDir = fakeProc({
-      300: { ppid: 1, pgrp: 300, uid: MIND_UID },
-      301: { ppid: 1, pgrp: 301, uid: MIND_UID },
+      300: { ppid: 1, pgrp: 300, uid: MIND_UID, env: [OURS] },
+      301: { ppid: 1, pgrp: 301, uid: MIND_UID, env: [OURS] },
     });
     // The first signal lands; before the second, the other pid is reused.
     const { sent, kill } = recorder((pid) => {
       const other = pid === 300 ? 301 : 300;
-      writeProc(procDir, other, { ppid: 1, pgrp: other, uid: MIND_UID, start: 99999 });
+      writeProc(procDir, other, {
+        ppid: 1,
+        pgrp: other,
+        uid: MIND_UID,
+        env: [OURS],
+        start: 99999,
+      });
       rmSync(resolve(procDir, String(pid)), { recursive: true });
     });
-    await sweepUid(MIND_UID, { ...opts(procDir, kill), boundMs: 0 });
-    assert.equal(sent.filter(([, s]) => s === "SIGTERM").length, 1);
+    await sweepMindProcesses(MIND_UID, MIND, opts(procDir, kill, 0));
+    assert.equal(sent.length, 1);
   });
 
-  it("does not signal a pid now held by another uid", async () => {
-    const procDir = fakeProc({
-      300: { ppid: 1, pgrp: 300, uid: MIND_UID },
-      301: { ppid: 1, pgrp: 301, uid: MIND_UID },
+  for (const [what, changed] of [
+    ["another uid", { uid: 0, env: [OURS] }],
+    ["no marker", { uid: MIND_UID, env: [] }],
+  ] as const) {
+    it(`does not signal a process that has ${what} by the time it is signalled`, async () => {
+      const procDir = fakeProc({
+        300: { ppid: 1, pgrp: 300, uid: MIND_UID, env: [OURS] },
+        301: { ppid: 1, pgrp: 301, uid: MIND_UID, env: [OURS] },
+      });
+      const { sent, kill } = recorder((pid) => {
+        const other = pid === 300 ? 301 : 300;
+        writeProc(procDir, other, {
+          ppid: 1,
+          pgrp: other,
+          start: other,
+          ...changed,
+          env: [...changed.env],
+        });
+      });
+      await sweepMindProcesses(MIND_UID, MIND, opts(procDir, kill, 0));
+      assert.equal(sent.filter(([, s]) => s === "SIGTERM").length, 1);
     });
-    const { sent, kill } = recorder((pid) => {
-      const other = pid === 300 ? 301 : 300;
-      writeProc(procDir, other, { ppid: 1, pgrp: other, uid: 0, start: other });
-    });
-    await sweepUid(MIND_UID, { ...opts(procDir, kill), boundMs: 0 });
-    assert.equal(sent.filter(([, s]) => s === "SIGTERM").length, 1);
-  });
+  }
 
-  it("is called off by `proceed`, before the SIGTERM or before the SIGKILL", async () => {
-    const procDir = fakeProc(world());
-    const none = recorder();
+  it("reads an environ it may not read directly as the process's owner", {
+    skip: process.getuid?.() === 0 && "root reads past the file mode",
+  }, async () => {
+    const procDir = fakeProc({ 300: { ppid: 1, pgrp: 300, uid: MIND_UID, env: [OURS] } });
+    chmodSync(resolve(procDir, "300", "environ"), 0);
+    const direct = recorder();
+    assert.equal(await sweepMindProcesses(MIND_UID, MIND, opts(procDir, direct.kill, 0)), 0);
+    const read: string[] = [];
+    const readAsOwner = async (path: string) => {
+      read.push(path);
+      return `${OURS}\0`;
+    };
+    const viaOwner = recorder();
     assert.equal(
-      await sweepUid(MIND_UID, { ...opts(procDir, none.kill), proceed: () => false }),
-      0,
+      await sweepMindProcesses(MIND_UID, MIND, { ...opts(procDir, viaOwner.kill, 0), readAsOwner }),
+      1,
     );
-    assert.deepEqual(none.sent, []);
-
-    let calls = 0;
-    const termOnly = recorder();
-    await sweepUid(MIND_UID, { ...opts(procDir, termOnly.kill), proceed: () => calls++ === 0 });
-    assert.ok(termOnly.sent.length > 0);
-    assert.ok(termOnly.sent.every(([, s]) => s === "SIGTERM"));
+    assert.deepEqual(sorted(viaOwner.sent, "SIGTERM"), [300]);
+    assert.ok(read.every((p) => p === `${procDir}/300/environ`));
   });
 
   it("refuses root and the daemon's own uid", async () => {
-    const procDir = fakeProc({ 300: { ppid: 1, pgrp: 300, uid: 0 } });
+    const procDir = fakeProc({ 300: { ppid: 1, pgrp: 300, uid: 0, env: [OURS] } });
     const { sent, kill } = recorder();
-    assert.equal(await sweepUid(0, opts(procDir, kill)), 0);
+    assert.equal(await sweepMindProcesses(0, MIND, opts(procDir, kill)), 0);
     if (process.getuid) {
-      writeProc(procDir, 301, { ppid: 1, pgrp: 301, uid: process.getuid() });
-      assert.equal(await sweepUid(process.getuid(), opts(procDir, kill)), 0);
+      writeProc(procDir, 301, { ppid: 1, pgrp: 301, uid: process.getuid(), env: [OURS] });
+      assert.equal(await sweepMindProcesses(process.getuid(), MIND, opts(procDir, kill)), 0);
     }
     assert.deepEqual(sent, []);
   });
 
   it("survives a ppid cycle", async () => {
     const procDir = fakeProc({
-      300: { ppid: 301, pgrp: 300, uid: MIND_UID },
-      301: { ppid: 300, pgrp: 300, uid: MIND_UID },
+      300: { ppid: 301, pgrp: 300, uid: MIND_UID, env: [OURS] },
+      301: { ppid: 300, pgrp: 300, uid: MIND_UID, env: [OURS] },
     });
     const { sent, kill } = recorder((pid) =>
       rmSync(resolve(procDir, String(pid)), { recursive: true }),
     );
-    assert.equal(await sweepUid(MIND_UID, opts(procDir, kill)), 2);
+    assert.equal(await sweepMindProcesses(MIND_UID, MIND, opts(procDir, kill)), 2);
     assert.equal(sent.length, 2);
+  });
+
+  it("does nothing, quietly, without /proc", { skip: process.platform === "linux" }, async () => {
+    const { sent, kill } = recorder();
+    const logs: string[] = [];
+    log.setOutput((line) => logs.push(line));
+    try {
+      assert.equal(
+        await sweepMindProcesses(MIND_UID, MIND, { ancestor: DAEMON, boundMs: 0, kill }),
+        0,
+      );
+    } finally {
+      log.setOutput((line) => process.stderr.write(`${line}\n`));
+    }
+    assert.deepEqual(sent, []);
+    assert.deepEqual(logs, []);
   });
 });
