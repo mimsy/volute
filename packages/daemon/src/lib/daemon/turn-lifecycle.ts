@@ -304,13 +304,12 @@ async function adoptFolded(
   process: string,
   turnId: string,
   ids?: string[],
-): Promise<(number | undefined)[]> {
-  if (!session) return [];
+): Promise<void> {
+  if (!session) return;
   const dm = tryGetDeliveryManager();
-  if (!dm) return [];
+  if (!dm) return;
   const folded = dm.foldedRows(mind, session, process, ids, turnId);
   await linkRowsToTurn(turnId, folded.rows, { from: folded.from });
-  return folded.rows;
 }
 
 /**
@@ -392,11 +391,10 @@ export async function handleMindEvent(
     if (turnId) {
       done.turnId = turnId;
       done.bornClosed = true;
-      const rows = await adoptFolded(mind, event.session, process, turnId, done.retired);
+      await adoptFolded(mind, event.session, process, turnId, done.retired);
       await linkReportsToTurn(mind, event.session, turnId, turnDeliveries(event, done));
-      // What it sent while it ran with no turn to stamp — before it is judged quiet (#1320).
-      const first = rows.filter((id) => id != null).sort((a, b) => a - b)[0];
-      if (first !== undefined) await linkRunToTurn(mind, process, event.session, turnId, first);
+      // And what it sent while it ran with no turn to stamp, before it is judged quiet (#1320).
+      await linkRunToTurn(mind, process, event.session, turnId, turnDeliveries(event, done));
       await adoptInterrupted(mind, event.session, turnId);
     }
   }
@@ -424,6 +422,15 @@ export async function handleMindEvent(
   // (`recordClosedTurn`): look again, so the event lands on it rather than on nothing.
   if (!turnId && !done) turnId = closedTurnFor(mind, event.session, event.messageId);
 
+  // A report naming no delivery, with no turn to land on — a `silent` run's context before
+  // the mind knows which delivery it runs — names the one its process is running, so the
+  // turn recorded at that delivery's `done` takes it (`linkReportsToTurn`, #1320).
+  const messageId =
+    event.messageId ??
+    (turnId || done || !event.session
+      ? undefined
+      : tryGetDeliveryManager()?.runningDelivery(mind, event.session, process));
+
   // Persist to mind_history.
   const db = await getDb();
   let insertedId: number | undefined;
@@ -435,7 +442,7 @@ export async function handleMindEvent(
         type: event.type,
         thread: event.session ?? null,
         channel: event.channel ?? null,
-        message_id: event.messageId ?? null,
+        message_id: messageId ?? null,
         content: cleanContent ?? null,
         metadata: event.metadata ? JSON.stringify(event.metadata) : null,
         turn_id: turnId ?? null,

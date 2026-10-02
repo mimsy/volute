@@ -46,7 +46,7 @@ import {
   tryGetDeliveryManager,
   UnknownChannelError,
 } from "../../lib/delivery/delivery-manager.js";
-import { turnStamp } from "../../lib/delivery/message-delivery.js";
+import { outboundMetadata, turnStamp } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
   getConversation,
@@ -2082,6 +2082,7 @@ const app = new Hono<AuthEnv>()
           content: body.content,
           turn_id: stamp.turnId ?? null,
           thread: stamp.thread ?? null,
+          metadata: outboundMetadata(stamp),
         });
       } catch (err) {
         log.error(`failed to persist external send for ${baseName}`, log.errorData(err));

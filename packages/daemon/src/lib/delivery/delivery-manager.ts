@@ -3779,6 +3779,19 @@ export class DeliveryManager {
     }
   }
 
+  /**
+   * The delivery `process` is running on the session when it has no turn there: its oldest
+   * outstanding one that no `done` has covered — the mind runs them in the order they came.
+   * What it sends or reports meanwhile is stamped with it, for the turn recorded at that
+   * delivery's `done` to take (#1320).
+   */
+  runningDelivery(mind: string, session: string, process: string): string | undefined {
+    for (const [id, d] of this.sessionStates.get(mind)?.get(session)?.outstanding ?? []) {
+      if (d.process === process && !d.retiring) return id;
+    }
+    return undefined;
+  }
+
   /** Note that a `done` has covered these deliveries, on its arrival (see `Outstanding`). */
   markRetiring(mind: string, session: string, ids: string[]): void {
     const outstanding = this.sessionStates.get(mind)?.get(session)?.outstanding;
