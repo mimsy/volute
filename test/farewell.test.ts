@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { afterEach, before, beforeEach, describe, it } from "node:test";
 import { broadcast } from "../packages/daemon/src/lib/events/activity-events.js";
 import {
   FAREWELL_MIND_PATH,
@@ -107,6 +107,28 @@ describe("farewell notes", () => {
 describe("runFarewellTurn live turn", () => {
   let dir: string;
 
+  // Warm the delivery path once before any timed test. deliverEvent's first call
+  // dynamically imports the sleep-manager and delivery-manager module graphs; cold
+  // through tsx that took ~5s at load 40 and blocked the event loop, so the 200ms
+  // timer couldn't fire until it finished (#1258). The daemon imports both modules
+  // statically, so production never pays this. A dead port reaches both imports
+  // and fails fast.
+  before(async () => {
+    const warmDir = mkdtempSync(resolve(tmpdir(), "farewell-warmup-"));
+    try {
+      await addMind("warmup", await deadPort());
+      await runFarewellTurn({
+        variantName: "warmup",
+        parentName: "p",
+        variantDir: warmDir,
+        running: true,
+        timeoutMs: 200,
+      });
+    } finally {
+      rmSync(warmDir, { recursive: true, force: true });
+    }
+  });
+
   beforeEach(() => {
     dir = mkdtempSync(resolve(tmpdir(), "farewell-live-"));
     mkdirSync(resolve(dir, ".mind"), { recursive: true });
@@ -116,7 +138,10 @@ describe("runFarewellTurn live turn", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("proceeds after the timeout when the variant never goes idle (hard requirement)", async () => {
+  it("proceeds after the timeout when the variant never goes idle (hard requirement)", {
+    // A join that ignores its timeout would hang forever; fail it instead.
+    timeout: 10_000,
+  }, async () => {
     // Delivery succeeds but no mind_done/mind_idle ever fires — a variant stuck
     // mid-thought. The join must not hang: it proceeds once the timeout elapses.
     const server = await stubServer(() => {});
