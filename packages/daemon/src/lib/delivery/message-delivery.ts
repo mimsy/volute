@@ -356,6 +356,84 @@ export async function linkToolResultToTurn(
 }
 
 /**
+ * Link what a run reported without a turn to the turn recorded at its `done` — a `silent`
+ * mind's run that nothing opened (#1320). With no turn to stamp while it ran, its sends were
+ * recorded with their thread and no turn, and its context with neither turn nor delivery;
+ * they are told apart by where they came from and when. Every row after `sinceId` (the run's
+ * first delivered row: everything it did came after its message reached the mind) on the
+ * thread with no turn: a turn running on the thread meanwhile stamped its own, and a run
+ * recorded before this one took its own at its `done`.
+ *
+ * Sends are recorded under the sender's own name, so only `process`'s are taken. Context
+ * rows are kept under the base name for the mind and its variants alike, so they are taken
+ * only for the mind's own run — a variant's on the same thread can't be told from them.
+ * Claimed with `turn_id IS NULL`, so a row is never moved off a turn. Never throws.
+ */
+export async function linkRunToTurn(
+  mind: string,
+  process: string,
+  session: string,
+  turnId: string,
+  sinceId: number,
+): Promise<void> {
+  const thread = normalizeThread(session);
+  if (!thread) return;
+  try {
+    const db = await getDb();
+    const sends = await db
+      .update(mindHistory)
+      .set({ turn_id: turnId })
+      .where(
+        and(
+          eq(mindHistory.mind, process),
+          eq(mindHistory.type, "outbound"),
+          eq(mindHistory.thread, thread),
+          sql`${mindHistory.turn_id} IS NULL`,
+          sql`${mindHistory.id} > ${sinceId}`,
+        ),
+      )
+      .returning({
+        channel: mindHistory.channel,
+        content: mindHistory.content,
+        message_id: mindHistory.message_id,
+      });
+    for (const send of sends) {
+      // The linked message follows the history row, so the two never name different turns.
+      if (send.message_id) {
+        await db
+          .update(messages)
+          .set({ turn_id: turnId })
+          .where(and(eq(messages.id, Number(send.message_id)), sql`${messages.turn_id} IS NULL`));
+      }
+      // Published at send time with no turn: again, so the live view can place it.
+      publishMindEvent(mind, {
+        mind,
+        type: "outbound",
+        channel: send.channel ?? undefined,
+        content: send.content ?? undefined,
+        session: thread,
+        turnId,
+      });
+    }
+    if (process !== mind) return;
+    await db
+      .update(mindHistory)
+      .set({ turn_id: turnId })
+      .where(
+        and(
+          eq(mindHistory.mind, mind),
+          eq(mindHistory.type, "context"),
+          eq(mindHistory.thread, session),
+          sql`${mindHistory.turn_id} IS NULL`,
+          sql`${mindHistory.id} > ${sinceId}`,
+        ),
+      );
+  } catch (err) {
+    dlog.warn(`failed to link run's rows to turn ${turnId}`, log.errorData(err));
+  }
+}
+
+/**
  * Determine what to do with a message for a sleeping mind.
  * Returns the action to take: "skip", "queue", or "queue-and-wake".
  */

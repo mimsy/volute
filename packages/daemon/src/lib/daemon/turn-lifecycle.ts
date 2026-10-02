@@ -12,7 +12,7 @@ import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { getDb } from "../db.js";
 import { getDeliveryManager, tryGetDeliveryManager } from "../delivery/delivery-manager.js";
 import { echoTextToChannel } from "../delivery/echo-text.js";
-import { linkToolResultToTurn } from "../delivery/message-delivery.js";
+import { linkRunToTurn, linkToolResultToTurn } from "../delivery/message-delivery.js";
 import { broadcast } from "../events/activity-events.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
@@ -304,12 +304,13 @@ async function adoptFolded(
   process: string,
   turnId: string,
   ids?: string[],
-): Promise<void> {
-  if (!session) return;
+): Promise<(number | undefined)[]> {
+  if (!session) return [];
   const dm = tryGetDeliveryManager();
-  if (!dm) return;
+  if (!dm) return [];
   const folded = dm.foldedRows(mind, session, process, ids, turnId);
   await linkRowsToTurn(turnId, folded.rows, { from: folded.from });
+  return folded.rows;
 }
 
 /**
@@ -391,8 +392,11 @@ export async function handleMindEvent(
     if (turnId) {
       done.turnId = turnId;
       done.bornClosed = true;
-      await adoptFolded(mind, event.session, process, turnId, done.retired);
+      const rows = await adoptFolded(mind, event.session, process, turnId, done.retired);
       await linkReportsToTurn(mind, event.session, turnId, turnDeliveries(event, done));
+      // What it sent while it ran with no turn to stamp — before it is judged quiet (#1320).
+      const first = rows.filter((id) => id != null).sort((a, b) => a - b)[0];
+      if (first !== undefined) await linkRunToTurn(mind, process, event.session, turnId, first);
       await adoptInterrupted(mind, event.session, turnId);
     }
   }

@@ -33,13 +33,16 @@ import {
   recordOutbound,
   turnStamp,
 } from "../packages/daemon/src/lib/delivery/message-delivery.js";
+import { addMessage, createConversation } from "../packages/daemon/src/lib/events/conversations.js";
 import {
   type MindEvent,
   subscribe as subscribeMindEvents,
 } from "../packages/daemon/src/lib/events/mind-events.js";
 import { addMind, addSpirit, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import {
+  conversations,
   deliveryQueue,
+  messages,
   mindHistory,
   summaries,
   systemEvents,
@@ -361,6 +364,109 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     await waitFor(() => db.select().from(summaries).where(eq(summaries.period_key, t2!)).get());
     await db.delete(summaries).where(eq(summaries.period_key, t2!));
     await db.delete(summaries).where(eq(summaries.period_key, t1!));
+  });
+
+  // #1320, lyrb's shape: a silent mind on an `interrupt: true` thread. The interrupter's run
+  // has no turn while it goes — its turn is recorded at its `done` — so what it sends then
+  // carries none. The `done` takes it, and its summary says it replied.
+  it("an interrupter's run recorded at its done takes what it sent, and isn't summarized as quiet", async () => {
+    await setup();
+    const configDir = resolve(process.env.VOLUTE_HOME!, "minds", MIND, "home/.config");
+    writeFileSync(
+      resolve(configDir, "routes.json"),
+      JSON.stringify({
+        default: "main",
+        gateUnmatched: false,
+        threads: { main: { interrupt: true } },
+      }),
+    );
+    clearConfigCache(MIND);
+    const db = await getDb();
+    const rowOf = async (type: string, content: string) =>
+      (await db
+        .select()
+        .from(mindHistory)
+        .where(
+          and(
+            eq(mindHistory.mind, MIND),
+            eq(mindHistory.type, type),
+            eq(mindHistory.content, content),
+          ),
+        )
+        .get())!;
+    // Before its message reached the mind: not the run's, though nothing took it.
+    await recordOutbound(MIND, "@tester", "EARLIER", { thread: "main" });
+
+    await deliverMessage(MIND, {
+      channel: "@tester",
+      sender: "tester",
+      senderId: null,
+      content: "one",
+    });
+    const t1 = await waitFor(() => getActiveTurnId(MIND, "main"));
+    await deliverMessage(MIND, {
+      channel: "@tester",
+      sender: "tester",
+      senderId: null,
+      content: "two",
+    });
+    await waitFor(() => posted.length === 2);
+    assert.equal(posted[1].interrupt, true, "it was sent to interrupt");
+    const [d1, d2] = posted.map((p) => p.deliveryId as string);
+
+    // The interrupted run ends; the interrupter runs with no turn to stamp.
+    await handleMindEvent(MIND, { type: "done", session: "main", messageId: d1, covers: [d1] });
+    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+    await handleMindEvent(MIND, {
+      type: "context",
+      session: "main",
+      content: "pre-prompt",
+      metadata: { source: "dynamic:pre-prompt" },
+    });
+    const conv = await createConversation();
+    const stamp = turnStamp(MIND, "main");
+    const message = await addMessage(conv.id, "user", MIND, [{ type: "text", text: "HOTEL" }], {
+      turnId: stamp.turnId,
+    });
+    await recordOutbound(MIND, "@tester", "HOTEL", { ...stamp, messageId: String(message.id) });
+    assert.equal((await rowOf("outbound", "HOTEL")).turn_id, null, "sent with no turn");
+    // A variant's send on the same thread meanwhile is the variant's, not this run's.
+    await recordOutbound(`${MIND}@v`, "@tester", "VARIANT", { thread: "main" });
+    await handleMindEvent(MIND, {
+      type: "usage",
+      session: "main",
+      messageId: d2,
+      metadata: { input_tokens: 5, output_tokens: 3 },
+    });
+    const { turnId: t2 } = await handleMindEvent(MIND, {
+      type: "done",
+      session: "main",
+      messageId: d2,
+      covers: [d2],
+    });
+
+    assert.ok(t2 && t2 !== t1, "the interrupter's turn has its own row");
+    const two = await rowOf("inbound", "two");
+    assert.equal(two.turn_id, t2);
+    assert.equal((await rowOf("outbound", "HOTEL")).turn_id, t2, "its reply is in it");
+    const sent = await db.select().from(messages).where(eq(messages.id, message.id)).get();
+    assert.equal(sent!.turn_id, t2, "and so is the message it sent");
+    assert.equal((await rowOf("context", "pre-prompt")).turn_id, t2, "and its context");
+    assert.equal((await rowOf("outbound", "EARLIER")).turn_id, null, "nothing from before it");
+    const variant = await db
+      .select()
+      .from(mindHistory)
+      .where(eq(mindHistory.mind, `${MIND}@v`))
+      .get();
+    assert.equal(variant!.turn_id, null, "nor another process's send");
+    const summary = await waitFor(() =>
+      db.select().from(summaries).where(eq(summaries.period_key, t2!)).get(),
+    );
+    assert.doesNotMatch(summary!.content, /no visible output/);
+    await db.delete(summaries).where(eq(summaries.period_key, t2!));
+    await db.delete(summaries).where(eq(summaries.period_key, t1!));
+    await db.delete(conversations).where(eq(conversations.id, conv.id));
+    await db.delete(mindHistory).where(eq(mindHistory.mind, `${MIND}@v`));
   });
 
   it("a quiet turn whose usage lands after its done is held for it, then kept", async () => {
