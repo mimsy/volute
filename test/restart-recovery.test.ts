@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { removeBridgeConfig, setBridgeConfig } from "../packages/daemon/src/lib/bridges/bridges.js";
 import { BridgeManager } from "../packages/daemon/src/lib/daemon/bridge-manager.js";
 import {
   DaemonShuttingDownError,
@@ -54,6 +55,11 @@ function writeFixture(name: string, markerPath: string, body: string): string {
   return path;
 }
 
+/** A crash restart only fires for a bridge that is still enabled (#1352). */
+function enableBridge(platform: string): void {
+  setBridgeConfig(platform, { enabled: true, defaultMind: "x", channelMappings: {} });
+}
+
 function spawnTimes(markerPath: string): number[] {
   if (!existsSync(markerPath)) return [];
   return readFileSync(markerPath, "utf-8")
@@ -92,6 +98,7 @@ describe("crash recovery wiring", () => {
       mgr.resolveBuiltinBridge = () => writeFixture("crash", marker, "process.exit(1);");
 
       const from = capturedLogs.length;
+      enableBridge("crashy");
       await mgr.startBridge("crashy", 1618);
 
       // 300 + 600 + 1200 of backoff, plus spawn overhead.
@@ -137,6 +144,7 @@ describe("crash recovery wiring", () => {
       assert.equal(mgr.restartTracker.getAttempts("healthy"), 2);
 
       const startedAt = Date.now();
+      enableBridge("healthy");
       await mgr.startBridge("healthy", 1618);
       // Only meaningful if the spawn itself came in under the threshold; on a
       // badly loaded machine it may not, and asserting anyway would just flake.
@@ -164,6 +172,7 @@ describe("crash recovery wiring", () => {
       mgr.resolveBuiltinBridge = () =>
         writeFixture("replace", marker, "setTimeout(() => {}, 10000);");
 
+      enableBridge("replace");
       await mgr.startBridge("replace", 1618);
       assert.ok(
         await waitFor(() => spawnTimes(marker).length === 1, 5000),
@@ -192,6 +201,80 @@ describe("crash recovery wiring", () => {
       assert.equal(spawnTimes(marker).length, 2, "the replacement must not be restarted on top of");
 
       await mgr.stopBridge("replace");
+    });
+
+    // #1352: the crashed child is untracked while its restart waits out the backoff, so
+    // a disable used to find nothing to stop and the bridge respawned until the cap.
+    it("a disable during crash backoff cancels the pending restart", async () => {
+      const marker = resolve(fixtureDir, "disable-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 300, maxDelay: 2000 });
+      mgr.resolveBuiltinBridge = () => writeFixture("disable", marker, "process.exit(1);");
+
+      const from = capturedLogs.length;
+      enableBridge("disable");
+      await mgr.startBridge("disable", 1618);
+      const msgs = () => capturedLogs.slice(from).map((l) => JSON.parse(l).msg as string);
+      assert.ok(
+        await waitFor(() => msgs().some((m) => m.startsWith("restarting bridge disable")), 5000),
+        "the crash restart was never scheduled",
+      );
+
+      // Config left enabled, so only the cancelled timer can stop the respawn.
+      await mgr.stopBridge("disable");
+
+      await delay(700);
+      assert.equal(spawnTimes(marker).length, 1, "a disabled bridge must not be respawned");
+      assert.equal(mgr.restartTracker.getAttempts("disable"), 0);
+      removeBridgeConfig("disable");
+    });
+
+    it("a pending restart does not respawn a bridge that is no longer enabled", async () => {
+      const marker = resolve(fixtureDir, "unconfigured-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 300, maxDelay: 2000 });
+      mgr.resolveBuiltinBridge = () => writeFixture("unconfigured", marker, "process.exit(1);");
+
+      const from = capturedLogs.length;
+      enableBridge("unconfigured");
+      await mgr.startBridge("unconfigured", 1618);
+      const msgs = () => capturedLogs.slice(from).map((l) => JSON.parse(l).msg as string);
+      assert.ok(
+        await waitFor(
+          () => msgs().some((m) => m.startsWith("restarting bridge unconfigured")),
+          5000,
+        ),
+        "the crash restart was never scheduled",
+      );
+
+      // Config gone, but stopBridge never called.
+      removeBridgeConfig("unconfigured");
+
+      await delay(700);
+      assert.equal(spawnTimes(marker).length, 1, "a disabled bridge must not be respawned");
+    });
+
+    it("only reports killing an orphan when a kill landed", async () => {
+      const marker = resolve(fixtureDir, "orphan-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 1, baseDelay: 300, maxDelay: 2000 });
+      mgr.resolveBuiltinBridge = () => writeFixture("orphan", marker, "process.exit(1);");
+
+      const from = capturedLogs.length;
+      enableBridge("orphan");
+      await mgr.startBridge("orphan", 1618);
+      const msgs = () => capturedLogs.slice(from).map((l) => JSON.parse(l).msg as string);
+      // The restart reads a PID file naming the child that just exited.
+      assert.ok(
+        await waitFor(() => msgs().includes("bridge orphan crashed 1 times — giving up"), 5000),
+        "the crash restart never ran",
+      );
+      assert.equal(spawnTimes(marker).length, 2);
+      assert.deepEqual(
+        msgs().filter((m) => m.startsWith("killed orphan bridge orphan")),
+        [],
+      );
+      removeBridgeConfig("orphan");
     });
   });
 
