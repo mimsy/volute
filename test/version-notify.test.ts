@@ -18,7 +18,9 @@ import {
   stateDir,
   voluteSystemDir,
 } from "../packages/daemon/src/lib/mind/registry.js";
+import { setChangelogForTesting } from "../packages/daemon/src/lib/release-notes.js";
 import { systemEvents } from "../packages/daemon/src/lib/schema.js";
+import { getCurrentVersion } from "../packages/daemon/src/lib/update-check.js";
 import {
   backfillTemplateHashes,
   notifyMindOfVersion,
@@ -245,6 +247,46 @@ describe("version notice for minds started after boot", () => {
       }
     } finally {
       mgr.startMind = origStart;
+    }
+  });
+
+  it("tells a mind back from a long sleep every release it missed, newest first", async () => {
+    // A fixture CHANGELOG, so the cap is exercised whatever the real one's sections hold:
+    // the current release, then 0.0.9 down to 0.0.1. The two newest are ~2500 characters
+    // each, so they fit together and a third would not.
+    const current = getCurrentVersion();
+    const older = Array.from({ length: 9 }, (_, i) => `0.0.${9 - i}`);
+    const body = (v: string, i: number) => `* fix in ${v} ${i < 3 ? "x".repeat(2500) : ""}`;
+    setChangelogForTesting(
+      [
+        "# Changelog",
+        ...[current, ...older].map((v, i) => `## [${v}](url)\n\n### Bug Fixes\n\n${body(v, i)}`),
+      ].join("\n\n"),
+    );
+    try {
+      const name = await mind({ running: false });
+      mkdirSync(stateDir(name), { recursive: true });
+      writeFileSync(
+        resolve(stateDir(name), "version-notified.json"),
+        JSON.stringify({ version: "0.0.1" }),
+      );
+      writeState({ lastNotifiedVersion: "0.0.1" });
+      await notifyVersionUpdate();
+
+      await notifyMindOfVersion(name);
+      const [notice] = await versionNotices(name);
+      const at = [`## v${current}\n`, "## v0.0.9\n"].map((h) => notice.body.indexOf(h));
+      assert.ok(at[0] > 0 && at[1] > at[0], notice.body);
+      assert.ok(!notice.body.includes("## v0.0.8"));
+      assert.ok(!notice.body.includes("## v0.0.1"));
+      assert.ok(
+        notice.body.endsWith(
+          "…and 7 earlier releases since v0.0.1; see CHANGELOG.md in the Volute install",
+        ),
+        notice.body.slice(-200),
+      );
+    } finally {
+      setChangelogForTesting(undefined);
     }
   });
 
