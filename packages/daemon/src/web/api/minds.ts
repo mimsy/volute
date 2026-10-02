@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { isLocalMind } from "@volute/api/user-type";
@@ -76,7 +76,7 @@ import {
   mergeVariant,
 } from "../../lib/mind/lifecycle.js";
 import { getMemoryDetail, getMemoryStatus } from "../../lib/mind/memory-size.js";
-import { writeMindFile } from "../../lib/mind/mind-file-write.js";
+import { readMindFileSync, writeMindFile } from "../../lib/mind/mind-file-write.js";
 import {
   findMind,
   findVariants,
@@ -1618,9 +1618,11 @@ const app = new Hono<AuthEnv>()
     const configJsonPath = resolve(dir, "home/.config/config.json");
     if (existsSync(configJsonPath)) {
       try {
-        templateConfig = JSON.parse(readFileSync(configJsonPath, "utf-8"));
+        // Not readFileSync: a FIFO the mind planted here would hang the event loop for
+        // every mind, and a link would aim the daemon's read elsewhere.
+        templateConfig = JSON.parse(readMindFileSync(configJsonPath));
       } catch {
-        // ignore parse errors
+        // ignore parse errors and refusals
       }
     }
 

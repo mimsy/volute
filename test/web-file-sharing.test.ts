@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -460,6 +461,22 @@ describe("web file-sharing routes", () => {
       truncateSync(big, 50 * 1024 * 1024 + 1);
       const res = await send("big.bin");
       assert.equal(res.status, 413, await res.clone().text());
+      assert.deepEqual(listPending("fs-receiver"), []);
+    });
+
+    it("a path through a file, as 404", async () => {
+      setupMinds();
+      const res = await send("notes.md/x");
+      assert.equal(res.status, 404, await res.clone().text());
+    });
+
+    it("an unreadable file is the daemon's error (500), not a refusal", async () => {
+      setupMinds();
+      const locked = resolve(mindDir("fs-sender"), "home", "locked.md");
+      writeFileSync(locked, "locked");
+      chmodSync(locked, 0o000);
+      const res = await send("locked.md");
+      assert.equal(res.status, 500, await res.clone().text());
       assert.deepEqual(listPending("fs-receiver"), []);
     });
 

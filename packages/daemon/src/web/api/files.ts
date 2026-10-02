@@ -7,6 +7,7 @@ import { syncMindProfile } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { mindFileOwner } from "../../lib/mind/isolation.js";
 import {
+  MindFileRefusedError,
   MindFileTooLargeError,
   readMindFileBytes,
   removeMindFile,
@@ -38,15 +39,11 @@ const AVATAR_MIME: Record<string, string> = {
 
 /**
  * A read the mind-file helpers refused — a link, FIFO or hard link where a file should be,
- * a path out of the tree, a file over its cap — as opposed to an I/O failure (those carry
- * an errno code).
+ * a path out of the tree — as opposed to an I/O failure. Check {@link MindFileTooLargeError}
+ * (a refusal too) first where it gets its own answer.
  */
 function isReadRefusal(err: unknown): boolean {
-  return (
-    err instanceof PathTraversalError ||
-    err instanceof MindFileTooLargeError ||
-    (err instanceof Error && (err as NodeJS.ErrnoException).code === undefined)
-  );
+  return err instanceof PathTraversalError || err instanceof MindFileRefusedError;
 }
 
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
@@ -207,6 +204,9 @@ const app = new Hono<AuthEnv>()
       if (!body) return c.json({ error: "Avatar file not found" }, 404);
       return c.body(body as Uint8Array<ArrayBuffer>, 200, headers);
     } catch (err) {
+      if (err instanceof MindFileTooLargeError) {
+        return c.json({ error: "Avatar file too large" }, 400);
+      }
       if (isReadRefusal(err)) return c.json({ error: "Invalid avatar path" }, 400);
       return c.json({ error: "Failed to read avatar file" }, 500);
     }
@@ -283,13 +283,15 @@ const app = new Hono<AuthEnv>()
     const headers = { "Content-Type": mime, "Cache-Control": "no-cache", ETag: etag };
     if (isNotModified(c, etag)) return c.body(null, 304, headers);
     // As for the avatar: read through the helpers, not the path vetted above.
+    const owner = await mindFileOwner(await getBaseName(name));
     let body: Buffer | null;
     try {
       body = await readMindFileBytes(dir, join("home", relativePath), {
-        owner: await mindFileOwner(await getBaseName(name)),
+        owner,
         maxBytes: MAX_FILE_SIZE,
       });
     } catch (err) {
+      if (err instanceof MindFileTooLargeError) return c.text("File too large", 413);
       if (isReadRefusal(err)) return c.text("Forbidden", 403);
       console.error(`[files] read failed for ${resolvedPath}:`, err);
       return c.text("Internal server error", 500);

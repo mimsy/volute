@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -9,6 +12,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -248,5 +252,37 @@ describe("mind profile avatar", () => {
     });
     assert.equal(plain.status, 200, await plain.clone().text());
     assert.equal(await plain.text(), "plain");
+  });
+
+  it("GET /:name/files/* refuses a hard link or FIFO, 413s an oversized file, 500s an I/O error", async () => {
+    const app = createApp();
+    const dir = mindDir(testMindName);
+    const home = join(dir, "home");
+    const get = (p: string) =>
+      app.request(`/minds/${testMindName}/files/${p}`, { headers: { Cookie: adminCookie } });
+
+    writeFileSync(join(dir, "outside.md"), "outside");
+    rmSync(join(home, "hard.md"), { force: true });
+    linkSync(join(dir, "outside.md"), join(home, "hard.md"));
+    assert.equal((await get("hard.md")).status, 403);
+
+    rmSync(join(home, "pipe.md"), { force: true });
+    execFileSync("mkfifo", [join(home, "pipe.md")]);
+    assert.equal((await get("pipe.md")).status, 403);
+
+    const big = join(home, "big.bin");
+    writeFileSync(big, "");
+    truncateSync(big, 50 * 1024 * 1024 + 1);
+    assert.equal((await get("big.bin")).status, 413);
+    rmSync(big);
+
+    // An I/O failure is the daemon's, not a refusal of what the mind arranged.
+    writeFileSync(join(home, "locked.md"), "locked");
+    chmodSync(join(home, "locked.md"), 0o000);
+    try {
+      assert.equal((await get("locked.md")).status, 500);
+    } finally {
+      chmodSync(join(home, "locked.md"), 0o644);
+    }
   });
 });

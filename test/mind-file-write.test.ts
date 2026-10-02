@@ -17,8 +17,11 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import {
+  MindFileRefusedError,
+  MindFileTooLargeError,
   mindAnchor,
   readMindFile,
+  readMindFileBytes,
   writeMindFile,
 } from "../packages/daemon/src/lib/mind/mind-file-write.js";
 
@@ -63,6 +66,41 @@ describe("writeMindFile", () => {
     await assert.rejects(readMindFile(dir, "home/f", { owner: null }), /larger/);
     // Replacing it outright reads nothing, so there is nothing to cap.
     assert.equal(await writeMindFile(dir, "home/f", "small", { owner: null }), true);
+  });
+
+  // A route reads with a 50MB cap on every request; the buffer must cost the file's size,
+  // not the cap.
+  it("sizes a capped read by the file, not the cap, and reads exactly-cap files", async () => {
+    const dir = scratch("cap-size");
+    mkdirSync(resolve(dir, "home"));
+    writeFileSync(resolve(dir, "home/small"), "tiny");
+    const small = await readMindFileBytes(dir, "home/small", { owner: null, maxBytes: 50e6 });
+    assert.equal(small?.toString(), "tiny");
+    assert.ok(small.buffer.byteLength <= 5, `allocated ${small.buffer.byteLength} bytes`);
+
+    writeFileSync(resolve(dir, "home/exact"), Buffer.alloc(100, 1));
+    const exact = await readMindFileBytes(dir, "home/exact", { owner: null, maxBytes: 100 });
+    assert.equal(exact?.length, 100);
+    await assert.rejects(
+      readMindFileBytes(dir, "home/exact", { owner: null, maxBytes: 99 }),
+      MindFileTooLargeError,
+    );
+  });
+
+  it("throws a typed refusal for what the mind planted, and plain errors otherwise", async () => {
+    const dir = scratch("refusal-type");
+    mkdirSync(resolve(dir, "home"));
+    writeFileSync(resolve(dir, "outside"), "x");
+    symlinkSync(resolve(dir, "outside"), resolve(dir, "home/link"));
+    await assert.rejects(
+      readMindFileBytes(dir, "home/link", { owner: null, maxBytes: 10 }),
+      MindFileRefusedError,
+    );
+    linkSync(resolve(dir, "outside"), resolve(dir, "home/hard"));
+    await assert.rejects(
+      readMindFileBytes(dir, "home/hard", { owner: null, maxBytes: 10 }),
+      MindFileRefusedError,
+    );
   });
 
   it("hands produce the current text and replaces it whole", async () => {

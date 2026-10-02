@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it, mock } from "node:test";
@@ -115,6 +116,22 @@ describe("a mind's model lives only in config.json", { concurrency: 1 }, () => {
 
     const { config } = await (await request("GET", `/api/v1/minds/${MIND}/config`)).json();
     assert.equal(config.thinkingLevel, null, "volute.json's stale 'minimal' must not show");
+  });
+
+  // The read is synchronous on the event loop: a FIFO the mind planted at config.json
+  // must be refused, not block every mind's requests (#1272 review).
+  it("reports no model rather than hanging on a FIFO at config.json", async () => {
+    const dir = mindDir(MIND);
+    const path = resolve(dir, "home/.config/config.json");
+    rmSync(path);
+    execFileSync("mkfifo", [path]);
+    try {
+      const res = await request("GET", `/api/v1/minds/${MIND}/config`);
+      assert.equal(res.status, 200);
+      assert.equal((await res.json()).config.model, null);
+    } finally {
+      rmSync(path);
+    }
   });
 
   it("saves model and thinking level to config.json only", async () => {

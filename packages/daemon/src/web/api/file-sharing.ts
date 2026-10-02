@@ -11,7 +11,11 @@ import {
   validateFilePath,
 } from "../../lib/chat/file-sharing.js";
 import { mindFileOwner } from "../../lib/mind/isolation.js";
-import { MindFileTooLargeError, readMindFileBytes } from "../../lib/mind/mind-file-write.js";
+import {
+  MindFileRefusedError,
+  MindFileTooLargeError,
+  readMindFileBytes,
+} from "../../lib/mind/mind-file-write.js";
 import { findMind, getBaseName, mindDir } from "../../lib/mind/registry.js";
 import log from "../../lib/util/logger.js";
 import { PathTraversalError } from "../../lib/util/paths.js";
@@ -70,10 +74,11 @@ const app = new Hono<AuthEnv>()
       // could not read (#1272).
       const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
       const senderDir = senderEntry.dir ?? mindDir(senderName);
+      const owner = await mindFileOwner(await getBaseName(senderName));
       let content: Buffer | null;
       try {
         content = await readMindFileBytes(senderDir, join("home", body.filePath), {
-          owner: await mindFileOwner(await getBaseName(senderName)),
+          owner,
           maxBytes: MAX_FILE_SIZE,
         });
       } catch (err) {
@@ -83,13 +88,17 @@ const app = new Hono<AuthEnv>()
         if (err instanceof PathTraversalError) {
           return c.json({ error: `Invalid file path: ${body.filePath}` }, 400);
         }
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code === undefined) {
-          // A refusal: a link, FIFO or hard link where the file should be.
+        if (err instanceof MindFileRefusedError) {
+          // A link, FIFO or hard link where the file should be.
           return c.json({ error: `Not a regular file: ${body.filePath}` }, 400);
         }
+        const code = (err as NodeJS.ErrnoException).code;
         if (code === "ENOTDIR") return c.json({ error: `File not found: ${body.filePath}` }, 404);
-        return c.json({ error: `Failed to read file: ${code}` }, 500);
+        log.warn(
+          `[file-sharing] reading ${body.filePath} from ${senderName} failed`,
+          log.errorData(err),
+        );
+        return c.json({ error: `Failed to read file: ${code ?? (err as Error).message}` }, 500);
       }
       if (!content) return c.json({ error: `File not found: ${body.filePath}` }, 404);
 

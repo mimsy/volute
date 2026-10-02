@@ -524,8 +524,9 @@ export async function syncSpiritTemplate(): Promise<void> {
 
   const dir = spiritDir();
   if (!existsSync(dir)) return;
-  // The spirit's tree is its own, and the daemon may be root: the reads and writes below
-  // go through the mind-file helpers, so nothing it plants redirects them (#1264).
+  // The spirit's tree is its own, and the daemon may be root: the file reads and writes
+  // this function makes itself go through the mind-file helpers, so nothing it plants
+  // redirects them (#1264). applyTemplateHomeFiles and migrateSkillsToTemplate don't yet.
   const owner = await mindFileOwner(spiritName);
 
   const templatesRoot = findTemplatesRoot();
