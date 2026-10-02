@@ -46,8 +46,11 @@ export class BridgeManager {
   /** SIGTERM-to-SIGKILL grace when stopping, and when replacing a running bridge. */
   private stopGraceMs = 5000;
   private replaceGraceMs = 3000;
-  /** Every child spawned and not yet exited, tracked or not (one in its kill grace). */
-  private live = new Set<ChildProcess>();
+  /**
+   * Every child spawned and not yet exited, with its platform — tracked or not (one a
+   * replacing start is still terminating, say).
+   */
+  private live = new Map<ChildProcess, string>();
 
   async startBridges(daemonPort: number): Promise<void> {
     const config = readBridgesConfig();
@@ -91,7 +94,8 @@ export class BridgeManager {
     const existing = this.bridges.get(platform);
     if (existing) {
       await this.terminate(platform, existing.child, this.replaceGraceMs);
-      if (this.generations.get(platform) !== generation) return; // stopped or restarted since
+      // Stopped (shutdown included) or restarted since: that later call owns the outcome.
+      if (this.generations.get(platform) !== generation) return;
     }
 
     // Kill orphan from previous daemon session
@@ -146,7 +150,7 @@ export class BridgeManager {
       this.saveBridgePid(platform, child.pid);
     }
 
-    this.live.add(child);
+    this.live.set(child, platform);
     this.bridges.set(platform, { child, platform });
     // Clear the crash budget only once this spawn has proved it can stay up —
     // resetting here at spawn time let a bridge that dies immediately refresh its
@@ -193,15 +197,18 @@ export class BridgeManager {
     // the only thing left to stop (#1352).
     const cancelled = this.cancelPendingRestart(platform);
     this.bumpGeneration(platform);
-    const tracked = this.bridges.get(platform);
-    if (tracked) await this.terminate(platform, tracked.child, this.stopGraceMs);
+    // Every child of this platform still alive — the tracked one, and one a replacing
+    // start is still terminating — so a stop returns only once the bridge is gone.
+    const children = [...this.live].filter(([, p]) => p === platform).map(([c]) => c);
+    await Promise.all(children.map((c) => this.terminate(platform, c, this.stopGraceMs)));
 
-    // Also covers a bridge that gave up after crashing: nothing tracked, nothing pending,
-    // but its budget is spent. Its PID file is the exit handler's to remove — unless it
-    // names no child of ours still alive (a leftover from an earlier daemon, say).
+    // Also covers a bridge that gave up after crashing: nothing alive, nothing pending,
+    // but its budget is spent.
     this.restartTracker.reset(platform);
-    if (!this.ownsPid(this.readBridgePid(platform))) this.removeBridgePid(platform);
-    if (tracked || cancelled) blog.info(`stopped bridge ${platform}`);
+    // Off means off for a bridge an earlier daemon left running, too. (Our own children's
+    // PID files are their exit handlers' to remove; this leaves those alone.)
+    this.killOrphanBridge(platform);
+    if (children.length > 0 || cancelled) blog.info(`stopped bridge ${platform}`);
   }
 
   /**
@@ -227,7 +234,10 @@ export class BridgeManager {
         if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ESRCH") {
           blog.warn(`failed to stop bridge ${platform}`, log.errorData(err));
         }
+        // Never arm a SIGKILL for a group we couldn't signal: it may be gone and its
+        // pgid reused by the time the grace runs out.
         res();
+        return;
       }
       killTimer = setTimeout(() => {
         try {
@@ -262,8 +272,9 @@ export class BridgeManager {
   async stopAll(): Promise<void> {
     this.shuttingDown = true;
     for (const platform of [...this.pendingRestarts.keys()]) this.cancelPendingRestart(platform);
-    const platforms = [...this.bridges.keys()];
-    await Promise.all(platforms.map((p) => this.stopBridge(p)));
+    // Including a platform whose replacing start is mid-terminate, which is untracked.
+    const platforms = new Set([...this.bridges.keys(), ...this.live.values()]);
+    await Promise.all([...platforms].map((p) => this.stopBridge(p)));
   }
 
   getBridgeStatus(): { platform: string; running: boolean }[] {
@@ -286,7 +297,7 @@ export class BridgeManager {
 
   /** Whether `pid` is a child of ours that hasn't exited yet. */
   private ownsPid(pid: number | null): boolean {
-    return pid != null && [...this.live].some((c) => c.pid === pid);
+    return pid != null && [...this.live.keys()].some((c) => c.pid === pid);
   }
 
   private cancelPendingRestart(platform: string): boolean {

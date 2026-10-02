@@ -283,9 +283,14 @@ describe("crash recovery wiring", () => {
       try {
         await mgr.startBridge("race", 1618);
         assert.ok(await waitFor(() => spawnTimes(marker).length === 1, 5000));
+        const old = mgr.bridges.get("race").child;
 
         const start = mgr.startBridge("race", 1618);
         await mgr.stopBridge("race");
+        assert.ok(
+          old.exitCode !== null || old.signalCode !== null,
+          "the stop returned while the bridge it stopped was still alive",
+        );
         await start;
 
         await delay(300);
@@ -294,6 +299,70 @@ describe("crash recovery wiring", () => {
       } finally {
         await mgr.stopBridge("race");
       }
+    });
+
+    it("a shutdown wins over a start still terminating the bridge it replaces", async () => {
+      const marker = resolve(fixtureDir, "shutdown-race-spawns.txt");
+      const mgr = new BridgeManager() as AnyMgr;
+      mgr.resolveBuiltinBridge = () =>
+        writeFixture(
+          "shutdownrace",
+          marker,
+          `process.on("SIGTERM", () => setTimeout(() => process.exit(0), 300));\nsetInterval(() => {}, 1000);`,
+        );
+      try {
+        await mgr.startBridge("shutdownrace", 1618);
+        assert.ok(await waitFor(() => spawnTimes(marker).length === 1, 5000));
+
+        const start = mgr.startBridge("shutdownrace", 1618);
+        await mgr.stopAll();
+        await start;
+
+        await delay(300);
+        assert.equal(spawnTimes(marker).length, 1, "a bridge was spawned during shutdown");
+        assert.equal(mgr.live.size, 0);
+      } finally {
+        mgr.shuttingDown = false;
+        await mgr.stopBridge("shutdownrace");
+      }
+    });
+
+    it("never arms a SIGKILL for a group its SIGTERM couldn't reach", async () => {
+      const mgr = new BridgeManager() as AnyMgr;
+      const child = Object.assign(new EventEmitter(), { pid: 424243 });
+      const realKill = process.kill;
+      const signals: string[] = [];
+      process.kill = ((_pid: number, sig?: string) => {
+        signals.push(String(sig));
+        throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+      }) as typeof process.kill;
+      try {
+        await mgr.terminate("eperm", child, 100);
+        await delay(250);
+      } finally {
+        process.kill = realKill;
+      }
+      assert.deepEqual(signals, ["SIGTERM"]);
+    });
+
+    it("a stop kills a bridge an earlier daemon left running", async () => {
+      const mgr = new BridgeManager() as AnyMgr;
+      const pidPath = mgr.bridgePidPath("leftover");
+      mkdirSync(dirname(pidPath), { recursive: true });
+      writeFileSync(pidPath, "424244");
+      const realKill = process.kill;
+      const kills: number[] = [];
+      process.kill = ((pid: number) => {
+        kills.push(pid);
+        return true;
+      }) as typeof process.kill;
+      try {
+        await mgr.stopBridge("leftover");
+      } finally {
+        process.kill = realKill;
+      }
+      assert.deepEqual(kills, [-424244]);
+      assert.equal(existsSync(pidPath), false);
     });
 
     it("disarms the SIGKILL once a terminated bridge exits", async () => {
@@ -378,7 +447,7 @@ describe("crash recovery wiring", () => {
 
       it("leaves alone a PID file naming a child of ours still alive", async () => {
         const mgr = new BridgeManager() as AnyMgr;
-        mgr.live.add({ pid: 424242 });
+        mgr.live.set({ pid: 424242 }, "orphan");
         const pidPath = mgr.bridgePidPath("orphan");
         mkdirSync(dirname(pidPath), { recursive: true });
         writeFileSync(pidPath, "424242");
