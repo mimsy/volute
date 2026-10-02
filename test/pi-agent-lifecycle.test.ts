@@ -55,7 +55,12 @@ const scratch: string[] = [];
 /** chmod can't make a file unreadable to root; tests that fail a read that way skip there. */
 const asRoot = process.getuid?.() === 0;
 /** What the fake daemon answers a recollection request with (null → no entries field). */
-let recollection: { entries: object[] | null; delayMs: number } = { entries: null, delayMs: 0 };
+let recollection: {
+  entries: object[] | null;
+  delayMs: number;
+  /** When set, the answer waits for this instead of `delayMs` — a rotation the test holds open. */
+  hold?: Promise<void>;
+} = { entries: null, delayMs: 0 };
 /** Recollection requests the fake daemon hasn't answered yet — a rotation in progress. */
 let recollectionInFlight = 0;
 
@@ -175,13 +180,15 @@ before(async () => {
     server = createServer((req, res) => {
       if (req.url?.includes("/history/recollection")) {
         captured.push({ path: "recollection" });
-        const { entries, delayMs } = recollection;
+        const { entries, delayMs, hold } = recollection;
         recollectionInFlight++;
-        setTimeout(() => {
+        const answer = () => {
           recollectionInFlight--;
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(entries ? { entries } : {}));
-        }, delayMs);
+        };
+        if (hold) hold.then(answer);
+        else setTimeout(answer, delayMs);
         return;
       }
       let body = "";
@@ -953,41 +960,77 @@ describe("pi recollection at seams", () => {
       () => events("text", "new-1-abc").some((e) => e.content === "still here"),
       "the second message's answer",
     );
+    // The second answer is over the limit too, so it rotates again. Let that fetch land
+    // here: begun after this test, it would count as the next test's rotation (#1213).
+    await waitFor(
+      () =>
+        captured.filter((e) => e.path === "recollection").length === 2 &&
+        recollectionInFlight === 0,
+      "the second rotation to finish",
+    );
   });
 });
 
 describe("pi messages that arrive while a rotation fetches recollection", () => {
   it("no second message's run starts while the first's rotation is under way", async () => {
     const layout = makeMindDir();
-    // B's pre-run is slow (a pre-prompt hook), so without a gate it would finish inside
-    // A's rotation and start a run of its own on the transcript being rotated away.
+    // A's pre-run (a pre-prompt hook) waits for the test's word. Without a gate, B would
+    // enter a pre-run of its own beside it and, finishing inside A's rotation, start a run
+    // of its own on the transcript being rotated away.
+    const entered = join(layout.dir, "hook-entered");
+    const go = join(layout.dir, "hook-go");
     const hookDir = join(layout.cwd, ".local", "hooks", "pre-prompt");
     mkdirSync(hookDir, { recursive: true });
     writeFileSync(
-      join(hookDir, "slow.sh"),
-      "#!/bin/bash\ninput=$(cat)\ncase \"$input\" in *slowpoke*) sleep 0.4;; esac\necho '{}'\n",
+      join(hookDir, "hold.sh"),
+      `#!/bin/bash\ninput=$(cat)\ncase "$input" in *hold-here*) touch '${entered}'; while [ ! -e '${go}' ]; do sleep 0.01; done;; esac\necho '{}'\n`,
     );
-    chmodSync(join(hookDir, "slow.sh"), 0o755);
+    chmodSync(join(hookDir, "hold.sh"), 0o755);
     // An earlier test's mind may still be rotating; only this mind's fetches may count.
     await waitFor(() => recollectionInFlight === 0, "earlier rotations to finish", 3000);
-    recollection = { entries: RECALL, delayMs: 800 };
+    let releaseRotation!: () => void;
+    const hold = new Promise<void>((r) => {
+      releaseRotation = r;
+    });
+    recollection = { entries: RECALL, delayMs: 0, hold };
     const mind = await newMind(layout, { maxContextTokens: 50 });
     const callsDuringRotation: string[] = [];
     const answer = (text: string) => (context: { messages: unknown[] }) => {
       if (recollectionInFlight > 0) callsDuringRotation.push(JSON.stringify(context.messages));
       return fauxAssistantMessage(text);
     };
-    faux.setResponses([answer("a"), answer("b"), answer("c")]);
-    const a = send(mind, "main", "A");
-    send(mind, "main", "slowpoke B");
-    // B may ride A's run as a follow-up (one done for the run) or run after it.
-    await waitFor(
-      () => doneFor(a) && events("text", "main").some((e) => e.content?.includes("b")),
-      "both answered",
-      8000,
-    );
-    await waitFor(() => recollectionInFlight === 0, "rotation finished", 3000);
-    assert.deepEqual(callsDuringRotation, [], "nothing ran while the session was rotating");
+    const prompted: string[] = [];
+    const prompt = pca.AgentSession.prototype.prompt;
+    pca.AgentSession.prototype.prompt = function (this: any, text: string, ...rest: any[]) {
+      prompted.push(text);
+      return prompt.call(this, text, ...rest);
+    };
+    try {
+      faux.setResponses([answer("a"), answer("b"), answer("c")]);
+      const a = send(mind, "main", "alpha hold-here");
+      await waitFor(() => existsSync(entered), "A's pre-run");
+      send(mind, "main", "bravo");
+      // B's way into pi's prompt() is all microtasks: unless something parks it, it's there now.
+      await new Promise((r) => setImmediate(r));
+      assert.ok(
+        !prompted.some((t) => t.includes("bravo")),
+        "B stays out of pi's pre-run while A is in it",
+      );
+      writeFileSync(go, "");
+      await waitFor(() => captured.some((e) => e.path === "recollection"), "A's rotation");
+      releaseRotation();
+      // B may ride A's run as a follow-up (one done for the run) or run after it.
+      await waitFor(
+        () => doneFor(a) && events("text", "main").some((e) => e.content?.includes("b")),
+        "both answered",
+      );
+      await waitFor(() => recollectionInFlight === 0, "rotation finished");
+      assert.deepEqual(callsDuringRotation, [], "nothing ran while the session was rotating");
+    } finally {
+      pca.AgentSession.prototype.prompt = prompt;
+      releaseRotation();
+      writeFileSync(go, "");
+    }
   });
 
   it("each fails or succeeds on its own turn — one failure never swallows the next", async () => {

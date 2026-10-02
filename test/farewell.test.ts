@@ -14,6 +14,7 @@ import {
   runFarewellTurn,
 } from "../packages/daemon/src/lib/mind/farewell.js";
 import { addMind } from "../packages/daemon/src/lib/mind/registry.js";
+import { warmDeliveryPath } from "./helpers/warm-delivery.js";
 
 /** Start a throwaway HTTP server; returns its port and a close fn. */
 async function stubServer(onRequest: () => void): Promise<{ port: number; close: () => void }> {
@@ -107,27 +108,9 @@ describe("farewell notes", () => {
 describe("runFarewellTurn live turn", () => {
   let dir: string;
 
-  // Warm the delivery path once before any timed test. deliverEvent's first call
-  // dynamically imports the sleep-manager and delivery-manager module graphs; cold
-  // through tsx that took ~5s at load 40 and blocked the event loop, so the 200ms
-  // timer couldn't fire until it finished (#1258). The daemon imports both modules
-  // statically, so production never pays this. A dead port reaches both imports
-  // and fails fast.
-  before(async () => {
-    const warmDir = mkdtempSync(resolve(tmpdir(), "farewell-warmup-"));
-    try {
-      await addMind("warmup", await deadPort());
-      await runFarewellTurn({
-        variantName: "warmup",
-        parentName: "p",
-        variantDir: warmDir,
-        running: true,
-        timeoutMs: 200,
-      });
-    } finally {
-      rmSync(warmDir, { recursive: true, force: true });
-    }
-  });
+  // The first delivery would otherwise import its lazy module graph inside the
+  // 200ms timer these tests race (#1258).
+  before(warmDeliveryPath);
 
   beforeEach(() => {
     dir = mkdtempSync(resolve(tmpdir(), "farewell-live-"));

@@ -831,13 +831,14 @@ describe("recollection", () => {
 
   it("never reaches past now, whatever `before` says", async () => {
     const mind = `${PREFIX}future`;
-    const now = new Date();
+    // A pinned mid-hour now: a minute before it is still the current hour (#1184).
+    const now = new Date(2026, 2, 25, 15, 30);
     await insertSummary(mind, "turn", "t-now", "HAPPENING NOW", {
       createdAt: utcDateTimeStr(new Date(now.getTime() - 60_000)),
     });
     const currentHour = getPeriodKey(now, "hour");
     await insertSummary(mind, "hour", currentHour, "PREMATURE HOUR");
-    const entries = await getRecollection(mind, new Date(now.getTime() + 2 * 3600_000));
+    const entries = await getRecollection(mind, new Date(now.getTime() + 2 * 3600_000), { now });
     assert.ok(!entries.some((e) => e.period_key === currentHour), JSON.stringify(entries));
     assert.ok(!entries.some((e) => e.content.includes("HAPPENING NOW")));
   });
