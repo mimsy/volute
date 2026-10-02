@@ -1,12 +1,23 @@
 import assert from "node:assert/strict";
-import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
 import { gitExec } from "../packages/daemon/src/lib/util/exec.js";
 import {
   addPagesWorktree,
   ensurePagesRepo,
+  type IsolationInfo,
   pagesLog,
   pagesMerge,
   pagesPull,
@@ -14,6 +25,7 @@ import {
   pagesRepoDir,
   pagesStatus,
   removePagesWorktree,
+  worktreeGitDir,
 } from "../packages/extensions/pages/src/shared-pages.js";
 import { cleanGitEnv } from "./helpers/test-git-env.js";
 
@@ -587,5 +599,135 @@ describe("pages collaborative repo", () => {
     assert.equal(mainContent, "<p>draft</p>");
 
     await removePagesWorktree("test-pam-dirty", mindDir, dataDir);
+  });
+
+  // #1248: under isolation these chowns run as root on paths the mind controls —
+  // it owns home/ and home/pages and can swap either for a symlink into another
+  // mind's pages. Every root must go through containment before it is chowned.
+  function refusingIsolation() {
+    const contained: string[] = [];
+    const isolation: IsolationInfo = {
+      isIsolationEnabled: () => true,
+      getMindUser: (name) => `mind-${name}`,
+      containMindPath: async (_name, path) => {
+        contained.push(path);
+        throw new Error("refused");
+      },
+    };
+    return { contained, isolation };
+  }
+
+  it("contains home/pages and the worktree before chowning them on add", async () => {
+    await ensurePagesRepo(dataDir);
+    const mindDir = await createFakeMind("test-pages-contain-add");
+    const { contained, isolation } = refusingIsolation();
+    await addPagesWorktree("test-pages-contain-add", mindDir, dataDir, isolation);
+    const pages = resolve(mindDir, "home", "pages");
+    assert.deepEqual(contained, [resolve(pages, "_system"), pages]);
+    await removePagesWorktree("test-pages-contain-add", mindDir, dataDir);
+  });
+
+  for (const [label, run] of [
+    [
+      "pagesMerge",
+      (n: string, m: string, iso: IsolationInfo) => pagesMerge(n, m, dataDir, "x", iso),
+    ],
+    ["pagesPull", (n: string, m: string, iso: IsolationInfo) => pagesPull(n, m, iso)],
+    [
+      "pagesPullAndMerge",
+      (n: string, m: string, iso: IsolationInfo) => pagesPullAndMerge(n, m, dataDir, "x", iso),
+    ],
+  ] as const) {
+    it(`${label} contains the worktree before chowning it`, async () => {
+      await ensurePagesRepo(dataDir);
+      const name = `test-pages-contain-${label.toLowerCase()}`;
+      const mindDir = await createFakeMind(name);
+      await addPagesWorktree(name, mindDir, dataDir);
+      const wt = resolve(mindDir, "home", "pages", "_system");
+      writeFileSync(resolve(wt, "page.html"), "<p>hi</p>");
+      const { contained, isolation } = refusingIsolation();
+      const result = await run(name, mindDir, isolation);
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.deepEqual(contained, [wt]);
+      await removePagesWorktree(name, mindDir, dataDir);
+    });
+  }
+
+  it("chowns the path containment answered with, not the one it was asked about", async (t) => {
+    await ensurePagesRepo(dataDir);
+    const name = "test-pages-contain-decoy";
+    const mindDir = await createFakeMind(name);
+    await addPagesWorktree(name, mindDir, dataDir);
+    writeFileSync(resolve(mindDir, "home", "pages", "_system", "page.html"), "<p>hi</p>");
+    const decoy = resolve(voluteHome(), "nonexistent-contained-root");
+    const warn = t.mock.method(console, "warn", () => {});
+    const result = await pagesPull(name, mindDir, {
+      isIsolationEnabled: () => true,
+      getMindUser: (n) => `mind-${n}`,
+      containMindPath: async () => decoy,
+    });
+    assert.ok(result.ok, JSON.stringify(result));
+    const warned = warn.mock.calls.map((c) => String(c.arguments[0])).join("\n");
+    assert.match(warned, /Command failed: find .*nonexistent-contained-root/);
+    await removePagesWorktree(name, mindDir, dataDir);
+  });
+
+  describe("worktreeGitDir", () => {
+    async function twoWorktrees(tag: string) {
+      await ensurePagesRepo(dataDir);
+      const a = await createFakeMind(`test-pages-gitdir-${tag}-a`);
+      const b = await createFakeMind(`test-pages-gitdir-${tag}-b`);
+      await addPagesWorktree(`test-pages-gitdir-${tag}-a`, a, dataDir);
+      await addPagesWorktree(`test-pages-gitdir-${tag}-b`, b, dataDir);
+      const wtA = realpathSync(resolve(a, "home", "pages", "_system"));
+      const wtB = realpathSync(resolve(b, "home", "pages", "_system"));
+      const repo = pagesRepoDir(dataDir);
+      const gitDirB = worktreeGitDir(repo, wtB);
+      assert.ok(gitDirB, "an honest worktree's gitdir resolves");
+      return { repo, wtA, gitDirA: worktreeGitDir(repo, wtA), wtB, gitDirB };
+    }
+
+    it("resolves an honest worktree's gitdir inside .git/worktrees", async () => {
+      const { repo, gitDirA, gitDirB } = await twoWorktrees("honest");
+      const worktrees = realpathSync(resolve(repo, ".git", "worktrees"));
+      assert.equal(dirname(gitDirA!), worktrees);
+      assert.equal(dirname(gitDirB), worktrees);
+      assert.notEqual(gitDirA, gitDirB);
+    });
+
+    it("refuses a .git file pointed outside the repo's worktrees", async () => {
+      const { wtA, repo } = await twoWorktrees("outside");
+      const elsewhere = resolve(voluteHome(), "test-pages-gitdir-elsewhere");
+      mkdirSync(elsewhere, { recursive: true });
+      writeFileSync(resolve(elsewhere, "gitdir"), resolve(wtA, ".git"));
+      writeFileSync(resolve(wtA, ".git"), `gitdir: ${elsewhere}\n`);
+      assert.equal(worktreeGitDir(repo, wtA), null);
+    });
+
+    it("refuses a .git file pointed at another mind's gitdir", async () => {
+      const { wtA, repo, gitDirB } = await twoWorktrees("other");
+      writeFileSync(resolve(wtA, ".git"), `gitdir: ${gitDirB}\n`);
+      assert.equal(worktreeGitDir(repo, wtA), null);
+    });
+
+    it("follows a relative back-pointer (worktree.useRelativePaths)", async () => {
+      const { wtB, gitDirB, repo } = await twoWorktrees("relative");
+      writeFileSync(resolve(gitDirB, "gitdir"), relative(gitDirB, resolve(wtB, ".git")));
+      assert.equal(worktreeGitDir(repo, wtB), gitDirB);
+    });
+
+    it("refuses a .git swapped for a FIFO without blocking", async () => {
+      const { wtA, repo } = await twoWorktrees("fifo");
+      rmSync(resolve(wtA, ".git"));
+      execFileSync("mkfifo", [resolve(wtA, ".git")]);
+      assert.equal(worktreeGitDir(repo, wtA), null);
+    });
+
+    it("refuses a .git swapped for a symlink to another mind's .git", async () => {
+      const { wtA, wtB, repo } = await twoWorktrees("symlink");
+      rmSync(resolve(wtA, ".git"));
+      symlinkSync(resolve(wtB, ".git"), resolve(wtA, ".git"));
+      assert.equal(worktreeGitDir(repo, wtA), null);
+    });
   });
 });

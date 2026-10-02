@@ -121,6 +121,15 @@ export type ExtensionContext = {
   /** Get the OS username for a mind under user isolation (e.g. "mind-lyra"). */
   getMindUser: (mindName: string) => string;
   /**
+   * Resolve `path` for a root-run operation (a chown) on a mind's behalf, refusing
+   * one the mind has steered out of its own tree: it owns the directories along the
+   * path and can swap any of them for a symlink, so `chown -h` on the unresolved path
+   * guards only the last component. Returns the real path to act on. Under no
+   * isolation there is nothing to steer and the path comes back resolved but
+   * unchecked.
+   */
+  containMindPath: (mindName: string, path: string) => Promise<string>;
+  /**
    * Name of the system spirit. Under the daemon this mirrors its own
    * `getSpiritName()`, which falls back to "volute" on installs predating spirit
    * naming and so never returns null — an earlier implementation read

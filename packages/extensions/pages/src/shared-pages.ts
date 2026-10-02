@@ -7,16 +7,21 @@
 import { execFile as execFileCb } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
-  readFileSync,
+  readSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { relative, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { chownTree } from "@volute/daemon/lib/util/chown-tree.js";
 import { buildMindBaseEnv } from "@volute/daemon/lib/util/mind-env.js";
 import { isMultiplyLinkedFile } from "./ownership.js";
@@ -25,14 +30,16 @@ import { isMultiplyLinkedFile } from "./ownership.js";
 export type IsolationInfo = {
   isIsolationEnabled: () => boolean;
   getMindUser: (name: string) => string;
+  containMindPath: (name: string, path: string) => Promise<string>;
 };
 
 /** Extract IsolationInfo from an ExtensionContext-shaped object. */
-export function isolationFrom(ctx: {
-  isIsolationEnabled: () => boolean;
-  getMindUser: (name: string) => string;
-}): IsolationInfo {
-  return { isIsolationEnabled: ctx.isIsolationEnabled, getMindUser: ctx.getMindUser };
+export function isolationFrom(ctx: IsolationInfo): IsolationInfo {
+  return {
+    isIsolationEnabled: ctx.isIsolationEnabled,
+    getMindUser: ctx.getMindUser,
+    containMindPath: ctx.containMindPath,
+  };
 }
 
 /**
@@ -45,6 +52,17 @@ async function chownPagesTree(path: string, owner: { user?: string; group: strin
   if (skipped.length > 0) {
     console.warn(`[pages] left hard-linked files under ${path} with their owner: ${skipped}`);
   }
+}
+
+/**
+ * Give a tree under the mind's directory to the mind. The mind owns `home/` and
+ * `home/pages`, so it can swap either for a symlink into another mind's pages;
+ * `chownTree` never follows a symlinked root, but a swapped *parent* still
+ * redirects the whole walk. Contained first, then chowned by its real path (#1248).
+ */
+async function chownToMindTree(isolation: IsolationInfo, mindName: string, path: string) {
+  const root = await isolation.containMindPath(mindName, path);
+  await chownPagesTree(root, { user: isolation.getMindUser(mindName), group: "volute" });
 }
 
 /**
@@ -87,16 +105,47 @@ function gitExec(
   });
 }
 
-/** Read the gitdir path from a worktree's .git file. */
-function readWorktreeGitDir(worktreePath: string): string | null {
-  const dotGit = resolve(worktreePath, ".git");
-  if (!existsSync(dotGit)) return null;
+/**
+ * A git pointer file (`.git`, `gitdir`) a mind may have swapped: read only if it is
+ * a small regular file — never through a symlink, never a FIFO that would block the
+ * daemon, never a device that reads forever.
+ */
+function readPointerFile(path: string): string {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const content = readFileSync(dotGit, "utf-8").trim();
-    const match = content.match(/^gitdir:\s*(.+)$/);
-    return match ? match[1] : null;
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.size > 4096) throw new Error(`${path} is not a git pointer file`);
+    const buf = Buffer.alloc(st.size);
+    readSync(fd, buf, 0, st.size, 0);
+    return buf.toString("utf-8").trim();
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * The real path of the worktree's gitdir, or null if it can't be vouched for.
+ *
+ * The `.git` file naming it sits in the mind's worktree, so the mind can rewrite it
+ * to point anywhere — including another mind's gitdir, which also lives in
+ * `.git/worktrees/` (#1248). So the gitdir must be a direct child of the repo's
+ * `.git/worktrees/`, and its `gitdir` back-pointer (written by git into the repo,
+ * not the mind's tree) must lead back to this worktree. `worktree` is the
+ * worktree's contained path.
+ */
+export function worktreeGitDir(repoDir: string, worktree: string): string | null {
+  try {
+    const realWorktree = realpathSync(worktree);
+    const match = readPointerFile(resolve(realWorktree, ".git")).match(/^gitdir:\s*(.+)$/);
+    if (!match) return null;
+    const gitDir = realpathSync(resolve(realWorktree, match[1]));
+    if (dirname(gitDir) !== realpathSync(resolve(repoDir, ".git", "worktrees"))) return null;
+    // Relative under git's worktree.useRelativePaths, and then relative to the gitdir.
+    const back = resolve(gitDir, readPointerFile(resolve(gitDir, "gitdir")));
+    if (realpathSync(dirname(back)) !== realWorktree) return null;
+    return gitDir;
   } catch (err) {
-    console.warn(`[pages] failed to read .git file at ${dotGit}: ${(err as Error).message}`);
+    console.warn(`[pages] can't resolve the gitdir of ${worktree}: ${(err as Error).message}`);
     return null;
   }
 }
@@ -108,20 +157,6 @@ export function pagesRepoDir(dataDir: string): string {
 
 function worktreePath(mindDir: string): string {
   return resolve(mindDir, "home", "pages", "_system");
-}
-
-/**
- * Paths that must be owned by the mind user when isolation is enabled.
- * The daemon runs as root, so the parent home/pages directory it provisions is
- * created root-owned — chowning only the _system worktree would leave the mind
- * unable to write its own pages. The parent dir is chowned recursively (covering
- * the _system worktree too); the worktree git dir lives outside pages/ and is
- * chowned separately.
- */
-export function pagesIsolationChownPaths(mindDir: string, wtGitDir: string | null): string[] {
-  const paths = [resolve(mindDir, "home", "pages")];
-  if (wtGitDir) paths.push(wtGitDir);
-  return paths;
 }
 
 /**
@@ -219,13 +254,29 @@ export async function addPagesWorktree(
   }
 
   if (isolation?.isIsolationEnabled()) {
-    const user = isolation.getMindUser(mindName);
-    const wtGitDir = readWorktreeGitDir(wt);
-    for (const target of pagesIsolationChownPaths(mindDir, wtGitDir)) {
+    // The daemon runs as root, so the home/pages it just provisioned is root-owned:
+    // the whole of it goes to the mind (the worktree included), and so does the
+    // worktree's gitdir, which lives in the repo, outside pages/. The gitdir is
+    // resolved first, while the worktree's `.git` is still root's.
+    let gitDir: string | null = null;
+    try {
+      gitDir = worktreeGitDir(dir, await isolation.containMindPath(mindName, wt));
+    } catch (err) {
+      console.warn(`[pages] refused the gitdir of ${wt}: ${(err as Error).message}`);
+    }
+    const pages = resolve(mindDir, "home", "pages");
+    try {
+      await chownToMindTree(isolation, mindName, pages);
+    } catch (err) {
+      console.warn(`[pages] failed to chown ${pages} for ${mindName}: ${(err as Error).message}`);
+    }
+    if (gitDir) {
       try {
-        await chownPagesTree(target, { user, group: "volute" });
-      } catch {
-        console.warn(`[pages] failed to chown ${target} for ${mindName}`);
+        await chownPagesTree(gitDir, { user: isolation.getMindUser(mindName), group: "volute" });
+      } catch (err) {
+        console.warn(
+          `[pages] failed to chown ${gitDir} for ${mindName}: ${(err as Error).message}`,
+        );
       }
     }
   }
@@ -419,9 +470,10 @@ export async function pagesMerge(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        await chownPagesTree(wt, { user: isolation.getMindUser(mindName), group: "volute" });
-      } catch {
+        await chownToMindTree(isolation, mindName, wt);
+      } catch (err) {
         // Non-fatal: mind still functions but may hit permission errors
+        console.warn(`[pages] failed to chown ${wt} for ${mindName}: ${(err as Error).message}`);
       }
     }
 
@@ -474,9 +526,9 @@ export async function pagesPull(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        await chownPagesTree(wt, { user: isolation.getMindUser(mindName), group: "volute" });
-      } catch {
-        // best effort
+        await chownToMindTree(isolation, mindName, wt);
+      } catch (err) {
+        console.warn(`[pages] failed to chown ${wt} for ${mindName}: ${(err as Error).message}`);
       }
     }
 
@@ -612,9 +664,10 @@ export async function pagesPullAndMerge(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        await chownPagesTree(wt, { user: isolation.getMindUser(mindName), group: "volute" });
-      } catch {
+        await chownToMindTree(isolation, mindName, wt);
+      } catch (err) {
         // Non-fatal: mind still functions but may hit permission errors
+        console.warn(`[pages] failed to chown ${wt} for ${mindName}: ${(err as Error).message}`);
       }
     }
 
