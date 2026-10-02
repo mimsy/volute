@@ -940,7 +940,9 @@ function writeExtensionsConfig(packages: string[]): void {
   writeFileSync(configPath, `${JSON.stringify(packages, null, 2)}\n`);
 }
 
-const VALID_NPM_PACKAGE = /^(@[a-z0-9-~][a-z0-9._-~]*\/)?[a-z0-9-~][a-z0-9._-~]*(@[^\s]+)?$/;
+// The hyphen goes last in each class: `._-~` is a range from `_` to `~`, which
+// refused `is-number` and `@scope/my-ext` while admitting `{|}` and a backtick (#1268).
+const VALID_NPM_PACKAGE = /^(@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*(@[^\s]+)?$/;
 
 export async function installNpmExtension(pkg: string): Promise<void> {
   if (!VALID_NPM_PACKAGE.test(pkg)) {

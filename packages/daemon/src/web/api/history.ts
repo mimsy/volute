@@ -36,12 +36,20 @@ type HistoryEnv = {
 };
 
 /**
- * Resolve the mind whose history the caller may read. Minds are untrusted:
- * a non-admin principal may only see its own history, so the client-supplied
- * `?mind=` param is ignored and forced to the caller's own (base) name.
- * Admin/system callers keep the requested filter.
+ * Resolve the mind whose history the caller may read. Minds are untrusted: a
+ * non-admin principal may only see its own history. Admin/system callers keep the
+ * requested filter.
+ *
+ * A non-admin caller that names another mind in `?mind=` is refused, not quietly
+ * served its own history. The quiet version answered `--mind lyra` with the caller's
+ * own day, labelled as lyra's, and the spirit then reasoned about four minds from its
+ * own day (#1269). An empty answer would be the same lie in a smaller voice — "lyra
+ * had a quiet day" — so the caller is told it can't read this, the way `requireSelf`
+ * tells it on the per-mind routes.
  */
-async function resolveMindFilter(c: Context<HistoryEnv>): Promise<string | undefined> {
+async function resolveMindFilter(
+  c: Context<HistoryEnv>,
+): Promise<string | undefined | { refused: string }> {
   // Admin authority only — the request's *effective* authority, so the spirit passes
   // solely on a turn a verified admin triggered, never on its own work (#433). This
   // endpoint selects `mind_history.content` — verbatim inbound and outbound message
@@ -50,10 +58,16 @@ async function resolveMindFilter(c: Context<HistoryEnv>): Promise<string | undef
   // conversations readable by anything a sibling could talk it into asking, which is
   // the same thing this diff refuses at conversations.ts and events.ts.
   //
-  // Tending is unaffected: `volute mind history --mind X` goes to the per-mind route
-  // `/:name/history`, which is on the spirit's allowlist. Named reads, never a firehose.
+  // Named reads go through the per-mind route `/:name/history`, which is on the
+  // spirit's allowlist — but `volute mind history --period` reads summaries here, so
+  // the spirit's own tending is refused a period read of another mind.
   const privileged = hasAdminAuthority(c.get("effective"));
-  return privileged ? (c.req.query("mind") ?? undefined) : getBaseName(c.get("user").username);
+  if (privileged) return c.req.query("mind") ?? undefined;
+  const own = await getBaseName(c.get("user").username);
+  // Base-map the request too, so a variant asking for its parent (or itself) by
+  // either name is reading its own history (#652).
+  const requested = await getBaseName(c.req.query("mind") ?? own);
+  return requested === own ? own : { refused: requested };
 }
 
 type Db = Awaited<ReturnType<typeof getDb>>;
@@ -388,7 +402,14 @@ const history = new Hono<HistoryEnv>()
   // read c.get("mindFilter") rather than each remembering to call the helper, so
   // a future route that forgets still can't leak another mind's history.
   .use("*", async (c, next) => {
-    c.set("mindFilter", await resolveMindFilter(c));
+    const scope = await resolveMindFilter(c);
+    if (typeof scope === "object") {
+      return c.json(
+        { error: `Forbidden: you can read only your own history, not ${scope.refused}'s` },
+        403,
+      );
+    }
+    c.set("mindFilter", scope);
     await next();
   })
   .get("/turns", async (c) => {

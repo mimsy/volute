@@ -1218,3 +1218,36 @@ describe("resonance flags refuse a missing or unusable value", () => {
     assert.equal(readStrengthFlag(["random", "--max-strength", "1"], "--max-strength", 1), 1);
   });
 });
+
+// ── service reconcile: a failed reload after the unit is rewritten ───────────
+
+describe("volute service reconcile — failed daemon-reload (#1270)", () => {
+  it("says the unit was rewritten, gives the manual reload, and exits 1", async () => {
+    const { reloadRewrittenUnit } = await import("../packages/cli/src/commands/service.js");
+    const failing = async () => {
+      throw Object.assign(new Error("Command failed: systemctl daemon-reload"), {
+        stderr: "System has not been booted with systemd as init system (PID 1).\n",
+      });
+    };
+    const { exitCode, stderr } = await captureRefusal(() =>
+      reloadRewrittenUnit("/etc/systemd/system/volute.service", failing),
+    );
+    assert.equal(exitCode, 1);
+    assert.match(stderr, /Rewrote \/etc\/systemd\/system\/volute\.service/);
+    assert.match(stderr, /not been booted with systemd/);
+    assert.match(stderr, /Reload it by hand: systemctl daemon-reload/);
+  });
+
+  it("is silent when the reload succeeds", async () => {
+    const { reloadRewrittenUnit } = await import("../packages/cli/src/commands/service.js");
+    const calls: string[][] = [];
+    const { exitCode, stderr } = await captureRefusal(() =>
+      reloadRewrittenUnit("/etc/systemd/system/volute.service", async (cmd, args) => {
+        calls.push([cmd, ...args]);
+      }),
+    );
+    assert.equal(exitCode, undefined);
+    assert.equal(stderr, "");
+    assert.deepEqual(calls, [["systemctl", "daemon-reload"]]);
+  });
+});
