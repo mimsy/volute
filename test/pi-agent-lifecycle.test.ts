@@ -1041,16 +1041,37 @@ describe("pi recollection at seams", () => {
         /consolidated at the context limit/.test(e.content ?? ""),
     );
     assert.match(note?.content ?? "", /consolidated memory of the days before/);
+    // The second answer is over the limit too, so it rotates again. Let that fetch land
+    // here: begun after this test, it would count as the next test's rotation (#1323).
+    await waitFor(
+      () =>
+        captured.filter((e) => e.path === "recollection").length === 2 &&
+        recollectionInFlight === 0,
+      "the second rotation to finish",
+    );
   });
 
   it("an ephemeral thread isn't evicted while it settles, so a message sent then is answered", async () => {
     const layout = makeMindDir();
-    recollection = { entries: RECALL, delayMs: 300 };
+    // An earlier test's mind may still be rotating; only this mind's fetches may count.
+    await waitFor(() => recollectionInFlight === 0, "earlier rotations to finish", 3000);
+    // The first run's rotation is held open until the second message is in: it is sent
+    // while the run settles, however slowly this machine gets there (#1323).
+    let releaseRotation!: () => void;
+    const hold = new Promise<void>((r) => {
+      releaseRotation = r;
+    });
+    recollection = { entries: RECALL, delayMs: 0, hold };
     const mind = await newMind(layout, { maxContextTokens: 50 });
     faux.setResponses([fauxAssistantMessage("over the limit"), fauxAssistantMessage("still here")]);
-    send(mind, "new-1-abc", "one");
-    await waitFor(() => captured.some((e) => e.path === "recollection"), "rotation fetch");
-    send(mind, "new-1-abc", "two");
+    try {
+      send(mind, "new-1-abc", "one");
+      await waitFor(() => recollectionInFlight === 1, "rotation fetch");
+      send(mind, "new-1-abc", "two");
+    } finally {
+      // Released even on a failure, so a rotation held open can't stall the next test.
+      releaseRotation();
+    }
     await waitFor(
       () => events("text", "new-1-abc").some((e) => e.content === "still here"),
       "the second message's answer",
@@ -1142,7 +1163,15 @@ describe("pi messages that arrive while a rotation fetches recollection", () => 
 
   it("each fails or succeeds on its own turn — one failure never swallows the next", async () => {
     const layout = makeMindDir();
-    recollection = { entries: RECALL, delayMs: 300 };
+    // An earlier test's mind may still be rotating; only this mind's fetches may count.
+    await waitFor(() => recollectionInFlight === 0, "earlier rotations to finish", 3000);
+    // A's rotation is held open until B and C are in: they arrive while it settles,
+    // however slowly this machine gets there.
+    let releaseRotation!: () => void;
+    const hold = new Promise<void>((r) => {
+      releaseRotation = r;
+    });
+    recollection = { entries: RECALL, delayMs: 0, hold };
     const mind = await newMind(layout, { maxContextTokens: 50 });
     const prompt = pca.AgentSession.prototype.prompt;
     // B fails when it actually runs (not while pi would only defer it) — as a provider
@@ -1157,11 +1186,12 @@ describe("pi messages that arrive while a rotation fetches recollection", () => 
       faux.setResponses([fauxAssistantMessage("A answered"), fauxAssistantMessage("C answered")]);
       let bDone = false;
       send(mind, "main", "A");
-      await waitFor(() => captured.some((e) => e.path === "recollection"), "rotation fetch");
+      await waitFor(() => recollectionInFlight === 1, "rotation fetch");
       send(mind, "main", "B", (e) => {
         if (e.type === "done") bDone = true;
       });
       send(mind, "main", "C");
+      releaseRotation();
       await waitFor(
         () => events("text", "main").some((e) => e.content === "C answered"),
         "C is answered",
@@ -1169,8 +1199,16 @@ describe("pi messages that arrive while a rotation fetches recollection", () => 
       await waitFor(() => bDone, "B's own done");
       assert.equal(events("error", "main").length, 1, "one failure, B's, reported once");
       assert.match(events("error", "main")[0].content ?? "", /B refused/);
+      // C's answer is over the limit too: let that rotation land here, not in a later test.
+      await waitFor(
+        () =>
+          captured.filter((e) => e.path === "recollection").length === 2 &&
+          recollectionInFlight === 0,
+        "C's rotation to finish",
+      );
     } finally {
       pca.AgentSession.prototype.prompt = prompt;
+      releaseRotation();
     }
   });
 });
