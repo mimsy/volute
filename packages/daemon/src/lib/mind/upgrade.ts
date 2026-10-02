@@ -24,6 +24,7 @@ export { mindGitOpts };
 
 import { beginUpgrade } from "./join-lock.js";
 import { repairMechanicsDoc } from "./mechanics-doc.js";
+import { type MergeRestartTarget, restartOntoMerge } from "./merge-restart.js";
 import { writeMindFile } from "./mind-file-write.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import { findMind, mindDir, setMindTemplate, setMindTemplateHash } from "./registry.js";
@@ -667,13 +668,9 @@ async function mergeUpgradeAndRestart(
 }
 
 /** The MindManager surface {@link installDepsAndRestart} uses — narrowed so tests can stub it. */
-type RestartTarget = {
-  isUpOrRecovering(name: string): boolean;
+type RestartTarget = MergeRestartTarget & {
   hasPendingRecovery(name: string): boolean;
   resumeRecovery(name: string): Promise<void>;
-  stopMind(name: string): Promise<void>;
-  startMind(name: string, opts?: { healthTimeoutMs?: number }): Promise<void>;
-  setPendingContext(name: string, context: Record<string, unknown>): void;
 };
 
 /** Collaborators of {@link installDepsAndRestart}, defaulting to the real daemon singletons. */
@@ -683,6 +680,8 @@ export type InstallAndRestartDeps = {
   /** Host-facing alert: a dashboard row, published the moment the failure happens. */
   publishHostError: (mindName: string, summary: string, kind: string) => Promise<void>;
   getManager: () => RestartTarget;
+  /** Whether the sleep manager holds the mind asleep; defaults to the live sleep manager. */
+  isAsleep?: (mindName: string) => boolean;
 };
 
 const defaultInstallAndRestartDeps: InstallAndRestartDeps = {
@@ -765,19 +764,22 @@ export async function installDepsAndRestart(
   // Restart mind with upgrade context
   const wasRecovering = manager.hasPendingRecovery(mindName);
   try {
-    // A mind waiting out a crash backoff is stopped too: that cancels its pending
-    // restart, which would otherwise race the start below (#1114).
-    if (manager.isUpOrRecovering(mindName)) {
-      await manager.stopMind(mindName);
-    }
-    manager.setPendingContext(mindName, context);
     // Generous health budget: right after an npm install the disk cache is
     // cold and I/O may still be saturated, so a tsx cold start can exceed the
     // default 30s — timing out here kills the child and leaves the mind down.
-    await manager.startMind(mindName, { healthTimeoutMs: 120_000 });
+    const restarted = await restartOntoMerge(manager, mindName, context, {
+      healthTimeoutMs: 120_000,
+      isAsleep: deps.isAsleep,
+    });
+    if (restarted === "asleep") {
+      log.info(`${mindName} fell asleep during its upgrade — it starts on the new code at wake`);
+      return [depsWarning, `${mindName} is asleep; it runs the upgraded code when it wakes.`]
+        .filter(Boolean)
+        .join(" ");
+    }
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
-    // The stop above cancelled a pending crash recovery; without it back, a mind that
+    // restartOntoMerge's stop cancelled a pending crash recovery; without it back, a mind that
     // was coming back would stay down for good.
     if (wasRecovering) {
       await manager.resumeRecovery(mindName).catch((err) => {

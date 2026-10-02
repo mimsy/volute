@@ -76,6 +76,7 @@ function harness(over: Partial<InstallAndRestartDeps> = {}): Harness {
       hostErrors.push({ summary, kind });
     },
     getManager: () => manager,
+    isAsleep: () => false,
     ...over,
   };
   return { deps, manager, installs, hostErrors };
@@ -112,6 +113,46 @@ describe("installDepsAndRestart", () => {
     const manager = { ...h.manager, isRunning: () => false, isUpOrRecovering: () => true };
     await installDepsAndRestart(MIND, DIR, REF, true, { ...h.deps, getManager: () => manager });
     assert.deepEqual(h.manager.calls, ["stop", "context", "start"]);
+  });
+
+  it("leaves a mind the sleep manager put to sleep mid-upgrade down for its wake (#1309)", async () => {
+    // The sleep manager stopped the mind while the install ran. Starting it here would
+    // leave a live process whose sleep state queues all its inbound until the wake.
+    const h = harness({ isAsleep: () => true });
+    const manager = { ...h.manager, isUpOrRecovering: () => false };
+    const warning = await installDepsAndRestart(MIND, DIR, REF, true, {
+      ...h.deps,
+      getManager: () => manager,
+    });
+    assert.deepEqual(h.manager.calls, ["context"], "context kept for the wake's start; no start");
+    assert.deepEqual(h.manager.contexts, [{ type: "upgraded" }]);
+    assert.deepEqual(h.hostErrors, [], "a sleeping mind is not a failed restart");
+    assert.match(String(warning), /asleep; it runs the upgraded code when it wakes/);
+  });
+
+  it("skips the start when a bedtime lands during the upgrade's own stop (#1309)", async () => {
+    let asleep = false;
+    const h = harness({ isAsleep: () => asleep });
+    const manager = {
+      ...h.manager,
+      stopMind: async () => {
+        h.manager.calls.push("stop");
+        asleep = true;
+      },
+    };
+    const warning = await installDepsAndRestart(MIND, DIR, REF, true, {
+      ...h.deps,
+      getManager: () => manager,
+    });
+    assert.deepEqual(h.manager.calls, ["stop", "context"]);
+    assert.match(String(warning), /asleep/);
+  });
+
+  it("does not hand a mind asleep mid-backoff back to crash recovery (#1309)", async () => {
+    const h = harness({ isAsleep: () => true });
+    const manager = { ...h.manager, hasPendingRecovery: () => true };
+    await installDepsAndRestart(MIND, DIR, REF, true, { ...h.deps, getManager: () => manager });
+    assert.deepEqual(h.manager.calls, ["stop", "context"]);
   });
 
   it("skips the install when the merge left dependencies untouched", async () => {
