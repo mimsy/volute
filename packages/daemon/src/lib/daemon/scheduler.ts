@@ -268,10 +268,13 @@ export class Scheduler {
         // a schedule it just tuned "did not run" (#948). An entry saved before
         // the timing was recorded at all is adopted as-is rather than
         // re-baselined, so the upgrade restart — exactly when a catch-up fire
-        // matters — doesn't cost every schedule one.
+        // matters — doesn't cost every schedule one. Re-baselined to the minute
+        // before this one, like a re-enable below: a cron edited to fire right now,
+        // before this minute's tick, is a fire, not history (#1286). Never behind a
+        // fire already acted on this minute, or the edit would fire it twice.
         const legacy =
           entry.cron === undefined && entry.fireAt === undefined && entry.skipReason !== "undated";
-        this.mark(key, legacy ? spec : { slot: epochMinute, ...spec });
+        this.mark(key, legacy ? spec : { slot: Math.max(entry.slot, epochMinute - 1), ...spec });
         delete entry.fireAt;
         if (entry.skipReason === "undated") delete entry.skipReason;
       } else if (schedule.fireAt && entry.fireAt !== schedule.fireAt) {

@@ -485,6 +485,12 @@ describe("scheduler one-time consumption (#866)", () => {
 describe("scheduler state honesty (#867)", () => {
   const nowMin = () => Math.floor(Date.now() / 60000);
 
+  /** A daily cron whose most recent fire was `minutesAgo` minutes ago. */
+  function dailyCronAgo(minutesAgo: number): string {
+    const d = new Date(Date.now() - minutesAgo * 60000);
+    return `${d.getMinutes()} ${d.getHours()} * * *`;
+  }
+
   /** Read one schedule's bookkeeping out of the in-memory map. */
   function stateOf(scheduler: Scheduler, mind: string, id: string) {
     return ((scheduler as any).state as Map<string, any>).get(`${mind}:${id}`);
@@ -585,7 +591,9 @@ describe("scheduler state honesty (#867)", () => {
     const key = "persist-mind:dream";
     (scheduler as any).state.set(key, { slot: realMin - 5000 });
     (scheduler as any).schedules.set("persist-mind", [
-      { id: "dream", cron: "0 3 * * *", message: "dream", enabled: true },
+      // Due an hour ago by the test's own clock: stale at any time of day. A fixed
+      // `0 3 * * *` was within catch-up, and delivered, just after 03:00 (#1294).
+      { id: "dream", cron: dailyCronAgo(60), message: "dream", enabled: true },
     ]);
 
     await (scheduler as any).tick();
@@ -1267,9 +1275,54 @@ describe("scheduler schedule edits keep their history without false skips (#948)
     assert.equal(fired, false);
     assert.deepEqual(scheduler.skipNotices, [], "an edit is not a skipped fire");
     const state = stateOf(scheduler, `${mind}:dream`);
-    assert.equal(state.slot, nowMin());
+    assert.equal(state.slot, nowMin() - 1);
     assert.equal(state.cron, cron);
     assert.equal(state.firedAt, firedAt, "the schedule's history survives the edit");
+  });
+
+  it("a cron edited to fire in the current minute still fires (#1286)", () => {
+    // Edited at 09:00:02 to `0 9 * * *`, before that minute's tick: the fire is due
+    // now, not history the re-baseline should swallow.
+    const scheduler = new TestScheduler();
+    const mind = "edit-due-now-mind";
+    const dir = resolve(voluteSystemDir(), mind);
+    const firedAt = nowMin() - 600;
+    (scheduler as any).state.set(`${mind}:dream`, { slot: firedAt, firedAt, cron: "0 3 * * *" });
+
+    const dream = { id: "dream", cron: dailyCronAgo(0), message: "dream", enabled: true };
+    writeConfig(dir, [dream]);
+    scheduler.loadSchedules(mind, dir);
+
+    assert.equal((scheduler as any).shouldFire(dream, nowMin(), mind, new Map()), true);
+    assert.deepEqual(scheduler.skipNotices, []);
+  });
+
+  it("a cron that already fired this minute, edited to one that also matches it, fires once", () => {
+    const scheduler = new TestScheduler();
+    const mind = "edit-fired-now-mind";
+    const dir = resolve(voluteSystemDir(), mind);
+    const now = nowMin();
+    (scheduler as any).state.set(`${mind}:dream`, { slot: now, firedAt: now, cron: "* * * * *" });
+
+    const dream = { id: "dream", cron: dailyCronAgo(0), message: "dream", enabled: true };
+    writeConfig(dir, [dream]);
+    scheduler.loadSchedules(mind, dir);
+
+    assert.equal((scheduler as any).shouldFire(dream, now + 1, mind, new Map()), false);
+  });
+
+  it("a cron edited to a minute that just passed does not fire late", () => {
+    const scheduler = new TestScheduler();
+    const mind = "edit-just-passed-mind";
+    const dir = resolve(voluteSystemDir(), mind);
+    (scheduler as any).state.set(`${mind}:dream`, { slot: nowMin() - 600, cron: "0 3 * * *" });
+
+    const dream = { id: "dream", cron: dailyCronAgo(1), message: "dream", enabled: true };
+    writeConfig(dir, [dream]);
+    scheduler.loadSchedules(mind, dir);
+
+    assert.equal((scheduler as any).shouldFire(dream, nowMin(), mind, new Map()), false);
+    assert.deepEqual(scheduler.skipNotices, []);
   });
 
   it("adopts an entry saved before the cron was recorded, keeping its catch-up", () => {
