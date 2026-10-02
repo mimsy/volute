@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.66.10](https://github.com/mimsy/volute/compare/volute-v0.66.9...volute-v0.66.10) (2026-10-02)
+
+
+### Bug Fixes
+
+* a disabled bridge stays off, the upgrade-blocked badge clears once upgraded, and a commit killed at shutdown is retried ([#1361](https://github.com/mimsy/volute/issues/1361)) ([d126d44](https://github.com/mimsy/volute/commit/d126d44c439dfc840087bc810eb6bb7f1894b3c7))
+* **pages:** say where a publish went, and name --shared in every shared refusal ([#1356](https://github.com/mimsy/volute/issues/1356)) ([ee12386](https://github.com/mimsy/volute/commit/ee123862f0b6f0168533b034ade0aacf2db66d51))
+* tell a mind back from a long sleep every release it missed ([#1354](https://github.com/mimsy/volute/issues/1354)) ([87b613b](https://github.com/mimsy/volute/commit/87b613bc642848eadaad7fd0fbf0d7c14a539263))
+
 ## [0.66.9](https://github.com/mimsy/volute/compare/volute-v0.66.8...volute-v0.66.9) (2026-10-02)
 
 
