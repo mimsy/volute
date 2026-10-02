@@ -1738,7 +1738,7 @@ describe("codex reply instructions follow routes.json (#1205)", () => {
   });
 });
 
-describe("codex `once` reply instructions are once per model context (#1226)", () => {
+describe("codex the event note and `once` reply instructions are once per model context (#1226)", () => {
   const alice = { channel: "@alice", sender: "alice" };
   const hello = [{ type: "text", text: "hello" }];
   const reminded = (input: unknown) => /volute chat send "@alice"/.test(input as string);
@@ -1803,6 +1803,36 @@ describe("codex `once` reply instructions are once per model context (#1226)", (
     await send("ri-vanish2", hello, mind, alice);
     await send("ri-vanish2", hello, mind, alice);
     assert.deepEqual(inputs("ri-vanish2").map(reminded), [false, true, true, true]);
+  });
+
+  const eventNoted = (input: unknown) => /This is a system event/.test(input as string);
+  const event = (n: number) => ({ channel: `event:schedule:${n}`, isEvent: true });
+
+  it("a rotated thread is given the event note again", async () => {
+    script("ev-rot", overThreshold("019f5e60-0000-7000-8000-0000000012a8"));
+    await send("ev-rot", hello, rotatingMind, event(1));
+    await send("ev-rot", hello, rotatingMind, event(2));
+    assert.deepEqual(inputs("ev-rot").map(eventNoted), [true, true]);
+  });
+
+  it("a retry on a fresh thread that carried the event note is not given it twice", async () => {
+    const rollout = writeRollout(resolve(codexHome, "sessions"), "t-ev-vanish");
+    writePointer("ev-vanish", "t-ev-vanish", true);
+    await send("ev-vanish");
+    rmSync(rollout);
+    script(
+      "ev-vanish",
+      { throws: "Codex Exec exited with code 1: no rollout found for thread id t-ev-vanish" },
+      {
+        events: [
+          { type: "thread.started", thread_id: "t-ev-vanish-fresh" },
+          { type: "turn.completed", usage: USAGE },
+        ],
+      },
+    );
+    await send("ev-vanish", hello, mind, event(1));
+    await send("ev-vanish", hello, mind, event(2));
+    assert.deepEqual(inputs("ev-vanish").map(eventNoted), [false, true, true, false]);
   });
 
   it("a thread carried past a stale rollout path is given them again", async () => {

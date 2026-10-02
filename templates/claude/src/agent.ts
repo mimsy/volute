@@ -77,7 +77,7 @@ type Session = {
   currentQuery?: ReturnType<typeof query>;
   messageChannels: Map<string, MessageChannelEntry>;
   replyInstructionsFired: boolean;
-  /** The event note is a standing fact about events, so it fires once per session. */
+  /** The event note is a standing fact about events, so it fires once per model context. */
   eventNoteFired: boolean;
   contextTokens: number;
   /** Last inbound message or completed turn — drives idle reaping. */
@@ -523,12 +523,19 @@ export function createMind(options: {
       // pending, or the rotation cap is hit) and blocks; second fire allows the SDK's
       // native compaction — the emergency backstop when rotation never intervened
       // (a hung turn, or a system prompt too large for rotation to relieve).
-      const preCompact = createPreCompactHook(() => {
-        if (!session.rotationPending && session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS) {
-          log("mind", `session "${session.name}": native compaction — scheduling rotation`);
-          scheduleRotation();
-        }
-      });
+      const preCompact = createPreCompactHook(
+        () => {
+          if (
+            !session.rotationPending &&
+            session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS
+          ) {
+            log("mind", `session "${session.name}": native compaction — scheduling rotation`);
+            scheduleRotation();
+          }
+        },
+        // The compacted context no longer holds the event note or reply instructions.
+        () => newModelContext(session),
+      );
 
       const callbacks = {
         onSessionId: (id: string) => {
@@ -798,7 +805,7 @@ export function createMind(options: {
               session.seededCause = "rotation";
               session.seededArchivedAt = null;
               session.seededRecollection = (rotated?.recallEntries ?? 0) > 0;
-              // The rotated context no longer holds the reply instructions (#1226).
+              // The rotated context no longer holds the event note or reply instructions (#1226).
               newModelContext(session);
               // Count this rotation; a healthy turn resets it. If back-to-back rotations
               // don't reduce context (system prompt too large to fit the tail under the

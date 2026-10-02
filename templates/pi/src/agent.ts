@@ -649,7 +649,7 @@ export async function createMind(options: {
     // through on its second pass, inside the run) is the backstop.
     let compactBlocked = false;
     let rotatePending = false;
-    /** What the reply instructions have told this session's model context (turn-context.ts). */
+    /** Which one-shot notes this model context has been given (see turn-context.ts). */
     const turnContext: TurnContextState = { eventNoteFired: false, replyInstructionsFired: false };
 
     /**
@@ -832,6 +832,8 @@ export async function createMind(options: {
         }
         compactBlocked = false;
         log("mind", `session "${session.name}": allowing native compaction backstop`);
+        // The compacted context no longer holds the event note or reply instructions.
+        newModelContext(turnContext);
       });
     };
 

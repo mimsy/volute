@@ -10,23 +10,25 @@ export type TurnContext = {
 
 /** The mutable per-session state this decision reads and updates. */
 export type TurnContextState = {
-  eventNoteFired: boolean;
   /**
-   * Reply instructions have been given in this model context (what `once` counts). Cleared
-   * by `newModelContext` wherever a template rebuilds the context.
+   * The event note has been given in this model context. Both flags are cleared by
+   * `newModelContext` wherever a template rebuilds the context.
    */
+  eventNoteFired: boolean;
+  /** Reply instructions have been given in this model context (what `once` counts). */
   replyInstructionsFired: boolean;
 };
 
 /**
- * The model's context was just rebuilt — a rotation, or a fresh start in place — so the
- * reply instructions it was given are gone from what it can see. `once` means once per
- * model context, not per session object: each template's session object spans a different
- * window (claude's survives a rotation), and a mind that has lost the reminder, a small
- * model above all, may stop answering where anyone can hear (#1226). A session created
- * anew starts clear and needs no call.
+ * The model's context was just rebuilt — a rotation, a native compaction, or a fresh start
+ * in place — so the event note and reply instructions it was given are gone from what it
+ * can see. Each fires once per model context, not per session object: each template's
+ * session object spans a different window (claude's survives a rotation), and a mind that
+ * has lost the reminder, a small model above all, may stop answering where anyone can hear
+ * (#1226). A session created anew starts clear and needs no call.
  */
 export function newModelContext(state: TurnContextState): void {
+  state.eventNoteFired = false;
   state.replyInstructionsFired = false;
 }
 
@@ -46,8 +48,8 @@ export type TurnEntry = Pick<
  * to reply to its own environment. The send is rejected, and the mind is left puzzling over
  * a message nobody sent (observed: the seed "lucy" spent her first turn on exactly this).
  *
- * The event note fires once per session, not once per event: it states a standing fact about
- * events (also in VOLUTE.md), and each event arrives on a distinct channel, so keying it on
+ * The event note fires once per model context, not once per event: it states a standing fact
+ * about events (also in VOLUTE.md), and each event arrives on a distinct channel, so keying it on
  * the channel would fire it on every single event.
  *
  * Reply instructions follow the thread's routes.json `replyInstructions`, which the daemon

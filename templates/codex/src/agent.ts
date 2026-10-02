@@ -103,7 +103,7 @@ type CodexSession = {
   messageChannels: Map<string, string>;
   /** Reply instructions have been given in this thread's context (see turn-context.ts). */
   replyInstructionsFired: boolean;
-  /** The event note is a standing fact about events, so it fires once per session. */
+  /** The event note is a standing fact about events, so it fires once per model context. */
   eventNoteFired: boolean;
   /**
    * Why the current thread started, until its first turn has been oriented — the source
@@ -1071,12 +1071,14 @@ export function createMind(options: {
         );
         if (persistent) sessionStore.delete(session.name);
         // Either way the retry runs on a thread with a new context, re-sending this turn's
-        // prompt — reply instructions and all, if it had them — so once it has run, that
-        // context has been given them (#1226).
+        // prompt — event note or reply instructions and all, if it had them — so once it has
+        // run, that context has been given them (#1226).
         const retry = async (prefix: string) => {
           const failed = await streamTurn(session, prependText(input, prefix));
           if (!failed && turnContext?.source === "reply-instructions") {
             session.replyInstructionsFired = true;
+          } else if (!failed && turnContext?.source === "event-instructions") {
+            session.eventNoteFired = true;
           }
           return failed;
         };

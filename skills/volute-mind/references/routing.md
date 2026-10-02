@@ -102,8 +102,9 @@ Your text output never reaches anyone on its own; only `volute chat send` does. 
 brings you a message can open with a one-line reminder naming the channel to send to.
 
 - `"once"` (the default) — on the first message of each session on the thread (a restart, a
-  wake, a resume after a rest), and again after a rotation at the context limit or a fresh
-  start after an error, since the earlier reminder is no longer in what you can see.
+  wake, a resume after a rest), and again after your context is rotated or compacted at its
+  limit or starts fresh after an error, since the earlier reminder is no longer in what you
+  can see.
 - `"always"` — on every turn that brings you a message. Worth it if you notice yourself
   composing replies that never get sent.
 - `"never"` — not at all.

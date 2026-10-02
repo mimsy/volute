@@ -36,6 +36,8 @@ type Turn = {
   throws?: boolean;
   /** Run just before that throw. */
   beforeThrow?: () => void;
+  /** The SDK tries to auto-compact twice in this turn: blocked once, then let through. */
+  compacts?: boolean;
 };
 
 const FAKE_SDK = `
@@ -67,6 +69,8 @@ export function query({ prompt, options }) {
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join("\\n");
+      const byPrompt = control().byPrompt.find((t) => text.includes(t.match));
+      if (byPrompt) Object.assign(turn, byPrompt.turn);
       for (const matcher of options.hooks?.UserPromptSubmit ?? []) {
         for (const hook of matcher.hooks) {
           await hook(
@@ -74,6 +78,15 @@ export function query({ prompt, options }) {
             undefined,
             { signal: new AbortController().signal },
           );
+        }
+      }
+      for (let pass = 0; turn.compacts && pass < 2; pass++) {
+        for (const matcher of options.hooks?.PreCompact ?? []) {
+          for (const hook of matcher.hooks) {
+            await hook({ hook_event_name: "PreCompact", trigger: "auto" }, undefined, {
+              signal: new AbortController().signal,
+            });
+          }
         }
       }
       if (signal?.aborted) throw aborted();
@@ -123,12 +136,18 @@ const control: {
   gates: { match: string; onTaken: () => void; release: Promise<void> }[];
   /** Make the query's `interrupt()` reject, as the SDK's can. */
   rejectInterrupt: boolean;
+  /**
+   * Turns keyed by the prompt they answer, laid over the session's scripted turn. Unlike
+   * `turns`, these don't depend on how many turns an aborted stream took off the list.
+   */
+  byPrompt: { match: string; turn: Turn }[];
 } = {
   turns: new Map(),
   prompts: [],
   sessionIds: new Map(),
   gates: [],
   rejectInterrupt: false,
+  byPrompt: [],
 };
 
 /** Hold the answer to the prompt containing `match`: resolves once it is taken. */
@@ -386,7 +405,7 @@ describe("claude: reply instructions follow routes.json (#1205)", () => {
   });
 });
 
-describe("claude: `once` reply instructions are once per model context (#1226)", () => {
+describe("claude: the event note and `once` reply instructions are once per model context (#1226)", () => {
   const replyNotes = (session: string) =>
     posted.filter(
       (p) =>
@@ -450,6 +469,67 @@ describe("claude: `once` reply instructions are once per model context (#1226)",
     sendAlice(mind, session, "r2");
     await waitFor(() => dones(session).length === 2, "r2's done");
     assert.equal(replyNotes(session).length, 2, "reminded on each side of the rotation");
+  });
+
+  it("a native compaction gives the compacted context the instructions again", async () => {
+    // Native compaction is the backstop past the rotation cap: three rotations that each
+    // leave the context over the threshold spend it, and the fourth turn's auto-compaction
+    // is let through rather than turned into another rotation.
+    const session = "ri-compact";
+    control.sessionIds.set(session, "sess-ri-compact");
+    plantTranscript("sess-ri-compact");
+    const mind = newMind({ maxContextTokens: 100 });
+    for (const id of ["k1", "k2", "k3"]) {
+      control.byPrompt.push({ match: `hello ${id}`, turn: { inputTokens: 1000 } });
+    }
+    control.byPrompt.push({ match: "hello k4", turn: { compacts: true } });
+    const rotations = () =>
+      posted.filter(
+        (p) =>
+          p.body.type === "log" &&
+          String(p.body.content).startsWith(`session "${session}": rotated `),
+      );
+    for (const [i, id] of ["k1", "k2", "k3", "k4", "k5"].entries()) {
+      sendAlice(mind, session, id);
+      await waitFor(() => dones(session).length === i + 1, `${id}'s done`);
+      if (i < 3) await waitFor(() => rotations().length === i + 1, `rotation ${i + 1}`);
+    }
+    assert.equal(rotations().length, 3, "no rotation after the cap");
+    // One reminder per context: the first, one after each rotation, one after compaction.
+    assert.equal(replyNotes(session).length, 5);
+  });
+
+  it("the event note is given again after a rotation", async () => {
+    const session = "ev-rotate";
+    control.sessionIds.set(session, "sess-ev-rotate");
+    plantTranscript("sess-ev-rotate");
+    const mind = newMind({ maxContextTokens: 100 });
+    control.turns.set(session, [{ inputTokens: 1000 }]);
+    const event = (messageId: string) =>
+      mind.resolve(session).handle([{ type: "text", text: `event ${messageId}` }], {
+        channel: `event:schedule:${messageId}`,
+        isEvent: true,
+        messageId,
+      });
+    event("e1");
+    await waitFor(() => dones(session).length === 1, "e1's done");
+    const archive = resolve(mindDir, ".mind/sessions/archive");
+    await waitFor(
+      () => existsSync(archive) && readdirSync(archive).some((f) => f.startsWith(`${session}-`)),
+      "the rotation to land",
+    );
+    event("e2");
+    await waitFor(() => dones(session).length === 2, "e2's done");
+    const notes = posted.filter(
+      (p) =>
+        p.path.endsWith("/events") &&
+        p.body.session === session &&
+        p.body.type === "context" &&
+        // claude reports both notes under the hook's name; the event note names no channel.
+        p.body.metadata?.source === "reply-instructions" &&
+        !/volute chat send/.test(p.body.content),
+    );
+    assert.equal(notes.length, 2);
   });
 
   it("a session that starts over after a failed resume is reminded again", async () => {
