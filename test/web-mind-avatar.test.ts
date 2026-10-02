@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -9,6 +12,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -122,6 +126,27 @@ describe("mind profile avatar", () => {
     assert.notEqual(config?.profile?.avatar, "../../../etc/passwd");
   });
 
+  // GET /avatar refuses a link at the name, so PATCH must too — or the avatar counts as
+  // set (seed readiness) yet never displays.
+  it("rejects a symlinked or hard-linked avatar with a clear reason", async () => {
+    const app = createApp();
+    const home = join(mindDir(testMindName), "home");
+    rmSync(join(home, "sym.png"), { force: true });
+    symlinkSync(join(home, "top-avatar.png"), join(home, "sym.png"));
+    rmSync(join(home, "hard.png"), { force: true });
+    linkSync(join(home, "top-avatar.png"), join(home, "hard.png"));
+    try {
+      for (const avatar of ["sym.png", "hard.png"]) {
+        const res = await patchProfile(app, { avatar });
+        assert.equal(res.status, 400, avatar);
+        assert.match((await res.json()).error, /regular file/);
+      }
+    } finally {
+      rmSync(join(home, "sym.png"), { force: true });
+      rmSync(join(home, "hard.png"), { force: true });
+    }
+  });
+
   it("rejects a nonexistent file", async () => {
     const app = createApp();
     const res = await patchProfile(app, { avatar: "images/missing.png" });
@@ -194,6 +219,91 @@ describe("mind profile avatar", () => {
       rmSync(join(dir, "home"));
       renameSync(join(dir, "home-real"), join(dir, "home"));
       rmSync(elsewhere, { recursive: true });
+    }
+  });
+
+  // A mind can swap the avatar for a link between the route's checks and its read, so
+  // the read itself refuses a link at the name — even one pointing inside home/ (#1272).
+  it("refuses an avatar that is a symlink at the name", async () => {
+    const app = createApp();
+    const home = join(mindDir(testMindName), "home");
+    const link = join(home, "linked-avatar.png");
+    rmSync(link, { force: true });
+    symlinkSync(join(home, "top-avatar.png"), link);
+
+    const config = readVoluteConfig(mindDir(testMindName)) ?? {};
+    config.profile = { ...(config.profile ?? {}), avatar: "linked-avatar.png" };
+    await writeVoluteConfig(mindDir(testMindName), config, null);
+
+    const serve = await app.request(`/minds/${testMindName}/avatar`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(serve.status, 400, await serve.clone().text());
+  });
+
+  it("serves a regular avatar file", async () => {
+    const app = createApp();
+    const config = readVoluteConfig(mindDir(testMindName)) ?? {};
+    config.profile = { ...(config.profile ?? {}), avatar: "top-avatar.png" };
+    await writeVoluteConfig(mindDir(testMindName), config, null);
+
+    const serve = await app.request(`/minds/${testMindName}/avatar`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(serve.status, 200, await serve.clone().text());
+    assert.deepEqual(Buffer.from(await serve.arrayBuffer()), PNG_BYTES);
+  });
+
+  // The admin file browser reads the same way: a link at the name is refused, while a
+  // regular file is served.
+  it("GET /:name/files/* refuses a symlink at the name and serves a regular file", async () => {
+    const app = createApp();
+    const home = join(mindDir(testMindName), "home");
+    writeFileSync(join(home, "plain.md"), "plain");
+    rmSync(join(home, "linked.md"), { force: true });
+    symlinkSync(join(home, "plain.md"), join(home, "linked.md"));
+
+    const linked = await app.request(`/minds/${testMindName}/files/linked.md`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(linked.status, 403, await linked.clone().text());
+
+    const plain = await app.request(`/minds/${testMindName}/files/plain.md`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(plain.status, 200, await plain.clone().text());
+    assert.equal(await plain.text(), "plain");
+  });
+
+  it("GET /:name/files/* refuses a hard link or FIFO, 413s an oversized file, 500s an I/O error", async () => {
+    const app = createApp();
+    const dir = mindDir(testMindName);
+    const home = join(dir, "home");
+    const get = (p: string) =>
+      app.request(`/minds/${testMindName}/files/${p}`, { headers: { Cookie: adminCookie } });
+
+    writeFileSync(join(dir, "outside.md"), "outside");
+    rmSync(join(home, "hard.md"), { force: true });
+    linkSync(join(dir, "outside.md"), join(home, "hard.md"));
+    assert.equal((await get("hard.md")).status, 403);
+
+    rmSync(join(home, "pipe.md"), { force: true });
+    execFileSync("mkfifo", [join(home, "pipe.md")]);
+    assert.equal((await get("pipe.md")).status, 403);
+
+    const big = join(home, "big.bin");
+    writeFileSync(big, "");
+    truncateSync(big, 50 * 1024 * 1024 + 1);
+    assert.equal((await get("big.bin")).status, 413);
+    rmSync(big);
+
+    // An I/O failure is the daemon's, not a refusal of what the mind arranged.
+    writeFileSync(join(home, "locked.md"), "locked");
+    chmodSync(join(home, "locked.md"), 0o000);
+    try {
+      assert.equal((await get("locked.md")).status, 500);
+    } finally {
+      chmodSync(join(home, "locked.md"), 0o644);
     }
   });
 });

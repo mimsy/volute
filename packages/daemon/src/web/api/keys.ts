@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { getFingerprint, getPublicKey } from "../../lib/mind/identity.js";
-import { mindDir, readRegistry } from "../../lib/mind/registry.js";
+import { mindFileOwner } from "../../lib/mind/isolation.js";
+import { getBaseName, mindDir, readRegistry } from "../../lib/mind/registry.js";
 
 const app = new Hono()
   /** Look up a public key by fingerprint (used by minds for signature verification) */
@@ -9,7 +10,11 @@ const app = new Hono()
 
     for (const entry of await readRegistry()) {
       try {
-        const pubKey = getPublicKey(mindDir(entry.name));
+        // entry.dir: the spirit lives outside the minds dir.
+        const pubKey = await getPublicKey(
+          entry.dir ?? mindDir(entry.name),
+          await mindFileOwner(await getBaseName(entry.name)),
+        );
         if (!pubKey) continue;
         if (getFingerprint(pubKey) === fingerprint) {
           return c.json({ publicKey: pubKey, mind: entry.name });

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isMind } from "@volute/api/user-type";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -20,10 +20,9 @@ import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { mindFileOwner } from "../mind/isolation.js";
 import { readMindFile, replaceMindFile } from "../mind/mind-file-write.js";
-import { findMind, getBaseName, mindDir, voluteHome } from "../mind/registry.js";
-import { readVoluteConfig } from "../mind/volute-config.js";
+import { findMind, getBaseName, voluteHome } from "../mind/registry.js";
 import { channelGates, channels, deliveryQueue, mindHistory } from "../schema.js";
-import { type AvatarBlock, renderAvatarBlock } from "../util/avatar-image.js";
+import { type AvatarBlock, readMindAvatar, renderAvatarBlock } from "../util/avatar-image.js";
 import log from "../util/logger.js";
 import { newEphemeralSession } from "../util/session-name.js";
 import { slugify } from "../util/slugify.js";
@@ -3437,35 +3436,16 @@ export class DeliveryManager {
       if (!p.avatar) continue;
 
       try {
-        let filePath: string;
+        let avatar: { path: string; data: Buffer } | null;
         if (isMind(p)) {
-          const dir = mindDir(p.username);
-          const config = readVoluteConfig(dir);
-          if (!config?.profile?.avatar) continue;
-          filePath = resolve(dir, "home", config.profile.avatar);
-          const homeDir = resolve(dir, "home");
-          if (!filePath.startsWith(`${homeDir}/`)) {
-            dlog.warn(`avatar path for ${p.username} escapes home directory, skipping`);
-            continue;
-          }
-          try {
-            const realHome = await realpath(homeDir);
-            const realAvatar = await realpath(filePath);
-            if (!realAvatar.startsWith(`${realHome}/`)) {
-              dlog.warn(
-                `avatar symlink for ${p.username} resolves outside home directory, skipping`,
-              );
-              continue;
-            }
-          } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-            throw err;
-          }
+          avatar = await readMindAvatar(p.username);
+          if (!avatar) continue;
         } else {
-          filePath = resolve(voluteHome(), "avatars", p.avatar);
+          const path = resolve(voluteHome(), "avatars", p.avatar);
+          avatar = { path, data: await readFile(path) };
         }
 
-        const rendered = await renderAvatarBlock(filePath, p.username);
+        const rendered = await renderAvatarBlock(avatar.path, avatar.data, p.username);
         if (rendered) blocks.push(...rendered);
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;

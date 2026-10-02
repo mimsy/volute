@@ -59,11 +59,11 @@ describe("spirit doctrine (SPIRIT.md)", () => {
     assert.match(doctrine, /Your SOUL\.md is yours alone/);
   });
 
-  it("writeSpiritDoctrine writes home/SPIRIT.md", () => {
+  it("writeSpiritDoctrine writes home/SPIRIT.md", async () => {
     const dir = mkdtempSync(resolve(tmpdir(), "spirit-doctrine-"));
     scratch.push(dir);
     mkdirSync(resolve(dir, "home"), { recursive: true });
-    writeSpiritDoctrine(dir);
+    await writeSpiritDoctrine(dir, null);
     assert.ok(existsSync(resolve(dir, "home/SPIRIT.md")));
     assert.equal(readFileSync(resolve(dir, "home/SPIRIT.md"), "utf-8"), getSpiritDoctrine());
   });

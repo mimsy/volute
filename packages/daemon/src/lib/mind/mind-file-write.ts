@@ -13,6 +13,25 @@ export type MindFileOwner = { uid: number; gid: number };
 /** Largest file the daemon will read back from a mind (auth.json, routes.json, a doc). */
 const MAX_READ_BYTES = 1024 * 1024;
 
+/**
+ * The helpers refused a path the mind arranged: a link, FIFO or hard link where a file
+ * should be, or a file over its cap. Distinct from an I/O failure, so a route can answer
+ * it as the caller's mistake rather than a server error.
+ */
+export class MindFileRefusedError extends Error {}
+
+/** A read refused because the file is over its cap — the refusal a caller may answer 413. */
+export class MindFileTooLargeError extends MindFileRefusedError {
+  /** The file's size, as far as it was seen (fstat, or the bytes read past the cap). */
+  constructor(
+    path: string,
+    cap: number,
+    readonly size: number,
+  ) {
+    super(`refusing to read ${path}: larger than ${cap} bytes`);
+  }
+}
+
 /*
  * Reading and writing a mind's files from the daemon, which is root under user isolation,
  * in a tree the mind owns and can rearrange at will. Every access takes the same three
@@ -70,7 +89,7 @@ async function walkDirs(
         // Someone got there first — another writer, or the mind. Judge what they made
         // like anything else found on the way; a dangling link still resolves to nothing.
         real = await realpathOrNull(next);
-        if (real === null) throw new Error(`refusing ${next}: a link to nothing`);
+        if (real === null) throw new MindFileRefusedError(`refusing ${next}: a link to nothing`);
       }
     }
     if (!real.startsWith(anchor + sep)) throw new PathTraversalError(mindDir, rel);
@@ -127,35 +146,44 @@ async function openVetted(path: string, flags: number, mode: number): Promise<Fi
     if (code === "EEXIST" && flags & O_EXCL) return null;
     // ELOOP: a symlink at the name. ENXIO: a FIFO opened write-only with no reader.
     if (code === "ELOOP" || code === "ENXIO") {
-      throw new Error(`refusing ${path}: not a regular file (${code})`);
+      throw new MindFileRefusedError(`refusing ${path}: not a regular file (${code})`);
     }
     throw err;
   }
   const st = await handle.stat();
   if (!st.isFile() || st.nlink !== 1) {
     await handle.close();
-    throw new Error(`refusing ${path}: not a regular file with a single link`);
+    throw new MindFileRefusedError(`refusing ${path}: not a regular file with a single link`);
   }
   return handle;
 }
 
-/** Read at most the cap — by bytes actually read, not a size taken before reading. */
+/**
+ * Read at most the cap — by bytes actually read, not a size taken before reading. The
+ * first buffer is sized from fstat, so a small file costs its size, not the cap; a file
+ * that grew since is read on in chunks until EOF or the cap.
+ */
 async function readCappedBytes(
   handle: FileHandle,
   path: string,
   cap = MAX_READ_BYTES,
 ): Promise<Buffer> {
-  const buf = Buffer.alloc(cap + 1);
+  const chunks: Buffer[] = [];
   let len = 0;
-  while (len < buf.length) {
-    const { bytesRead } = await handle.read(buf, len, buf.length - len, len);
+  const statSize = (await handle.stat()).size;
+  let want = Math.min(statSize, cap) + 1;
+  for (;;) {
+    const chunk = Buffer.alloc(Math.min(want, cap + 1 - len));
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, len);
     if (bytesRead === 0) break;
+    chunks.push(chunk.subarray(0, bytesRead));
     len += bytesRead;
+    if (len > cap) {
+      throw new MindFileTooLargeError(path, cap, Math.max(statSize, len));
+    }
+    want = 64 * 1024;
   }
-  if (len > cap) {
-    throw new Error(`refusing to read ${path}: larger than ${cap} bytes`);
-  }
-  return buf.subarray(0, len);
+  return chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, len);
 }
 
 async function readCapped(handle: FileHandle, path: string): Promise<string> {
@@ -286,7 +314,7 @@ export async function replaceMindFile(
 
     const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString("hex")}.tmp`);
     const handle = await openVetted(tmp, O_WRONLY | O_CREAT | O_EXCL, mode);
-    if (!handle) throw new Error(`refusing ${tmp}: already present`);
+    if (!handle) throw new MindFileRefusedError(`refusing ${tmp}: already present`);
     try {
       try {
         if (opts.owner) await handle.chown(opts.owner.uid, opts.owner.gid);
@@ -371,10 +399,10 @@ export function readMindFileSync(path: string): string {
     // nlink 0 is a file replaceMindFile renamed over after we opened it: its content is
     // whole, just no longer current. More than one link is a hard link to elsewhere.
     if (!st.isFile() || st.nlink > 1) {
-      throw new Error(`refusing ${path}: not a regular file with a single link`);
+      throw new MindFileRefusedError(`refusing ${path}: not a regular file with a single link`);
     }
     if (st.size > MAX_READ_BYTES) {
-      throw new Error(`refusing to read ${path}: larger than ${MAX_READ_BYTES} bytes`);
+      throw new MindFileTooLargeError(path, MAX_READ_BYTES, st.size);
     }
     return readFileSync(fd, "utf-8");
   } finally {
