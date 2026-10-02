@@ -32,7 +32,17 @@ function child(cat: string): ChildLogger {
 
 /** Extract error info preserving stack traces for structured logging. */
 function errorData(err: unknown): Record<string, unknown> {
-  if (err instanceof Error) return { error: err.stack ?? err.message };
+  if (err instanceof Error) {
+    const data: Record<string, unknown> = { error: err.stack ?? err.message };
+    // Drizzle wraps driver errors ("Failed query: …") and the stack omits the cause, which
+    // is where SQLite says *why* — e.g. SQLITE_BUSY vs SQLITE_BUSY_SNAPSHOT (#1344).
+    const cause = err.cause as { message?: unknown; extendedCode?: unknown; code?: unknown };
+    if (cause && typeof cause === "object") {
+      const code = cause.extendedCode ?? cause.code;
+      data.cause = `${typeof code === "string" ? `${code}: ` : ""}${String(cause.message ?? cause)}`;
+    }
+    return data;
+  }
   // WHATWG ErrorEvent-shaped objects (e.g. WebSocket `onerror`) are not Error
   // instances; unwrap their `.error`/`.message` so we don't log "[object ErrorEvent]".
   if (err && typeof err === "object") {
