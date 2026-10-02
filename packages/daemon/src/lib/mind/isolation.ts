@@ -925,11 +925,27 @@ export async function chownForeignOwned(
  * see `chownForeignOwned`. No-op when isolation is off or there is no
  * node_modules.
  */
-export async function reclaimNodeModules(dir: string, mindName: string): Promise<void> {
+export function reclaimNodeModules(dir: string, mindName: string): Promise<void> {
+  return reclaimMindSubtree(dir, "node_modules", mindName);
+}
+
+/**
+ * Hand a mind's `.git` back to the mind before git runs as it (#1310). Skills git runs as
+ * the mind (#1284), and one root-owned directory under `.git/objects` — left by git a
+ * daemon ran as root before then — fails the first object the mind writes into it.
+ * Same walk as {@link reclaimNodeModules}. A variant worktree's `.git` is a file naming
+ * the parent's git dir — a path the mind wrote, so never one to chown; this leaves it.
+ */
+export function reclaimMindGit(dir: string, mindName: string): Promise<void> {
+  return reclaimMindSubtree(dir, ".git", mindName);
+}
+
+/** A directory `rel` under `dir`, handed to the mind; anything else there is left alone. */
+async function reclaimMindSubtree(dir: string, rel: string, mindName: string): Promise<void> {
   if (!isIsolationEnabled()) return;
-  const nodeModules = resolve(dir, "node_modules");
+  const subtree = resolve(dir, rel);
   try {
-    await lstat(nodeModules);
+    if (!(await lstat(subtree)).isDirectory()) return;
   } catch {
     return;
   }
@@ -938,10 +954,10 @@ export async function reclaimNodeModules(dir: string, mindName: string): Promise
   try {
     const ids = await mindFileOwner(baseName);
     if (!ids) return;
-    const root = await containMindPath(nodeModules, (st) => st.uid === ids.uid);
+    const root = await containMindPath(subtree, (st) => st.uid === ids.uid);
     const reclaimed = await chownForeignOwned(root, ids.uid, { spec: `${user}:${group}`, ...ids });
     if (reclaimed.length > 0) {
-      ilog.info("reclaimed root-owned node_modules entries for the mind", {
+      ilog.info(`reclaimed root-owned ${rel} entries for the mind`, {
         dir: root,
         mind: baseName,
         count: reclaimed.length,
@@ -950,7 +966,7 @@ export async function reclaimNodeModules(dir: string, mindName: string): Promise
   } catch (err) {
     const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
     throw new Error(
-      `Failed to reclaim ${nodeModules} for ${user}:${group}: ${stderr || (err instanceof Error ? err.message : err)}`,
+      `Failed to reclaim ${subtree} for ${user}:${group}: ${stderr || (err instanceof Error ? err.message : err)}`,
     );
   }
 }

@@ -19,6 +19,7 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import AdmZip from "adm-zip";
 import { isInitInfrastructure } from "../template/template.js";
+import { getCurrentVersion } from "../update-check.js";
 import { safeResolveWithinBase } from "../util/paths.js";
 import { initLedgerPath } from "./init-ledger.js";
 import { mindDir, stateDir } from "./registry.js";
@@ -682,22 +683,12 @@ export function createExportArchive(options: ExportOptions): AdmZip {
     }
   }
 
-  // Read version from package.json
-  let voluteVersion = "unknown";
-  try {
-    const pkgPath = resolve(import.meta.dirname, "../../package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-    voluteVersion = pkg.version;
-  } catch {
-    // Non-critical: archive works without exact version
-  }
-
   // Write manifest
   const manifest: ExportManifest = {
     version: 1,
     name,
     template,
-    voluteVersion,
+    voluteVersion: getCurrentVersion(),
     exportedAt: new Date().toISOString(),
     format,
     stage,

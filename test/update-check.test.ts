@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
@@ -76,9 +76,12 @@ describe("analyzeInstallPath", () => {
 });
 
 describe("getCurrentVersion", () => {
-  it("returns a semver string", () => {
-    const version = getCurrentVersion();
-    assert.match(version, /^\d+\.\d+\.\d+/);
+  it("returns Volute's own version, not the workspace package's (#1249)", () => {
+    const repoPkg = JSON.parse(
+      readFileSync(resolve(import.meta.dirname, "../package.json"), "utf-8"),
+    );
+    assert.equal(repoPkg.name, "volute");
+    assert.equal(getCurrentVersion(), repoPkg.version);
   });
 });
 

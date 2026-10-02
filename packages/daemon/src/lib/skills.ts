@@ -26,7 +26,7 @@ import { MIND_LEVEL_THREAD, recordNotice } from "./chat/system-events.js";
 import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { getDb } from "./db.js";
 import { readInitLedgerFile, writeLedgerFile } from "./mind/init-ledger.js";
-import { chownMindDir, mindFileOwner, mindGitOpts } from "./mind/isolation.js";
+import { chownMindDir, mindFileOwner, mindGitOpts, reclaimMindGit } from "./mind/isolation.js";
 import {
   ensureMindDir,
   type MindFileOwner,
@@ -563,16 +563,22 @@ export async function recordMissingSkillBases(): Promise<void> {
     const dir = mind.dir ?? mindDir(mind.name);
     const skillsDir = mindSkillsDir(dir);
     if (!existsSync(join(dir, ".git")) || !existsSync(skillsDir)) continue;
+    const scan = () => {
+      const found: { id: string; upstream: UpstreamInfo; sourceDir: string }[] = [];
+      for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const upstream = readUpstream(join(skillsDir, entry.name));
+        if (!upstream || pool.get(upstream.source)?.version !== upstream.version) continue;
+        const sourceDir = join(sharedSkillsDir(), upstream.source);
+        if (existsSync(sourceDir)) found.push({ id: entry.name, upstream, sourceDir });
+      }
+      return found;
+    };
     try {
+      // Read-only first: a mind with nothing to record takes no lock and no git.
+      if (scan().length === 0) continue;
       await withSkillsLock(mind.name, async () => {
-        const candidates: { id: string; upstream: UpstreamInfo; sourceDir: string }[] = [];
-        for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-          if (!entry.isDirectory()) continue;
-          const upstream = readUpstream(join(skillsDir, entry.name));
-          if (!upstream || pool.get(upstream.source)?.version !== upstream.version) continue;
-          const sourceDir = join(sharedSkillsDir(), upstream.source);
-          if (existsSync(sourceDir)) candidates.push({ id: entry.name, upstream, sourceDir });
-        }
+        const candidates = scan();
         if (candidates.length === 0) return;
         const refs = new Set(
           (
@@ -586,9 +592,15 @@ export async function recordMissingSkillBases(): Promise<void> {
             .split("\n")
             .filter(Boolean),
         );
+        let reclaimed = false;
         for (const { id, upstream, sourceDir } of candidates) {
           const ref = upstreamRef(id, upstream.version);
           if (refs.has(ref)) continue;
+          // Only a mind with a base still to write pays for the walk.
+          if (!reclaimed) {
+            reclaimed = true;
+            await reclaimGitForSkills(dir, mind.name);
+          }
           if (await isUpstreamCopyOf(dir, mind.name, upstream.baseCommit, id, upstream.version)) {
             // Recorded before refs were per version: keep it reachable under its own.
             await mindGit(dir, mind.name, [...PLUMBING, "update-ref", ref, upstream.baseCommit]);
@@ -757,6 +769,18 @@ async function withSkillsLock<T>(mindName: string, fn: () => Promise<T>): Promis
   }
 }
 
+/**
+ * Skills git runs as the mind, so before a skills operation writes to the mind's repo it
+ * hands the mind any root-owned entry in its .git (#1310). Only then — the walk is I/O a
+ * slow disk feels at every start. Best-effort: a git the reclaim couldn't help still
+ * fails with its own error.
+ */
+async function reclaimGitForSkills(dir: string, mindName: string): Promise<void> {
+  await reclaimMindGit(dir, mindName).catch((err) =>
+    log.warn(`failed to reclaim ${mindName}'s .git before skills git`, log.errorData(err)),
+  );
+}
+
 export function installSkill(
   mindName: string,
   dir: string,
@@ -776,6 +800,7 @@ async function installSkillLocked(
 
   const sourceDir = join(sharedSkillsDir(), skillId);
   if (!existsSync(sourceDir)) throw new Error(`Shared skill files not found: ${skillId}`);
+  await reclaimGitForSkills(dir, mindName);
 
   const destDir = join(mindSkillsDir(dir), skillId);
   if (lexists(destDir)) throw new Error(`Skill already installed: ${skillId}`);
@@ -909,6 +934,7 @@ async function uninstallSkillLocked(mindName: string, dir: string, skillId: stri
   validateSkillId(skillId);
   const skillDir = join(mindSkillsDir(dir), skillId);
   if (!existsSync(skillDir)) throw new Error(`Skill not installed: ${skillId}`);
+  await reclaimGitForSkills(dir, mindName);
 
   // The skill dir is the mind's: read and remove it through the mind-file walk, so a
   // skills dir linked out of the mind refuses instead of aiming a root rm elsewhere.
@@ -1037,6 +1063,7 @@ async function updateSkillLocked(
     return { status: "conflict", conflictFiles: unresolved };
   }
 
+  await reclaimGitForSkills(dir, mindName);
   const git = (args: string[]) => mindGit(dir, mindName, args);
   const base = await mergeBaseFor(dir, mindName, skillId, upstream);
   /** A file's base content, or null if the base has no such file (or there is no base). */
@@ -1047,6 +1074,22 @@ async function updateSkillLocked(
       : git([...PLUMBING, "cat-file", "blob", `${base}:${join(relSkillPath, file)}`]).catch(
           () => null,
         );
+  // Recorded before anything is written, so a failure here (a git dir the mind can't
+  // write to, #1310) leaves the skill as it was. A copy recorded for an update that then
+  // fails is harmless: its ref is this version's, and the retry looks up only the
+  // version .upstream.json still names.
+  const info: UpstreamInfo = {
+    source: upstream.source,
+    version: shared.version,
+    baseCommit: await recordUpstreamBase(
+      dir,
+      mindName,
+      relSkillPath,
+      sourceDir,
+      skillId,
+      shared.version,
+    ),
+  };
   const conflictFiles: string[] = [];
   // Unpredictable, and root's: a fixed name in a world-writable tmp could be pre-planted.
   const tmpBase = mkdtempSync(join(tmpdir(), "volute-merge-"));
@@ -1140,26 +1183,11 @@ async function updateSkillLocked(
     rmSync(tmpBase, { recursive: true, force: true });
   }
 
-  // Recorded only just before .upstream.json points at it: a ref moved ahead of a failed
-  // update would leave the two disagreeing, and the retry merging against the fallback.
-  const upstreamInfo = async (): Promise<UpstreamInfo> => ({
-    source: upstream.source,
-    version: shared.version,
-    baseCommit: await recordUpstreamBase(
-      dir,
-      mindName,
-      relSkillPath,
-      sourceDir,
-      skillId,
-      shared.version,
-    ),
-  });
-
   if (conflictFiles.length > 0) {
     // Don't commit — leave the markers for the mind to resolve. .upstream.json moves to the
     // new version first, so the next update starts from it and doesn't merge over them,
     // and the mind hears about them whatever the wiring below does.
-    await writeUpstream(await upstreamInfo());
+    await writeUpstream(info);
     // The new version's deps and shims must not wait on the mind: from upstream's
     // SKILL.md, since the mind's may have markers in it.
     const wiringFailure = await wireSkill(mindName, dir, skillId, readSkillMd(sourceDir)).then(
@@ -1192,7 +1220,7 @@ async function updateSkillLocked(
   await ensureCommitIdentity(dir, mindName);
   // --allow-empty: a version bump need not change any file this mind tracks.
   await git(["commit", "--allow-empty", "-m", `Update skill: ${skillId} (v${shared.version})`]);
-  await writeUpstream(await upstreamInfo());
+  await writeUpstream(info);
   await git(["add", join(relSkillPath, ".upstream.json")]);
   await git(["commit", "--amend", "--no-edit"]);
 

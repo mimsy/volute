@@ -25,6 +25,7 @@ import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   addMind,
   addVariant,
+  readRegistry,
   stateDir,
   voluteHome,
 } from "../packages/daemon/src/lib/mind/registry.js";
@@ -55,6 +56,7 @@ import {
   updateSkill,
 } from "../packages/daemon/src/lib/skills.js";
 import { exec } from "../packages/daemon/src/lib/util/exec.js";
+import log from "../packages/daemon/src/lib/util/logger.js";
 import { discoverHooks } from "../templates/_base/src/lib/hook-loader.js";
 import { createMindGitRepo, quietGitMaintenance } from "./helpers/git.js";
 
@@ -1357,6 +1359,35 @@ describe("mind skill operations", () => {
     });
     assert.equal(ref.trim(), wired?.upstream?.baseCommit);
   });
+  // #1310: the new version's base is recorded before the merge writes or commits
+  // anything, so a git dir the mind can't write to fails the update with nothing done.
+  it("update changes nothing when recording the new base fails", async (t) => {
+    if (process.getuid?.() === 0) return t.skip("a read-only dir doesn't bind root");
+    const source = writeWiredSkill("wired", [], []);
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+    writeFileSync(join(source, "extra.md"), "v2\n");
+    await importSkillFromDir(source, "author");
+
+    const head = async () => (await exec("git", ["rev-parse", "HEAD"], { cwd: mindDir })).trim();
+    const before = await head();
+    const refDir = join(mindDir, ".git", "refs", "volute", "skill-upstream", "wired");
+    chmodSync(refDir, 0o555);
+    try {
+      await assert.rejects(() => updateSkill(mindName, mindDir, "wired"));
+    } finally {
+      chmodSync(refDir, 0o755);
+    }
+
+    assert.equal(await head(), before, "no update commit landed");
+    const status = await exec("git", ["status", "--porcelain"], { cwd: mindDir });
+    assert.equal(status.trim(), "", "no merged file left uncommitted");
+    const wired = (await listMindSkills(mindDir)).find((sk) => sk.id === "wired");
+    assert.equal(wired?.upstream?.version, 1);
+    assert.equal(wired?.updateAvailable, true);
+    // The retry goes through once the git dir is writable again.
+    assert.deepEqual(await updateSkill(mindName, mindDir, "wired"), { status: "updated" });
+  });
   // #1299: an imported mind's .upstream.json names a base only its source repo had.
   describe("an imported mind's skill", () => {
     const body = (top: string, extra = "") =>
@@ -1438,6 +1469,34 @@ describe("mind skill operations", () => {
         exec("git", ["rev-parse", "--verify", "-q", "refs/volute/skill-upstream/wired/v1"], {
           cwd: mindDir,
         }),
+      );
+    });
+
+    // #1310: the reclaim walks the mind's .git — I/O a slow disk feels at every start —
+    // so a start with nothing to record does none. Under isolation a reclaim for a mind
+    // with no OS user fails and says so in the log, which is what's watched for here.
+    it("a start with no base to record walks no .git", async () => {
+      await installThenImport();
+      await bumpPool();
+      // Nothing else may be registered: under isolation its git would go through sudo.
+      assert.deepEqual(
+        (await readRegistry()).map((m) => m.name),
+        [mindName],
+      );
+      const lines: string[] = [];
+      const originalIsolation = process.env.VOLUTE_ISOLATION;
+      process.env.VOLUTE_ISOLATION = "user";
+      log.setOutput((line) => lines.push(line));
+      try {
+        await recordMissingSkillBases();
+      } finally {
+        log.setOutput((line) => process.stderr.write(`${line}\n`));
+        if (originalIsolation === undefined) delete process.env.VOLUTE_ISOLATION;
+        else process.env.VOLUTE_ISOLATION = originalIsolation;
+      }
+      assert.deepEqual(
+        lines.filter((l) => l.includes("reclaim")),
+        [],
       );
     });
 
