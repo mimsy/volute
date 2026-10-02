@@ -39,6 +39,7 @@ import {
   disconnectRemote,
   isRemote,
 } from "./lib/daemon-connection.svelte";
+import { canReadMindHistory } from "./lib/history-access";
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
 import { requestNotificationPermission } from "./lib/notifications";
 import {
@@ -1006,7 +1007,11 @@ function handleGlobalClick(e: MouseEvent) {
   {#if activeModal === "mindHistory" && mindModalName}
     <Modal title="History — {mindModalName}" onClose={() => { activeModal = null; mindModalName = null; }}>
       <div class="modal-scroll-body">
-        <TurnTimeline name={mindModalName} mindStatus={data.minds.find(m => m.name === mindModalName)?.status} />
+        {#if canReadMindHistory(auth.user, mindModalName)}
+          <TurnTimeline name={mindModalName} mindStatus={data.minds.find(m => m.name === mindModalName)?.status} />
+        {:else}
+          <p class="history-restricted">History is visible to admins.</p>
+        {/if}
       </div>
     </Modal>
   {/if}
@@ -1062,6 +1067,13 @@ function handleGlobalClick(e: MouseEvent) {
     flex: 1;
     min-height: 0;
     overflow: auto;
+  }
+
+  .history-restricted {
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 40px 0;
+    text-align: center;
   }
 
   .loading {

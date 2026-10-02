@@ -2,7 +2,8 @@
 import type { Mind } from "@volute/api";
 import { Icon, tooltip } from "@volute/ui";
 import { mindDotColor } from "../../lib/format";
-import { activeMinds, data } from "../../lib/stores.svelte";
+import { canReadMindHistory } from "../../lib/history-access";
+import { activeMinds, auth, data } from "../../lib/stores.svelte";
 import TurnTimeline from "../TurnTimeline.svelte";
 import MindClock from "./MindClock.svelte";
 
@@ -96,7 +97,11 @@ let memoryBadge = $derived.by(() => {
     <MindClock name={mind.name} />
 
     <div class="history-section">
-      <TurnTimeline name={mind.name} mindStatus={mind.status} />
+      {#if canReadMindHistory(auth.user, mind.name)}
+        <TurnTimeline name={mind.name} mindStatus={mind.status} />
+      {:else}
+        <p class="history-restricted">History is visible to admins.</p>
+      {/if}
     </div>
   </div>
 </div>
@@ -221,5 +226,12 @@ let memoryBadge = $derived.by(() => {
     flex: 1;
     min-height: 0;
     border-top: 1px solid var(--border);
+  }
+
+  .history-restricted {
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 40px 0;
+    text-align: center;
   }
 </style>
