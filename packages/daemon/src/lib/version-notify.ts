@@ -1,7 +1,16 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { deliverEvent } from "./chat/system-events.js";
-import { mindDir, readRegistry, setMindTemplateHash, voluteSystemDir } from "./mind/registry.js";
+import { mindFileOwner } from "./mind/isolation.js";
+import { readMindFile, replaceMindFile } from "./mind/mind-file-write.js";
+import {
+  findMind,
+  mindDir,
+  readRegistry,
+  setMindTemplateHash,
+  stateDir,
+  voluteSystemDir,
+} from "./mind/registry.js";
 import { computeMindTemplateHash } from "./mind/template-staleness.js";
 import { readVoluteConfig } from "./mind/volute-config.js";
 import { parseReleaseNotes } from "./release-notes.js";
@@ -67,70 +76,152 @@ export async function warnStaleTemplates(): Promise<void> {
   }
 }
 
+/** Filename, inside {@link stateDir}, of the last Volute version a mind was told about. */
+const MIND_RECORD_FILE = "version-notified.json";
+
 /**
- * Notify running minds about a Volute version update.
- * On first run, records the current version without sending notifications.
- * On version change, sends release notes to all running non-seed minds.
+ * The last version this mind was told about, or null when nothing is recorded.
+ *
+ * `stateDir`, beside the infrastructure hash: it is Volute's bookkeeping about the mind,
+ * not something the mind wrote. The mind owns that directory under user isolation, so
+ * the record is read and written through the mind-file helpers.
  */
-export async function notifyVersionUpdate(): Promise<void> {
-  const currentVersion = getCurrentVersion();
-  const state = readState();
+async function readMindNotifiedVersion(name: string): Promise<string | null> {
+  if (!existsSync(stateDir(name))) return null;
+  try {
+    const file = await readMindFile(stateDir(name), MIND_RECORD_FILE, {
+      owner: await mindFileOwner(name),
+    });
+    const version = file ? JSON.parse(file.text)?.version : null;
+    return typeof version === "string" ? version : null;
+  } catch (err) {
+    // Unreadable reads as "never recorded" — which, for a mind starting late, means it
+    // is recorded at the current version without being told. Say so.
+    log.warn(`failed to read the notified version for ${name}`, log.errorData(err));
+    return null;
+  }
+}
 
-  // First run: record version, don't notify
-  if (!state) {
-    writeState({ lastNotifiedVersion: currentVersion });
+async function writeMindNotifiedVersion(name: string, version: string): Promise<void> {
+  try {
+    mkdirSync(stateDir(name), { recursive: true });
+    await replaceMindFile(stateDir(name), MIND_RECORD_FILE, `${JSON.stringify({ version })}\n`, {
+      owner: await mindFileOwner(name),
+    });
+  } catch (err) {
+    log.warn(`failed to record the notified version for ${name}`, log.errorData(err));
+  }
+}
+
+/**
+ * Whether the boot pass has seeded every mind's record. Until then a start must not
+ * notify: the boot mind loop runs before the infrastructure sync (#960) and before the
+ * seeding, and a pre-record mind starting then would be recorded as already told.
+ * Starts in that window are remembered in `startedEarly` and handled by the pass.
+ */
+let seeded = false;
+const startedEarly = new Set<string>();
+const inFlight = new Set<string>();
+const releaseNotes = new Map<string, string | null>();
+
+/** Test-only: forget the boot pass and any pending or in-flight notices. */
+export function resetVersionNotifyState(): void {
+  seeded = false;
+  startedEarly.clear();
+  inFlight.clear();
+}
+
+/**
+ * Tell one mind about the current Volute version, once, if it hasn't been told.
+ *
+ * Called by the boot pass for minds running then, and on every later start and wake —
+ * so a mind that was stopped or asleep through an upgrade still learns what changed
+ * when it comes back. A mind with no record at all is one created since the boot pass:
+ * it was born into this version and has nothing to be told, so it is recorded silently.
+ * Base minds and the spirit only: seeds hear about Volute through orientation, and a
+ * variant's parent is told.
+ *
+ * `autoUpgradePending`: whether the boot auto-upgrade pass is still ahead. A mind
+ * started later and still on a stale template was not (or could not be) upgraded by it,
+ * so it is told to upgrade itself rather than promised an upgrade nothing will run.
+ */
+export async function notifyMindOfVersion(
+  name: string,
+  { autoUpgradePending = false }: { autoUpgradePending?: boolean } = {},
+): Promise<void> {
+  if (!seeded) {
+    startedEarly.add(name);
     return;
   }
+  if (inFlight.has(name)) return;
+  inFlight.add(name);
+  try {
+    const entry = await findMind(name);
+    if (!entry || entry.parent || entry.stage === "seed") return;
 
-  // Version unchanged: nothing to do
-  if (state.lastNotifiedVersion === currentVersion) return;
-
-  const entries = await readRegistry();
-  const runningMinds = entries.filter((e) => e.running && e.stage !== "seed");
-
-  if (runningMinds.length === 0) {
-    writeState({ lastNotifiedVersion: currentVersion });
-    return;
-  }
-
-  // Parse release notes (may be null if CHANGELOG missing or version not found)
-  const releaseNotes = parseReleaseNotes(currentVersion);
-
-  // Compute current template hashes (memoized, at most 2 calls for claude/pi)
-  const templateHashes = new Map<string, string>();
-  for (const entry of runningMinds) {
-    const tmpl = entry.template ?? "claude";
-    if (!templateHashes.has(tmpl)) {
-      try {
-        templateHashes.set(tmpl, computeTemplateHash(tmpl));
-      } catch (err) {
-        log.warn(`failed to compute template hash for ${tmpl}`, log.errorData(err));
-      }
+    const currentVersion = getCurrentVersion();
+    const told = await readMindNotifiedVersion(name);
+    if (told === currentVersion) return;
+    if (told == null) {
+      await writeMindNotifiedVersion(name, currentVersion);
+      return;
     }
-  }
 
-  // Send notifications
-  const promises = runningMinds.map(async (entry) => {
     const tmpl = entry.template ?? "claude";
-    const currentHash = templateHashes.get(tmpl);
-    const needsUpgrade = shouldSuggestUpgrade(entry, currentHash);
-    const autoUpgrade = readVoluteConfig(mindDir(entry.name))?.upgrades !== "manual";
-
+    let currentHash: string | undefined;
+    try {
+      currentHash = computeTemplateHash(tmpl);
+    } catch (err) {
+      log.warn(`failed to compute template hash for ${tmpl}`, log.errorData(err));
+    }
+    if (!releaseNotes.has(currentVersion)) {
+      releaseNotes.set(currentVersion, parseReleaseNotes(currentVersion));
+    }
     const message = formatNotification(
       currentVersion,
-      releaseNotes,
-      needsUpgrade,
-      entry.name,
-      autoUpgrade,
+      releaseNotes.get(currentVersion) ?? null,
+      shouldSuggestUpgrade(entry, currentHash),
+      name,
+      autoUpgradePending && readVoluteConfig(mindDir(name))?.upgrades !== "manual",
     );
 
     // Immediate (triggers a turn): an idle mind — exactly the stale mind that needs the
     // upgrade nudge — never drains a next-turn event, and pre-events templates lack the
     // drain hook entirely, so next-turn delivery could not reach the minds that need it.
-    await deliverEvent(entry.name, { type: "version", body: message });
-  });
+    // An event that was stored but not delivered stays pending for the next start or
+    // wake; one that was never stored isn't recorded, so the next start tries again.
+    const { id } = await deliverEvent(name, { type: "version", body: message });
+    if (id != null) await writeMindNotifiedVersion(name, currentVersion);
+  } finally {
+    inFlight.delete(name);
+  }
+}
 
-  const results = await Promise.allSettled(promises);
+/**
+ * Boot pass: notify minds running now about a Volute version update.
+ *
+ * Every base mind without a record is first recorded as told about the version the
+ * system last announced — what it last heard, or would have, had it been up — so a
+ * mind stopped or asleep now is told when it next starts ({@link notifyMindOfVersion}).
+ * On first run there is nothing to announce: everyone is recorded at the current version.
+ */
+export async function notifyVersionUpdate(): Promise<void> {
+  const currentVersion = getCurrentVersion();
+  const previous = readState()?.lastNotifiedVersion ?? currentVersion;
+
+  const entries = (await readRegistry()).filter((e) => !e.parent && e.stage !== "seed");
+  for (const entry of entries) {
+    if ((await readMindNotifiedVersion(entry.name)) == null) {
+      await writeMindNotifiedVersion(entry.name, previous);
+    }
+  }
+  seeded = true;
+
+  const names = new Set([...entries.filter((e) => e.running).map((e) => e.name), ...startedEarly]);
+  startedEarly.clear();
+  const results = await Promise.allSettled(
+    [...names].map((name) => notifyMindOfVersion(name, { autoUpgradePending: true })),
+  );
   for (const result of results) {
     if (result.status === "rejected") {
       log.warn("failed to notify mind about version update", log.errorData(result.reason));

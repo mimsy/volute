@@ -15,6 +15,7 @@ import { findMind, getBaseName, mindDir } from "../mind/registry.js";
 import { spiritDir } from "../mind/spirit.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import log from "../util/logger.js";
+import { notifyMindOfVersion } from "../version-notify.js";
 import { ensureMailAddress } from "./mail-poller.js";
 import { getMindManager } from "./mind-manager.js";
 import { getScheduler } from "./scheduler.js";
@@ -116,6 +117,11 @@ export async function startMindFull(name: string): Promise<void> {
   } catch (err) {
     log.error(`failed to notify extensions of mind start for ${baseName}`, log.errorData(err));
   }
+
+  // A mind that was stopped through an upgrade hears what changed now (once).
+  notifyMindOfVersion(baseName).catch((err: unknown) =>
+    log.error(`failed to send the version notice to ${baseName}`, log.errorData(err)),
+  );
 }
 
 /**
@@ -264,6 +270,10 @@ export async function sleepMind(name: string): Promise<void> {
 export async function wakeMind(name: string): Promise<void> {
   await getMindManager().startMind(name);
   await restoreMindRuntimeState(name);
+  // A mind asleep through an upgrade hears what changed when it wakes (once).
+  notifyMindOfVersion(name).catch((err: unknown) =>
+    log.error(`failed to send the version notice to ${name}`, log.errorData(err)),
+  );
 
   publishActivity({
     type: "mind_waking",
@@ -303,6 +313,9 @@ export async function startSpiritFull(name: string): Promise<void> {
   } catch (err) {
     log.error(`failed to notify extensions of spirit start for ${name}`, log.errorData(err));
   }
+  notifyMindOfVersion(name).catch((err: unknown) =>
+    log.error(`failed to send the version notice to ${name}`, log.errorData(err)),
+  );
 
   publishActivity({
     type: "mind_started",

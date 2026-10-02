@@ -47,6 +47,7 @@ import { exec, gitExec } from "./util/exec.js";
 import log from "./util/logger.js";
 import { buildMindBaseEnv } from "./util/mind-env.js";
 import { PathTraversalError } from "./util/paths.js";
+import { voluteRoot } from "./util/volute-root.js";
 
 const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
 
@@ -2085,20 +2086,19 @@ export function listFilesRecursive(dir: string, prefix = ""): string[] {
 // --- Built-in skill sync ---
 
 /**
- * Find the skills/ root directory by walking up from the calling module's location.
- * Same pattern as findTemplatesRoot() in template.ts.
+ * Find the built-in skills/ directory under Volute's package root. The source tree's
+ * `skills/` comes first, so a dev daemon never picks up a stale build copy; the npm
+ * package ships only the copy the build makes at `dist/skills/`.
  */
 let _skillsRoot: string | null = null;
 export function findSkillsRoot(): string {
   if (_skillsRoot) return _skillsRoot;
-  let dir = dirname(new URL(import.meta.url).pathname);
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(dir, "skills");
+  const root = voluteRoot();
+  for (const candidate of root ? [resolve(root, "skills"), resolve(root, "dist", "skills")] : []) {
     if (existsSync(candidate) && hasSkillSubdir(candidate)) {
       _skillsRoot = candidate;
       return _skillsRoot;
     }
-    dir = dirname(dir);
   }
   throw new Error("Skills directory not found");
 }

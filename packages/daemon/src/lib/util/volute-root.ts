@@ -20,3 +20,14 @@ export function voluteManifest(
   }
   return null;
 }
+
+/**
+ * Volute's package root — the one directory its bundled assets (templates/, skills/,
+ * dist/connectors/, dist/web-assets/, packages/extensions/*) are looked up under — or
+ * null when it can't be identified. Asset lookups go through here rather than walking
+ * up from their own module, so an unrelated directory above the install never answers
+ * (#1336).
+ */
+export function voluteRoot(): string | null {
+  return voluteManifest()?.root ?? null;
+}

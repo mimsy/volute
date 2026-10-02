@@ -7,19 +7,20 @@ import { readEnv, sharedEnvPath } from "../config/env.js";
 import { daemonLoopback, voluteSystemDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 import { RotatingLog } from "../util/rotating-log.js";
+import { voluteRoot } from "../util/volute-root.js";
 import { ManagerNotReadyError } from "./manager-not-ready.js";
 import { RestartTracker } from "./restart-tracker.js";
 
 const blog = log.child("bridges");
 
-function searchUpwards(...segments: string[]): string | null {
-  let searchDir = dirname(new URL(import.meta.url).pathname);
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(searchDir, ...segments);
-    if (existsSync(candidate)) return candidate;
-    searchDir = dirname(searchDir);
-  }
-  return null;
+/** The built bridge script for a platform, under Volute's root, or null if it isn't there. */
+export function resolveBuiltinBridge(
+  platform: string,
+  root: string | null = voluteRoot(),
+): string | null {
+  if (!root) return null;
+  const script = resolve(root, "dist", "connectors", `${platform}-bridge.js`);
+  return existsSync(script) ? script : null;
 }
 
 type TrackedBridge = {
@@ -312,8 +313,9 @@ export class BridgeManager {
     }
   }
 
+  /** Instance seam over {@link resolveBuiltinBridge}, so tests can point a manager at a fixture. */
   private resolveBuiltinBridge(platform: string): string | null {
-    return searchUpwards("connectors", `${platform}-bridge.js`);
+    return resolveBuiltinBridge(platform);
   }
 }
 
