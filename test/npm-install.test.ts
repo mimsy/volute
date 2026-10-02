@@ -73,36 +73,36 @@ describe("depsChangedSince / npmInstallNeeded", () => {
   it("returns false when only non-dependency files changed", async () => {
     writeFileSync(join(repoDir, "README.md"), "changed\n");
     commit(repoDir, "docs change");
-    assert.equal(await depsChangedSince(repoDir, baseRef), false);
+    assert.equal(await depsChangedSince(repoDir, baseRef, "test-mind"), false);
   });
 
   it("returns true when package.json changed", async () => {
     const from = git(["rev-parse", "HEAD"], repoDir).trim();
     writeFileSync(join(repoDir, "package.json"), '{"name":"t","version":"1.0.1"}\n');
     commit(repoDir, "bump");
-    assert.equal(await depsChangedSince(repoDir, from), true);
+    assert.equal(await depsChangedSince(repoDir, from, "test-mind"), true);
   });
 
   it("returns true when package-lock.json changed", async () => {
     const from = git(["rev-parse", "HEAD"], repoDir).trim();
     writeFileSync(join(repoDir, "package-lock.json"), "{}\n");
     commit(repoDir, "lockfile");
-    assert.equal(await depsChangedSince(repoDir, from), true);
+    assert.equal(await depsChangedSince(repoDir, from, "test-mind"), true);
   });
 
   it("errs toward true when the ref is invalid", async () => {
-    assert.equal(await depsChangedSince(repoDir, "not-a-ref"), true);
+    assert.equal(await depsChangedSince(repoDir, "not-a-ref", "test-mind"), true);
   });
 
   it("npmInstallNeeded is true when node_modules is missing", async () => {
     const head = git(["rev-parse", "HEAD"], repoDir).trim();
-    assert.equal(await npmInstallNeeded(repoDir, head), true);
+    assert.equal(await npmInstallNeeded(repoDir, head, "test-mind"), true);
   });
 
   it("npmInstallNeeded is false when node_modules exists and deps are unchanged", async () => {
     mkdirSync(join(repoDir, "node_modules"), { recursive: true });
     const head = git(["rev-parse", "HEAD"], repoDir).trim();
-    assert.equal(await npmInstallNeeded(repoDir, head), false);
+    assert.equal(await npmInstallNeeded(repoDir, head, "test-mind"), false);
   });
 });
 

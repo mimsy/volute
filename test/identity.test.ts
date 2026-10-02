@@ -102,6 +102,28 @@ describe("identity", () => {
         rmSync(outside, { recursive: true, force: true });
       }
     });
+
+    // volute.json itself is read through the same walk: a config dir linked out of the
+    // tree is refused, not followed to whatever volute.json sits at the other end.
+    it("refuses a volute.json reached through a linked directory", async () => {
+      const { publicKeyPem } = await generateIdentity(scratchDir);
+      const outside = mkdtempSync(join(tmpdir(), "identity-outside-"));
+      try {
+        const config = resolve(scratchDir, "home/.config");
+        writeFileSync(join(outside, "volute.json"), readFileSync(join(config, "volute.json")));
+        rmSync(config, { recursive: true });
+        symlinkSync(outside, config);
+        await assert.rejects(getPublicKey(scratchDir, null));
+
+        // The same config in place reads fine — the refusal is the link's.
+        rmSync(config);
+        mkdirSync(config);
+        writeFileSync(join(config, "volute.json"), readFileSync(join(outside, "volute.json")));
+        assert.equal(await getPublicKey(scratchDir, null), publicKeyPem);
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("getFingerprint", () => {

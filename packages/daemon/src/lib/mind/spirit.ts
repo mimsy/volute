@@ -31,7 +31,13 @@ import { hostNpmEnv } from "../util/host-npm-env.js";
 import log from "../util/logger.js";
 import { repairThreadBatchConfig } from "./event-routes.js";
 import { seedInitLedger } from "./init-ledger.js";
-import { mindFileOwner } from "./isolation.js";
+import {
+  chownMindDir,
+  createMindUser,
+  ensureVoluteGroup,
+  mindFileOwner,
+  mindGitOpts,
+} from "./isolation.js";
 import { repairMechanicsDoc } from "./mechanics-doc.js";
 import {
   type MindFileOwner,
@@ -371,11 +377,22 @@ export async function ensureSpiritProject(): Promise<void> {
     // npm install — must succeed before DB registration
     await exec("npm", ["install"], { cwd: dir, env: hostNpmEnv() });
 
+    // Per-mind user isolation (creates the spirit's user, hands it the tree) before
+    // any git: git runs as the spirit, like every mind's, so nothing in the repo runs
+    // with the daemon's privilege (#1284). Chowned again below, once everything after
+    // this has been written.
+    ensureVoluteGroup();
+    createMindUser(spiritName, resolve(dir, "home"));
+    await chownMindDir(dir, spiritName);
+
     // git init (before skill install, which does git add)
     try {
-      await gitExec(["init"], { cwd: dir });
-      await gitExec(["add", "-A"], { cwd: dir });
-      await gitExec(["commit", "-m", "initial spirit"], { cwd: dir });
+      const git = mindGitOpts(dir, spiritName);
+      await gitExec(["init"], git);
+      const { configureGitIdentity } = await import("./upgrade.js");
+      await configureGitIdentity(spiritName, git);
+      await gitExec(["add", "-A"], git);
+      await gitExec(["commit", "-m", "initial spirit"], git);
     } catch (err) {
       slog.warn("git init failed for spirit — not critical", log.errorData(err));
     }
@@ -403,12 +420,8 @@ export async function ensureSpiritProject(): Promise<void> {
     // below covers the whole project directory including the copied image.
     const stashedProfile = await applyStashedSpiritProfile(dir);
 
-    // Set up per-mind user isolation (creates mind-volute user, chowns project dir).
-    // Must be AFTER all file creation (npm install, git init, skill install) so the
-    // chown covers everything and the spirit process can write to all files.
-    const { createMindUser, chownMindDir, ensureVoluteGroup } = await import("./isolation.js");
-    ensureVoluteGroup();
-    createMindUser(spiritName, resolve(dir, "home"));
+    // Chown again AFTER all file creation (skill install, schedules, profile) so it
+    // covers everything and the spirit process can write to all files.
     await chownMindDir(dir, spiritName);
 
     // Register in DB
@@ -536,9 +549,9 @@ export async function syncSpiritTemplate(): Promise<void> {
 
   const dir = spiritDir();
   if (!existsSync(dir)) return;
-  // The spirit's tree is its own, and the daemon may be root: the file reads and writes
-  // this function makes itself go through the mind-file helpers, so nothing it plants
-  // redirects them (#1264). applyTemplateHomeFiles and migrateSkillsToTemplate don't yet.
+  // The spirit's tree is its own, and the daemon may be root: every file read and write
+  // here — applyTemplateHomeFiles' and migrateSkillsToTemplate's included — goes through
+  // the mind-file helpers, so nothing it plants redirects them (#1264).
   const owner = await mindFileOwner(spiritName);
 
   const templatesRoot = findTemplatesRoot();
@@ -564,11 +577,6 @@ export async function syncSpiritTemplate(): Promise<void> {
       );
       await npmInstallAsMind(dir, spiritName);
     }
-    // Update DB template
-    const db = await (await import("../db.js")).getDb();
-    const { minds } = await import("../schema.js");
-    const { eq } = await import("drizzle-orm");
-    await db.update(minds).set({ template: expectedTemplate }).where(eq(minds.name, spiritName));
   }
 
   // home/ is laid out per template too — mechanics doc, .claude/settings.json, the
@@ -577,22 +585,42 @@ export async function syncSpiritTemplate(): Promise<void> {
   // bardo's ran seven weeks as claude with codex's AGENTS.md, no startup-context
   // hook, and every skill in .agents/skills where the claude SDK never looks.
   const homeTemplate = detectHomeTemplate(dir);
+  let homeSwitched = true;
   if (homeTemplate && homeTemplate !== expectedTemplate) {
-    applyTemplateHomeFiles(resolve(dir, "home"), expectedTemplate);
-    // A refusal (a skills dir linked out of the spirit's tree) mustn't keep the spirit
-    // from starting: its skills stay where they are.
-    const migrated = await migrateSkillsToTemplate(
-      dir,
-      homeTemplate,
-      expectedTemplate,
-      await mindFileOwner(spiritName),
-    ).catch((err) => {
-      slog.warn("failed to migrate the spirit's skills", log.errorData(err));
-      return [];
-    });
-    const { chownMindDir } = await import("./isolation.js");
-    await chownMindDir(dir, spiritName);
-    slog.info(`spirit home switched ${homeTemplate} → ${expectedTemplate}`, { migrated });
+    try {
+      await applyTemplateHomeFiles(dir, expectedTemplate, owner);
+    } catch (err) {
+      // A refusal (a link the spirit planted on the way) mustn't keep the spirit from
+      // starting. Nothing past it runs — no skill migration, no registry change — so
+      // the next start tries the whole switch again, as an upgrade's failed swap does.
+      homeSwitched = false;
+      slog.warn(
+        `spirit home switch ${homeTemplate} → ${expectedTemplate} failed`,
+        log.errorData(err),
+      );
+    }
+    if (homeSwitched) {
+      // A skills dir linked out of the spirit's tree: its skills stay where they are.
+      const migrated = await migrateSkillsToTemplate(
+        dir,
+        homeTemplate,
+        expectedTemplate,
+        await mindFileOwner(spiritName),
+      ).catch((err) => {
+        slog.warn("failed to migrate the spirit's skills", log.errorData(err));
+        return [];
+      });
+      await chownMindDir(dir, spiritName);
+      slog.info(`spirit home switched ${homeTemplate} → ${expectedTemplate}`, { migrated });
+    }
+  }
+  // The registry's template drives credential injection at spawn, so it moves only once
+  // the home matches it.
+  if (expectedTemplate !== currentTemplate && homeSwitched) {
+    const db = await (await import("../db.js")).getDb();
+    const { minds } = await import("../schema.js");
+    const { eq } = await import("drizzle-orm");
+    await db.update(minds).set({ template: expectedTemplate }).where(eq(minds.name, spiritName));
   }
 
   const template = expectedTemplate;

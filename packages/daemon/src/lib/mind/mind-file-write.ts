@@ -425,9 +425,11 @@ export function readMindFileSync(path: string): string {
 }
 
 /**
- * Remove a regular file in a mind's directory, re-contained just before the unlink. The
- * unlink itself is by path — Node has no unlinkat — so a directory swapped for a link
- * between the check and the rm is the same narrow race the module header names.
+ * Remove a regular file — or a link — in a mind's directory, re-contained just before the
+ * unlink. Unlinking a link never touches its target, and leaving one would leave the name
+ * answering for a file that was meant to be gone. The unlink itself is by path — Node has
+ * no unlinkat — so a directory swapped for a link between the check and the rm is the same
+ * narrow race the module header names.
  */
 export async function removeMindFile(
   mindDir: string,
@@ -438,7 +440,7 @@ export async function removeMindFile(
   if (!path) return;
   await serialized(path, async () => {
     const st = await lstat(path).catch(() => null);
-    if (st?.isFile()) await rm(path, { force: true });
+    if (st?.isFile() || st?.isSymbolicLink()) await rm(path, { force: true });
   });
 }
 

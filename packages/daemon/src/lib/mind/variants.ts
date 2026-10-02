@@ -162,43 +162,6 @@ const RESTORE_PATH_CHUNK = 500;
 const RESTORE_DIFF_MAX_BUFFER = 64 * 1024 * 1024;
 
 /**
- * Merge `branch` into the current branch at `cwd`; on failure, best-effort
- * `git merge --abort` before rethrowing.
- *
- * A conflicted merge still applies every *cleanly*-merged change to the
- * working tree — including the upgrade migration's home/ deletions — and
- * leaves the repo mid-merge (MERGE_HEAD present), where a live mind's next
- * auto-commit (`git add -A` + commit) would conclude the merge and bake those
- * deletions in permanently. Aborting rolls the working tree back to the
- * pre-merge state, so nothing is deleted and nothing is left half-merged.
- */
-export async function mergeOrAbort(cwd: string, branch: string): Promise<void> {
-  try {
-    await gitExec(["merge", branch], { cwd });
-  } catch (err) {
-    let aborted = false;
-    try {
-      await gitExec(["merge", "--abort"], { cwd });
-      aborted = true;
-    } catch {
-      // No merge was in progress (the failure predated the merge starting),
-      // or the abort itself failed — the original error is the one to surface.
-    }
-    if (aborted) {
-      // git's own message says "fix conflicts and then commit the result",
-      // which is no longer true — the merge state is gone. Conflict details
-      // land on stdout, which execFile's error message omits; carry them.
-      const e = err as Error & { stdout?: string };
-      const detail = [e.message, e.stdout?.trim()].filter(Boolean).join("\n");
-      throw new Error(
-        `merge of '${branch}' failed and was aborted; the working tree was rolled back unchanged.\n${detail}`,
-      );
-    }
-    throw err;
-  }
-}
-
-/**
  * Restore home/ files a merge physically deleted from the working tree, as
  * untracked content, from `sourceCommit` (the pre-merge HEAD).
  *

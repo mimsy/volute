@@ -3,9 +3,10 @@ import { readSystemsConfig } from "../config/systems-config.js";
 import log from "../util/logger.js";
 import { type MindFileOwner, readMindFile, writeMindFile } from "./mind-file-write.js";
 import {
-  readVoluteConfig,
   UnparseableConfigError,
   updateVoluteConfig,
+  VOLUTE_JSON,
+  type VoluteConfig,
   writeVoluteConfig,
 } from "./volute-config.js";
 
@@ -43,7 +44,8 @@ export async function generateIdentity(
 
 /**
  * Read a key named by volute.json's `identity`. The path is the mind's to set and the
- * tree is the mind's, while the daemon may be root: read through the mind-file helpers,
+ * tree is the mind's, while the daemon may be root: read both — volute.json too — through
+ * the mind-file helpers,
  * so a path out of the mind dir, a link or a FIFO refuses (throws). Null when no key is
  * configured or the file is absent.
  */
@@ -52,7 +54,14 @@ async function readIdentityKey(
   which: "privateKey" | "publicKey",
   owner: MindFileOwner | null,
 ): Promise<string | null> {
-  const relPath = readVoluteConfig(mindDir)?.identity?.[which];
+  const config = await readMindFile(mindDir, VOLUTE_JSON, { owner });
+  let identity: VoluteConfig["identity"];
+  try {
+    identity = config ? (JSON.parse(config.text) as VoluteConfig).identity : undefined;
+  } catch {
+    return null; // unparseable: no key configured that can be read
+  }
+  const relPath = identity?.[which];
   if (!relPath) return null;
   return (await readMindFile(mindDir, relPath, { owner }))?.text ?? null;
 }

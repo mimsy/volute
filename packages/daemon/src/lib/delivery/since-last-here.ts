@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNull, ne, or } from "drizzle-orm";
 import { getDb } from "../db.js";
-import { mindDir } from "../mind/registry.js";
+import { mindGitOpts } from "../mind/isolation.js";
+import { resolveMindDir } from "../mind/registry.js";
 import { messages, mindHistory, turns } from "../schema.js";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
@@ -257,7 +258,7 @@ async function filesSince(mind: string, since: Date): Promise<string[]> {
       "--",
       "home",
     ],
-    { cwd: mindDir(mind), mindName: mind, timeout: GIT_TIMEOUT_MS },
+    { ...mindGitOpts(await resolveMindDir(mind), mind), timeout: GIT_TIMEOUT_MS },
   );
   const files: string[] = [];
   const seen = new Set<string>();

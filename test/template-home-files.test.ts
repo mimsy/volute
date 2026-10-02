@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   applyTemplateHomeFiles,
@@ -9,10 +18,12 @@ import {
 } from "../packages/daemon/src/lib/template/template.js";
 
 describe("applyTemplateHomeFiles", () => {
+  let mindDir: string;
   let homeDir: string;
 
   beforeEach(() => {
-    homeDir = resolve(tmpdir(), `volute-home-test-${process.pid}-${Date.now()}`);
+    mindDir = resolve(tmpdir(), `volute-home-test-${process.pid}-${Date.now()}`);
+    homeDir = resolve(mindDir, "home");
     // Seed a claude-shaped home/.
     mkdirSync(resolve(homeDir, ".claude"), { recursive: true });
     mkdirSync(resolve(homeDir, ".config"), { recursive: true });
@@ -31,11 +42,11 @@ describe("applyTemplateHomeFiles", () => {
   });
 
   afterEach(() => {
-    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(mindDir, { recursive: true, force: true });
   });
 
-  it("swaps claude → pi: replaces mechanics doc, drops settings, resets model", () => {
-    applyTemplateHomeFiles(homeDir, "pi");
+  it("swaps claude → pi: replaces mechanics doc, drops settings, resets model", async () => {
+    await applyTemplateHomeFiles(mindDir, "pi", null);
 
     assert.ok(!existsSync(resolve(homeDir, "CLAUDE.md")), "CLAUDE.md removed");
     assert.ok(existsSync(resolve(homeDir, "MINDS.md")), "MINDS.md added");
@@ -62,8 +73,8 @@ describe("applyTemplateHomeFiles", () => {
     );
   });
 
-  it("swaps claude → codex: adds AGENTS.md and codex config", () => {
-    applyTemplateHomeFiles(homeDir, "codex");
+  it("swaps claude → codex: adds AGENTS.md and codex config", async () => {
+    await applyTemplateHomeFiles(mindDir, "codex", null);
 
     assert.ok(!existsSync(resolve(homeDir, "CLAUDE.md")));
     assert.ok(existsSync(resolve(homeDir, "AGENTS.md")), "AGENTS.md added");
@@ -74,12 +85,12 @@ describe("applyTemplateHomeFiles", () => {
     assert.ok(String(cfg.model).startsWith("gpt"), `codex model, got ${cfg.model}`);
   });
 
-  it("swaps pi → claude: restores CLAUDE.md, settings, claude model", () => {
+  it("swaps pi → claude: restores CLAUDE.md, settings, claude model", async () => {
     // Start from a pi-shaped home.
-    applyTemplateHomeFiles(homeDir, "pi");
+    await applyTemplateHomeFiles(mindDir, "pi", null);
     assert.ok(existsSync(resolve(homeDir, "MINDS.md")));
 
-    applyTemplateHomeFiles(homeDir, "claude");
+    await applyTemplateHomeFiles(mindDir, "claude", null);
 
     assert.ok(existsSync(resolve(homeDir, "CLAUDE.md")), "CLAUDE.md restored");
     assert.ok(!existsSync(resolve(homeDir, "MINDS.md")), "MINDS.md removed");
@@ -92,10 +103,64 @@ describe("applyTemplateHomeFiles", () => {
     assert.ok(String(cfg.model).startsWith("claude"), `claude model, got ${cfg.model}`);
   });
 
-  it("throws on an unknown template without deleting the existing mechanics doc", () => {
-    assert.throws(() => applyTemplateHomeFiles(homeDir, "bogus"), /mechanics doc/i);
+  it("throws on an unknown template without deleting the existing mechanics doc", async () => {
+    await assert.rejects(applyTemplateHomeFiles(mindDir, "bogus", null), /mechanics doc/i);
     // Atomicity: the destructive swap must not have started.
     assert.ok(existsSync(resolve(homeDir, "CLAUDE.md")), "CLAUDE.md preserved on failure");
+  });
+
+  // The mind owns home/ and the daemon is root under user isolation: a link planted at
+  // one of these names must be replaced, never written through or deleted through (#1264).
+  describe("with links the mind planted", () => {
+    let outside: string;
+    beforeEach(() => {
+      outside = mkdtempSync(join(tmpdir(), "volute-home-outside-"));
+      writeFileSync(join(outside, "victim"), "host file");
+    });
+    afterEach(() => rmSync(outside, { recursive: true, force: true }));
+
+    it("replaces a link at a file it writes instead of writing through it", async () => {
+      symlinkSync(join(outside, "victim"), resolve(homeDir, "AGENTS.md"));
+      rmSync(resolve(homeDir, ".config", "config.json"));
+      symlinkSync(join(outside, "victim"), resolve(homeDir, ".config", "config.json"));
+
+      await applyTemplateHomeFiles(mindDir, "codex", null);
+
+      assert.equal(readFileSync(join(outside, "victim"), "utf-8"), "host file");
+      for (const rel of ["AGENTS.md", ".config/config.json"]) {
+        assert.ok(lstatSync(resolve(homeDir, rel)).isFile(), `${rel} is a regular file now`);
+      }
+    });
+
+    it("removes a link at an old mechanics doc's name, leaving its target alone", async () => {
+      // A link left at CLAUDE.md would keep the home reading as claude after the switch.
+      rmSync(resolve(homeDir, "CLAUDE.md"));
+      symlinkSync(join(outside, "victim"), resolve(homeDir, "CLAUDE.md"));
+
+      await applyTemplateHomeFiles(mindDir, "pi", null);
+
+      assert.equal(lstatSync(resolve(homeDir, "CLAUDE.md"), { throwIfNoEntry: false }), undefined);
+      assert.equal(readFileSync(join(outside, "victim"), "utf-8"), "host file");
+    });
+
+    it("refuses a directory linked out of the tree, writing nothing there", async () => {
+      // pi → claude writes .claude/settings.json; .claude points at the host's dir.
+      rmSync(resolve(homeDir, ".claude"), { recursive: true });
+      symlinkSync(outside, resolve(homeDir, ".claude"));
+
+      await assert.rejects(applyTemplateHomeFiles(mindDir, "claude", null));
+      assert.ok(!existsSync(join(outside, "settings.json")), "nothing written through the link");
+    });
+
+    it("never deletes through a directory linked out of the tree", async () => {
+      // claude → pi removes .claude/settings.json; .claude points at the host's dir.
+      writeFileSync(join(outside, "settings.json"), "host settings");
+      rmSync(resolve(homeDir, ".claude"), { recursive: true });
+      symlinkSync(outside, resolve(homeDir, ".claude"));
+
+      await applyTemplateHomeFiles(mindDir, "pi", null).catch(() => {});
+      assert.equal(readFileSync(join(outside, "settings.json"), "utf-8"), "host settings");
+    });
   });
 });
 

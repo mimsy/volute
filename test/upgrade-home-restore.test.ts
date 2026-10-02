@@ -4,10 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import {
-  mergeOrAbort,
-  restoreMergeDeletedHomeFiles,
-} from "../packages/daemon/src/lib/mind/variants.js";
+import { restoreMergeDeletedHomeFiles } from "../packages/daemon/src/lib/mind/variants.js";
 
 const tmpDir = join(tmpdir(), `.volute-upgrade-restore-test-${process.pid}`);
 
@@ -236,61 +233,5 @@ describe("restoreMergeDeletedHomeFiles", () => {
 
     // Untracked home files were never touched by any of this
     assert.equal(readFileSync(join(dir, "home", ".gitconfig"), "utf-8"), "[user]\n\tname = mind\n");
-  });
-});
-
-describe("mergeOrAbort", () => {
-  let dir: string;
-
-  beforeEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-    dir = join(tmpDir, "mind");
-    mkdirSync(join(dir, "home"), { recursive: true });
-    git(["init", "-b", "main"], dir);
-    git(["config", "user.email", "test@test.com"], dir);
-    git(["config", "user.name", "Test"], dir);
-    writeFileSync(join(dir, "src.ts"), "original\n");
-    writeFileSync(join(dir, "home", ".gitconfig"), "mind data\n");
-    git(["add", "-A"], dir);
-    git(["commit", "-m", "initial"], dir);
-  });
-
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("rolls back a conflicted merge's clean deletions and leaves no merge in progress", async () => {
-    // Branch: delete home/.gitconfig (clean deletion) + edit src.ts (will conflict)
-    git(["checkout", "-b", "upgrade"], dir);
-    git(["rm", "home/.gitconfig"], dir);
-    writeFileSync(join(dir, "src.ts"), "branch edit\n");
-    git(["add", "-A"], dir);
-    git(["commit", "-m", "delete home file, edit src"], dir);
-    // Main: conflicting edit to src.ts
-    git(["checkout", "main"], dir);
-    writeFileSync(join(dir, "src.ts"), "main edit\n");
-    git(["add", "-A"], dir);
-    git(["commit", "-m", "conflicting main edit"], dir);
-
-    await assert.rejects(() => mergeOrAbort(dir, "upgrade"));
-
-    // The clean deletion was rolled back with the rest of the merge
-    assert.equal(readFileSync(join(dir, "home", ".gitconfig"), "utf-8"), "mind data\n");
-    assert.equal(readFileSync(join(dir, "src.ts"), "utf-8"), "main edit\n");
-    // No MERGE_HEAD left for a later auto-commit to conclude
-    assert.ok(!existsSync(join(dir, ".git", "MERGE_HEAD")), "merge must be aborted");
-    assert.equal(git(["status", "--porcelain"], dir).trim(), "");
-  });
-
-  it("merges cleanly when there is no conflict", async () => {
-    git(["checkout", "-b", "upgrade"], dir);
-    writeFileSync(join(dir, "src.ts"), "branch edit\n");
-    git(["add", "-A"], dir);
-    git(["commit", "-m", "branch edit"], dir);
-    git(["checkout", "main"], dir);
-
-    await mergeOrAbort(dir, "upgrade");
-
-    assert.equal(readFileSync(join(dir, "src.ts"), "utf-8"), "branch edit\n");
   });
 });
