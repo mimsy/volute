@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
+import { drainFileChanges } from "./lib/auto-commit.js";
 import { log, setLevel } from "./lib/logger.js";
 import { createRouter } from "./lib/router.js";
 import {
@@ -58,8 +59,12 @@ server.listen(port, async () => {
 });
 
 // Commit edits from a turn the shutdown cut short — e.g. the mind ran `volute mind restart`
-// mid-turn to load an identity edit; that turn never reaches its own commit.
+// mid-turn to load an identity edit; that turn never reaches its own commit. Then drained,
+// like claude and pi, so a commit the stop's signal killed is retried (#1206).
 setupShutdown(async () => {
   server.close();
-  await mind.flushFileChanges().catch((err) => log("server", "shutdown commit failed:", err));
+  await mind
+    .flushFileChanges()
+    .then(() => drainFileChanges(resolve("home")))
+    .catch((err) => log("server", "shutdown commit failed:", err));
 });

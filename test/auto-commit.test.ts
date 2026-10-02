@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -325,10 +326,93 @@ exit 0
       await flushFileChanges(repoDir); // nothing left to try
       assert.equal(runs(), 2, "retried more (or less) than once");
       assert.equal(commits(), before);
+      // Given up on and unstaged, so it can't ride into another file's commit (#656).
+      assert.equal(git(["diff", "--cached", "--name-only"], repoDir), "");
+
+      rmSync(refuse);
+      writeFileSync(join(repoDir, "MEMORY.md"), "memory, committed alone");
+      trackFileChange("MEMORY.md", repoDir);
+      await flushFileChanges(repoDir);
+      assert.equal(git(["show", "--name-only", "--format=", "HEAD"], repoDir).trim(), "MEMORY.md");
     } finally {
       rmSync(refuse, { force: true });
       git(["reset", "-q", "--", "SOUL.md"], repoDir);
       git(["checkout", "-q", "--", "SOUL.md"], repoDir);
+    }
+  });
+
+  it("a file that stages again earns a fresh retry", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const lock = join(repoDir, ".git", "index.lock");
+    const lockedFlush = async () => {
+      writeFileSync(lock, "");
+      try {
+        await flushFileChanges(repoDir);
+      } finally {
+        rmSync(lock, { force: true });
+      }
+    };
+    writeFileSync(join(repoDir, "MEMORY.md"), "memory, busy once");
+    trackFileChange("MEMORY.md", repoDir);
+    await lockedFlush(); // add fails: re-queued, its one retry spent
+    await flushFileChanges(repoDir); // stages (and commits): the mark is cleared
+    writeFileSync(join(repoDir, "MEMORY.md"), "memory, busy again");
+    trackFileChange("MEMORY.md", repoDir);
+    await lockedFlush(); // a new failure: retried again, not given up
+    await flushFileChanges(repoDir);
+    assert.equal(git(["status", "--porcelain", "--", "MEMORY.md"], repoDir), "");
+  });
+
+  it("recognises an ignored file whatever its name", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const odd = "odd\nname.txt";
+    writeFileSync(join(repoDir, ".gitignore"), "scratch.txt\nodd*\n");
+    writeFileSync(join(repoDir, odd), "ignored, with a newline in its name");
+    try {
+      trackFileChange(odd, repoDir);
+      const adds = await recordingAdds(async () => {
+        await flushFileChanges(repoDir);
+        writeFileSync(gitLog, "");
+        await flushFileChanges(repoDir);
+      });
+      assert.deepEqual(adds, [], "an ignored file was retried");
+    } finally {
+      rmSync(join(repoDir, odd));
+      git(["checkout", "-q", "--", ".gitignore"], repoDir);
+    }
+  });
+
+  it("checks ignores one by one when the batch check fails", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const odd = "odd\nname.txt";
+    writeFileSync(join(repoDir, ".gitignore"), "scratch.txt\nodd*\n");
+    writeFileSync(join(repoDir, odd), "ignored, with a newline in its name");
+    writeFileSync(join(repoDir, "scratch.txt"), "ignored");
+    mkdirSync(join(repoDir, "real"), { recursive: true });
+    writeFileSync(join(repoDir, "real", "f.md"), "behind a symlink");
+    symlinkSync("real", join(repoDir, "link"));
+    try {
+      // A path beyond a symlink fails a batch check-ignore outright (128).
+      trackFileChange(odd, repoDir);
+      trackFileChange("scratch.txt", repoDir);
+      trackFileChange("link/f.md", repoDir);
+      const adds = await recordingAdds(async () => {
+        await flushFileChanges(repoDir);
+        writeFileSync(gitLog, "");
+        await flushFileChanges(repoDir); // the retry: only what wasn't proven ignored
+      });
+      assert.ok(adds.length > 0, "the unproven path wasn't retried");
+      assert.deepEqual(
+        [...new Set(adds)],
+        ["--literal-pathspecs add -- link/f.md"],
+        "an ignored file was retried",
+      );
+      await flushFileChanges(repoDir); // gives up on it
+    } finally {
+      rmSync(join(repoDir, "link"));
+      rmSync(join(repoDir, "real"), { recursive: true, force: true });
+      rmSync(join(repoDir, odd));
+      git(["checkout", "-q", "--", ".gitignore"], repoDir);
     }
   });
 

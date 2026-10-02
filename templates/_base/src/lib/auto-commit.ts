@@ -14,11 +14,13 @@ type Run = {
   killed: boolean;
 };
 
-function exec(cmd: string, args: string[], cwd: string): Promise<Run> {
+function exec(cmd: string, args: string[], cwd: string, input?: string): Promise<Run> {
   return new Promise((r) => {
-    execFile(cmd, args, { cwd }, (err, stdout) => {
-      r({ code: err ? 1 : 0, stdout: (stdout ?? "").trim(), killed: Boolean(err?.signal) });
+    const child = execFile(cmd, args, { cwd }, (err, stdout) => {
+      const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
+      r({ code, stdout: (stdout ?? "").trim(), killed: Boolean(err?.signal) });
     });
+    if (input !== undefined) child.stdin?.end(input);
   });
 }
 
@@ -56,17 +58,15 @@ async function stage(
   cwd: string,
   args: (a: string[]) => string[] = (a) => a,
 ): Promise<Staging> {
-  // Paths are file names, never glob patterns. (check-ignore takes plain paths, and
-  // refuses the flag.)
-  const git = (a: string[]) => exec("git", args(a), cwd);
+  const git = (a: string[], input?: string) => exec("git", args(a), cwd, input);
+  // Paths are file names, never glob patterns.
   const add = (ps: string[]) => git(["--literal-pathspecs", "add", "--", ...ps]);
 
   const all = await add(paths);
   if (all.code === 0) return { staged: paths, ignored: [], failed: [], killed: false };
   if (all.killed) return { staged: [], ignored: [], failed: paths, killed: true };
 
-  const check = await git(["check-ignore", "--", ...paths]);
-  const flagged = new Set(check.code === 0 ? check.stdout.split("\n") : []);
+  const flagged = await ignoredAmong(paths, git);
   const ignored = paths.filter((p) => flagged.has(p));
   const rest = paths.filter((p) => !flagged.has(p));
   if (rest.length === 0 || (await add(rest)).code === 0) {
@@ -86,6 +86,26 @@ async function stage(
   return { staged, ignored, failed, killed };
 }
 
+/**
+ * Which of `paths` git ignores. One `check-ignore` for the lot (NUL-separated, so any
+ * file name survives); if that fails outright (128 — one bad path, a pathspec beyond a
+ * symlink, fails the lot) each path is checked alone, and one that can't be checked
+ * counts as not ignored, so it is retried rather than written off.
+ */
+async function ignoredAmong(
+  paths: string[],
+  git: (a: string[], input?: string) => Promise<Run>,
+): Promise<Set<string>> {
+  const all = await git(["check-ignore", "-z", "--stdin"], `${paths.join("\0")}\0`);
+  if (all.code === 0) return new Set(all.stdout.split("\0").filter(Boolean));
+  if (all.code === 1) return new Set();
+  const flagged = new Set<string>();
+  for (const p of paths) {
+    if ((await git(["check-ignore", "-q", "--", p])).code === 0) flagged.add(p);
+  }
+  return flagged;
+}
+
 // Serialize git operations to prevent concurrent commits from conflicting
 let pending = Promise.resolve();
 
@@ -93,8 +113,16 @@ let pending = Promise.resolve();
 const pendingFiles = new Set<string>();
 const pendingSharedFiles = new Set<string>();
 
-/** Files whose add or commit already failed once, not by being killed. */
-const retried = new Set<string>();
+/**
+ * Files whose add (or commit) already failed once, not by being killed. Kept apart
+ * because a file that stages fine and then fails to commit must still run out of
+ * retries. An add mark clears when the file stages; a commit mark when its commit
+ * lands or there turns out to be nothing to commit. Bounded, so neither grows over a
+ * long life.
+ */
+const addRetried = new Set<string>();
+const commitRetried = new Set<string>();
+const RETRIED_MAX = 1000;
 
 /**
  * Put files whose add or commit failed back in `into`, for the next flush. A git killed
@@ -103,7 +131,13 @@ const retried = new Set<string>();
  * keeps failing (a refusing hook, a path that's gone) doesn't loop every turn.
  * Returns the files given up on.
  */
-function requeue(files: string[], killed: boolean, into: Set<string>, cwd?: string): string[] {
+function requeue(
+  files: string[],
+  killed: boolean,
+  into: Set<string>,
+  retried: Set<string>,
+  cwd?: string,
+): string[] {
   const dropped: string[] = [];
   for (const f of files) {
     // Given `cwd`, the files are ones whose add failed: one no longer on disk has nothing
@@ -113,6 +147,7 @@ function requeue(files: string[], killed: boolean, into: Set<string>, cwd?: stri
     else if (retried.delete(f)) dropped.push(f);
     else {
       retried.add(f);
+      if (retried.size > RETRIED_MAX) retried.delete(retried.values().next().value as string);
       into.add(f);
     }
   }
@@ -186,21 +221,25 @@ async function commitPending(cwd: string): Promise<void> {
   // told its work is safe when it isn't (#656).
   if (filesToCommit.length > 0) {
     const { staged, ignored, failed, killed } = await stage(filesToCommit, cwd);
+    for (const f of staged) addRetried.delete(f);
     reportUnstaged(
       ignored,
-      requeue(failed, killed, pendingFiles, cwd),
+      requeue(failed, killed, pendingFiles, addRetried, cwd),
       "or survive a variant join",
     );
     // staged.length check guards against committing under a blank "Update "
     // message when every file in this batch was blocked — `diff --cached` can
     // still be non-empty from unrelated content already in the index (e.g. the
     // mind ran `git add` itself), which isn't this batch's to name or claim.
-    if (staged.length > 0 && (await exec("git", ["diff", "--cached", "--quiet"], cwd)).code !== 0) {
+    const changed =
+      staged.length > 0 && (await exec("git", ["diff", "--cached", "--quiet"], cwd)).code !== 0;
+    if (!changed) for (const f of staged) commitRetried.delete(f); // nothing left to commit
+    if (changed) {
       const names = staged.map((f) => f.replace(/^.*\//, "")).join(", ");
       const message = `Update ${names}`;
       const commit = await exec("git", ["commit", "-m", message], cwd);
       if (commit.code === 0) {
-        for (const f of staged) retried.delete(f);
+        for (const f of staged) commitRetried.delete(f);
         log("auto-commit", message);
         // Push if a remote is configured
         const { stdout: remote } = await exec("git", ["remote"], cwd);
@@ -211,11 +250,9 @@ async function commitPending(cwd: string): Promise<void> {
           }
         }
       } else {
-        const dropped = requeue(staged, commit.killed, pendingFiles);
-        log(
-          "auto-commit",
-          `commit failed for: ${names}${dropped.length > 0 ? " — giving up on it" : " — will retry"}`,
-        );
+        const dropped = requeue(staged, commit.killed, pendingFiles, commitRetried);
+        if (dropped.length === 0) log("auto-commit", `commit failed for: ${names} — will retry`);
+        else await giveUp(dropped, cwd, (a) => a, `commit failed twice for ${names}`);
       }
     }
   }
@@ -238,14 +275,16 @@ async function commitPending(cwd: string): Promise<void> {
       gitArgs,
     );
     const sharedStaged = prefixed(shared.staged);
+    for (const f of sharedStaged) addRetried.delete(f);
     reportUnstaged(
       prefixed(shared.ignored),
-      requeue(prefixed(shared.failed), shared.killed, pendingSharedFiles, cwd),
+      requeue(prefixed(shared.failed), shared.killed, pendingSharedFiles, addRetried, cwd),
     );
-    if (
+    const changed =
       sharedStaged.length > 0 &&
-      (await exec("git", gitArgs(["diff", "--cached", "--quiet"]), sharedCwd)).code !== 0
-    ) {
+      (await exec("git", gitArgs(["diff", "--cached", "--quiet"]), sharedCwd)).code !== 0;
+    if (!changed) for (const f of sharedStaged) commitRetried.delete(f);
+    if (changed) {
       const names = shared.staged.map((f) => f.replace(/^.*\//, "")).join(", ");
       const message = `Update ${names}`;
       const authorFlag = `${mindName} <${mindName}@volute>`;
@@ -255,17 +294,37 @@ async function commitPending(cwd: string): Promise<void> {
         sharedCwd,
       );
       if (commit.code === 0) {
-        for (const f of sharedStaged) retried.delete(f);
+        for (const f of sharedStaged) commitRetried.delete(f);
         log("auto-commit", `[pages/_system] ${message}`);
       } else {
-        const dropped = requeue(sharedStaged, commit.killed, pendingSharedFiles);
-        log(
-          "auto-commit",
-          `[pages/_system] commit failed${dropped.length > 0 ? " — giving up on it" : " — will retry"}`,
-        );
+        const dropped = requeue(sharedStaged, commit.killed, pendingSharedFiles, commitRetried);
+        if (dropped.length === 0) log("auto-commit", `[pages/_system] commit failed — will retry`);
+        else {
+          await giveUp(
+            dropped.map((f) => f.slice(sharedPrefix.length)),
+            sharedCwd,
+            gitArgs,
+            `[pages/_system] commit failed twice for ${names}`,
+          );
+        }
       }
     }
   }
+}
+
+/**
+ * Give up on files whose commit failed twice: unstage them, so they can't ride into some
+ * later commit under another file's name (#656), and tell the mind.
+ */
+async function giveUp(
+  paths: string[],
+  cwd: string,
+  args: (a: string[]) => string[],
+  why: string,
+): Promise<void> {
+  await exec("git", args(["--literal-pathspecs", "reset", "-q", "--", ...paths]), cwd);
+  const pronoun = paths.length === 1 ? "it" : "they";
+  warn("auto-commit", `${why}, so ${pronoun} will NOT be committed — left unstaged`);
 }
 
 /** Warn about files that will not be committed: gitignored, gone, or given up on after a retry. */

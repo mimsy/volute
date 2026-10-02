@@ -74,8 +74,10 @@ setupShutdown(async () => {
   // Drained, not just flushed: the stop's signal can kill an in-flight turn-end commit's
   // git, which re-queues its files, and the reap can end a turn mid-shutdown (#1206).
   // Alongside the reap, so a wedged git can't hold the children past the shutdown bound.
-  await Promise.all([
-    drainFileChanges(resolve("home")).catch((err) => log("server", "shutdown commit failed:", err)),
-    mind.reapAllSessions(),
-  ]);
+  const drain = () =>
+    drainFileChanges(resolve("home")).catch((err) => log("server", "shutdown commit failed:", err));
+  await Promise.all([drain(), mind.reapAllSessions()]);
+  // Once more: the reap can end a turn after that drain settled, and the ended turn's
+  // own flush still has to be waited for.
+  await drain();
 });
