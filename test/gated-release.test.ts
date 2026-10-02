@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import {
+  constants as fsConstants,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -10,9 +11,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it, mock } from "node:test";
 import { promisify } from "node:util";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
@@ -881,28 +883,41 @@ describe("gated-channel release (#537)", () => {
 
     it("does not lose an event rule written while an accept is in flight (#1261)", async () => {
       // accept's read and its replace must be one step: an upsertEventRule landing between
-      // them would otherwise be overwritten by accept's stale copy. Start the upsert at a
-      // spread of points through the accept so one lands in that window.
+      // them would otherwise be overwritten by accept's stale copy. Start the upsert the
+      // moment accept opens routes.json to read it — inside that window, whatever the load.
       manager = makeManager().manager;
-      for (let ticks = 0; ticks < 40; ticks++) {
-        const name = createMind({ rules: [], default: "main" });
-        cleanup.push(name);
-        const dir = resolve(process.env.VOLUTE_HOME!, "minds", name);
-        const accept = manager.acceptChannel(name, "discord:general", "discord");
-        for (let i = 0; i < ticks; i++) await new Promise((r) => setImmediate(r));
-        await upsertEventRule(dir, "schedule:dream", "dreams", { owner: null, name });
-        await accept;
-
-        const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
-        assert.ok(
-          written.rules?.some((r) => r.event === "schedule:dream"),
-          `event rule survives (upsert after ${ticks} ticks)`,
-        );
-        assert.ok(
-          written.rules?.some((r) => r.channel === "discord:general"),
-          "accept rule too",
-        );
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const dir = resolve(process.env.VOLUTE_HOME!, "minds", name);
+      const fsp = createRequire(import.meta.url)("node:fs/promises");
+      const open = fsp.open;
+      let upsert: Promise<boolean> | undefined;
+      const opened = mock.method(fsp, "open", (path: string, flags: number, mode: number) => {
+        const reading = (flags & fsConstants.O_ACCMODE) === fsConstants.O_RDONLY;
+        if (!upsert && reading && String(path).endsWith("routes.json")) {
+          upsert = upsertEventRule(dir, "schedule:dream", "dreams", { owner: null, name });
+        }
+        return open(path, flags, mode);
+      });
+      syncBuiltinESMExports();
+      try {
+        await manager.acceptChannel(name, "discord:general", "discord");
+        assert.ok(upsert, "the upsert started inside the accept");
+        await upsert;
+      } finally {
+        opened.mock.restore();
+        syncBuiltinESMExports();
       }
+
+      const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
+      assert.ok(
+        written.rules?.some((r) => r.event === "schedule:dream"),
+        "event rule survives",
+      );
+      assert.ok(
+        written.rules?.some((r) => r.channel === "discord:general"),
+        "accept rule too",
+      );
     });
 
     it("treats an empty routes.json as no routing yet, as the router does", async () => {
