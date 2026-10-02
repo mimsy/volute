@@ -200,7 +200,8 @@ describe("terminateGroup", () => {
 
   it("reports a group that is already gone", async () => {
     const { kill } = recorder(() => errno("ESRCH"));
-    assert.equal(await terminateGroup(100, { spareLeader: false, kill }), "gone");
+    const procDir = fakeProc({});
+    assert.equal(await terminateGroup(100, { spareLeader: false, procDir, kill }), "gone");
   });
 
   it("logs a failure other than ESRCH and keeps signalling the rest", async () => {
@@ -274,7 +275,9 @@ describe("stopGroup", () => {
       const { sent, kill } = recorder((_pid, sig) =>
         sig === "SIGTERM" ? errno("EPERM") : undefined,
       );
-      await stopGroup(fakeChild(100), { spareLeader: false, graceMs: 30, kill });
+      // The leader is still alive in /proc, so the deadline's scan finds the group.
+      const procDir = fakeProc({ 100: { comm: "node", pgrp: 100 } });
+      await stopGroup(fakeChild(100), { spareLeader: false, graceMs: 30, procDir, kill });
       assert.deepEqual(sent, [[-100, "SIGKILL"]]);
       assert.ok(logs.lines.some((l) => l.includes("SIGTERM to process group 100 failed")));
     } finally {
@@ -286,7 +289,12 @@ describe("stopGroup", () => {
     const { sent, kill } = recorder((_pid, sig) =>
       sig === "SIGTERM" ? errno("ESRCH") : undefined,
     );
-    await stopGroup(fakeChild(100), { spareLeader: false, graceMs: 60_000, kill });
+    await stopGroup(fakeChild(100), {
+      spareLeader: false,
+      graceMs: 60_000,
+      procDir: fakeProc({}),
+      kill,
+    });
     assert.deepEqual(sent, []);
   });
 
