@@ -563,16 +563,22 @@ export async function recordMissingSkillBases(): Promise<void> {
     const dir = mind.dir ?? mindDir(mind.name);
     const skillsDir = mindSkillsDir(dir);
     if (!existsSync(join(dir, ".git")) || !existsSync(skillsDir)) continue;
+    const scan = () => {
+      const found: { id: string; upstream: UpstreamInfo; sourceDir: string }[] = [];
+      for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const upstream = readUpstream(join(skillsDir, entry.name));
+        if (!upstream || pool.get(upstream.source)?.version !== upstream.version) continue;
+        const sourceDir = join(sharedSkillsDir(), upstream.source);
+        if (existsSync(sourceDir)) found.push({ id: entry.name, upstream, sourceDir });
+      }
+      return found;
+    };
     try {
-      await withSkillsLock(mind.name, dir, async () => {
-        const candidates: { id: string; upstream: UpstreamInfo; sourceDir: string }[] = [];
-        for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-          if (!entry.isDirectory()) continue;
-          const upstream = readUpstream(join(skillsDir, entry.name));
-          if (!upstream || pool.get(upstream.source)?.version !== upstream.version) continue;
-          const sourceDir = join(sharedSkillsDir(), upstream.source);
-          if (existsSync(sourceDir)) candidates.push({ id: entry.name, upstream, sourceDir });
-        }
+      // Read-only first: a mind with nothing to record takes no lock and no git.
+      if (scan().length === 0) continue;
+      await withSkillsLock(mind.name, async () => {
+        const candidates = scan();
         if (candidates.length === 0) return;
         const refs = new Set(
           (
@@ -586,9 +592,15 @@ export async function recordMissingSkillBases(): Promise<void> {
             .split("\n")
             .filter(Boolean),
         );
+        let reclaimed = false;
         for (const { id, upstream, sourceDir } of candidates) {
           const ref = upstreamRef(id, upstream.version);
           if (refs.has(ref)) continue;
+          // Only a mind with a base still to write pays for the walk.
+          if (!reclaimed) {
+            reclaimed = true;
+            await reclaimGitForSkills(dir, mind.name);
+          }
           if (await isUpstreamCopyOf(dir, mind.name, upstream.baseCommit, id, upstream.version)) {
             // Recorded before refs were per version: keep it reachable under its own.
             await mindGit(dir, mind.name, [...PLUMBING, "update-ref", ref, upstream.baseCommit]);
@@ -742,21 +754,12 @@ export async function removeSkillDir(dir: string, skillDir: string, owner: MindF
 /**
  * Skill operations on one mind — and its variants, whose worktrees share its git dir —
  * one at a time, so two never interleave their adds and commits or their recorded bases.
- *
- * Each runs git as the mind, so it first hands the mind any root-owned entry in its .git
- * (#1310). Best-effort: a git the reclaim couldn't help still fails with its own error.
  */
 const skillsLocks = new Map<string, Promise<unknown>>();
 
-async function withSkillsLock<T>(mindName: string, dir: string, fn: () => Promise<T>): Promise<T> {
+async function withSkillsLock<T>(mindName: string, fn: () => Promise<T>): Promise<T> {
   const key = await getBaseName(mindName);
-  const locked = async () => {
-    await reclaimMindGit(dir, mindName).catch((err) =>
-      log.warn(`failed to reclaim ${mindName}'s .git before skills git`, log.errorData(err)),
-    );
-    return fn();
-  };
-  const run = (skillsLocks.get(key) ?? Promise.resolve()).then(locked, locked);
+  const run = (skillsLocks.get(key) ?? Promise.resolve()).then(fn, fn);
   const tail = run.catch(() => {});
   skillsLocks.set(key, tail);
   try {
@@ -766,12 +769,24 @@ async function withSkillsLock<T>(mindName: string, dir: string, fn: () => Promis
   }
 }
 
+/**
+ * Skills git runs as the mind, so before a skills operation writes to the mind's repo it
+ * hands the mind any root-owned entry in its .git (#1310). Only then — the walk is I/O a
+ * slow disk feels at every start. Best-effort: a git the reclaim couldn't help still
+ * fails with its own error.
+ */
+async function reclaimGitForSkills(dir: string, mindName: string): Promise<void> {
+  await reclaimMindGit(dir, mindName).catch((err) =>
+    log.warn(`failed to reclaim ${mindName}'s .git before skills git`, log.errorData(err)),
+  );
+}
+
 export function installSkill(
   mindName: string,
   dir: string,
   skillId: string,
 ): Promise<InstallResult> {
-  return withSkillsLock(mindName, dir, () => installSkillLocked(mindName, dir, skillId));
+  return withSkillsLock(mindName, () => installSkillLocked(mindName, dir, skillId));
 }
 
 async function installSkillLocked(
@@ -785,6 +800,7 @@ async function installSkillLocked(
 
   const sourceDir = join(sharedSkillsDir(), skillId);
   if (!existsSync(sourceDir)) throw new Error(`Shared skill files not found: ${skillId}`);
+  await reclaimGitForSkills(dir, mindName);
 
   const destDir = join(mindSkillsDir(dir), skillId);
   if (lexists(destDir)) throw new Error(`Skill already installed: ${skillId}`);
@@ -911,13 +927,14 @@ async function installSkillLocked(
 }
 
 export function uninstallSkill(mindName: string, dir: string, skillId: string): Promise<void> {
-  return withSkillsLock(mindName, dir, () => uninstallSkillLocked(mindName, dir, skillId));
+  return withSkillsLock(mindName, () => uninstallSkillLocked(mindName, dir, skillId));
 }
 
 async function uninstallSkillLocked(mindName: string, dir: string, skillId: string): Promise<void> {
   validateSkillId(skillId);
   const skillDir = join(mindSkillsDir(dir), skillId);
   if (!existsSync(skillDir)) throw new Error(`Skill not installed: ${skillId}`);
+  await reclaimGitForSkills(dir, mindName);
 
   // The skill dir is the mind's: read and remove it through the mind-file walk, so a
   // skills dir linked out of the mind refuses instead of aiming a root rm elsewhere.
@@ -968,7 +985,7 @@ export type UpdateResult =
   | { status: "conflict"; conflictFiles: string[] };
 
 export function updateSkill(mindName: string, dir: string, skillId: string): Promise<UpdateResult> {
-  return withSkillsLock(mindName, dir, () => updateSkillLocked(mindName, dir, skillId));
+  return withSkillsLock(mindName, () => updateSkillLocked(mindName, dir, skillId));
 }
 
 async function updateSkillLocked(
@@ -1046,6 +1063,7 @@ async function updateSkillLocked(
     return { status: "conflict", conflictFiles: unresolved };
   }
 
+  await reclaimGitForSkills(dir, mindName);
   const git = (args: string[]) => mindGit(dir, mindName, args);
   const base = await mergeBaseFor(dir, mindName, skillId, upstream);
   /** A file's base content, or null if the base has no such file (or there is no base). */

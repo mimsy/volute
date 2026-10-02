@@ -25,6 +25,7 @@ import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   addMind,
   addVariant,
+  readRegistry,
   stateDir,
   voluteHome,
 } from "../packages/daemon/src/lib/mind/registry.js";
@@ -55,6 +56,7 @@ import {
   updateSkill,
 } from "../packages/daemon/src/lib/skills.js";
 import { exec } from "../packages/daemon/src/lib/util/exec.js";
+import log from "../packages/daemon/src/lib/util/logger.js";
 import { discoverHooks } from "../templates/_base/src/lib/hook-loader.js";
 import { createMindGitRepo, quietGitMaintenance } from "./helpers/git.js";
 
@@ -1467,6 +1469,34 @@ describe("mind skill operations", () => {
         exec("git", ["rev-parse", "--verify", "-q", "refs/volute/skill-upstream/wired/v1"], {
           cwd: mindDir,
         }),
+      );
+    });
+
+    // #1310: the reclaim walks the mind's .git — I/O a slow disk feels at every start —
+    // so a start with nothing to record does none. Under isolation a reclaim for a mind
+    // with no OS user fails and says so in the log, which is what's watched for here.
+    it("a start with no base to record walks no .git", async () => {
+      await installThenImport();
+      await bumpPool();
+      // Nothing else may be registered: under isolation its git would go through sudo.
+      assert.deepEqual(
+        (await readRegistry()).map((m) => m.name),
+        [mindName],
+      );
+      const lines: string[] = [];
+      const originalIsolation = process.env.VOLUTE_ISOLATION;
+      process.env.VOLUTE_ISOLATION = "user";
+      log.setOutput((line) => lines.push(line));
+      try {
+        await recordMissingSkillBases();
+      } finally {
+        log.setOutput((line) => process.stderr.write(`${line}\n`));
+        if (originalIsolation === undefined) delete process.env.VOLUTE_ISOLATION;
+        else process.env.VOLUTE_ISOLATION = originalIsolation;
+      }
+      assert.deepEqual(
+        lines.filter((l) => l.includes("reclaim")),
+        [],
       );
     });
 
