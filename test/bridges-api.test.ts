@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
+import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { readBridgesConfig, setBridgeConfig } from "../packages/daemon/src/lib/bridges/bridges.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
@@ -25,6 +29,7 @@ describe("bridge routes refuse unknown platforms", () => {
   after(async () => {
     const db = await getDb();
     await db.delete(users).where(eq(users.username, ADMIN));
+    rmSync(resolve(voluteSystemDir(), "bridges.json"), { force: true });
   });
 
   for (const platform of ["..%2Fevil", "constructor"]) {
@@ -38,6 +43,31 @@ describe("bridge routes refuse unknown platforms", () => {
       assert.equal(res.status, 400, await res.text());
     });
   }
+
+  // #1362: a stale entry for a platform that isn't (or is no longer) built in can still be
+  // removed — from the config only, never reaching the manager or a PID path.
+  it("DELETE removes an unknown platform's own bridges.json entry without the manager", async () => {
+    const entry = { enabled: true, defaultMind: "m", channelMappings: {} };
+    setBridgeConfig("retired-platform", entry);
+    setBridgeConfig("discord", entry);
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request("http://localhost/api/v1/bridges/retired-platform", {
+      method: "DELETE",
+      headers: { Cookie: `volute_session=${cookie}`, Origin: "http://localhost" },
+    });
+    // 200, not 503: the manager (uninitialised here) was never asked.
+    assert.equal(res.status, 200, await res.text());
+    assert.deepEqual(Object.keys(readBridgesConfig()), ["discord"]);
+  });
+
+  it("DELETE still refuses an unknown platform with no entry", async () => {
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request("http://localhost/api/v1/bridges/never-configured", {
+      method: "DELETE",
+      headers: { Cookie: `volute_session=${cookie}`, Origin: "http://localhost" },
+    });
+    assert.equal(res.status, 400, await res.text());
+  });
 
   // The mappings routes key bridges.json by platform: a prototype key must not get in.
   const mappingRoutes: [string, string, (p: string) => string, object?][] = [

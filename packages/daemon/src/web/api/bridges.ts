@@ -223,9 +223,15 @@ const app = new Hono<AuthEnv>()
   .delete("/:platform", requireAdmin, async (c) => {
     const platform = c.req.param("platform");
     // The platform names a PID file the stop reads, signals and removes — as root on a
-    // system install — so only a known one gets that far.
-    if (!getBridgeDef(platform))
-      return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
+    // system install — so only a known one gets that far. An unknown platform's stale
+    // bridges.json entry (a hand edit, an older version) can still be removed, but only
+    // from the config: no manager, no PID path (#1362).
+    if (!getBridgeDef(platform)) {
+      if (!Object.hasOwn(readBridgesConfig(), platform))
+        return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
+      removeBridgeConfig(platform);
+      return c.json({ ok: true });
+    }
     const manager = getBridgeManager();
     await manager.stopBridge(platform, () => removeBridgeConfig(platform));
     return c.json({ ok: true });

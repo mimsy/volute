@@ -1,4 +1,6 @@
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
+import log from "../util/logger.js";
+import { notifyMindOfVersion } from "../version-notify.js";
 
 /** The MindManager surface {@link restartOntoMerge} uses — narrowed so tests can stub it. */
 export type MergeRestartTarget = {
@@ -26,7 +28,8 @@ function defaultIsAsleep(name: string): boolean {
  * is asleep, with its inbound queued until a wake that never runs its ritual.
  *
  * Returns `"asleep"` when the start was skipped for that reason. Throws whatever the
- * stop or start throws; the callers own their failure handling.
+ * stop or start throws; the callers own their failure handling. A start sends the
+ * version notice, as every start does.
  */
 export async function restartOntoMerge(
   manager: MergeRestartTarget,
@@ -47,5 +50,10 @@ export async function restartOntoMerge(
   // that begins between it and the spawn, overlaps the start.
   if ((opts.isAsleep ?? defaultIsAsleep)(name)) return "asleep";
   await manager.startMind(name, { healthTimeoutMs: opts.healthTimeoutMs });
+  // Like every other start: a mind stopped through a Volute update and started by its
+  // own upgrade hears what changed now, not at some later start (once — #1365).
+  notifyMindOfVersion(name).catch((err: unknown) =>
+    log.error(`failed to send the version notice to ${name}`, log.errorData(err)),
+  );
   return "started";
 }
