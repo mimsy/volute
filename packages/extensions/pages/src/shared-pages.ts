@@ -29,6 +29,7 @@ import { dirname, relative, resolve } from "node:path";
 import { chownTree } from "@volute/daemon/lib/util/chown-tree.js";
 import logger from "@volute/daemon/lib/util/logger.js";
 import { buildMindBaseEnv } from "@volute/daemon/lib/util/mind-env.js";
+import { resolveRealWithinBase } from "@volute/daemon/lib/util/paths.js";
 import { isMultiplyLinkedFile } from "./ownership.js";
 
 const log = logger.child("pages");
@@ -238,9 +239,11 @@ async function mindWorktree(
   isolation?: IsolationInfo,
 ): Promise<WorktreeGit> {
   const iso = isolation?.isIsolationEnabled();
+  // Contained without isolation too: a `_system` linked into another mind's pages would
+  // vouch as that mind's worktree, and daemon git would commit or reset its drafts.
   const cwd = iso
     ? await isolation!.containMindPath(mindName, worktreePath(mindDir))
-    : worktreePath(mindDir);
+    : await resolveRealWithinBase(mindDir, relative(mindDir, worktreePath(mindDir)));
   if (!existsSync(cwd)) {
     throw Object.assign(new Error(`${cwd} doesn't exist`), { code: "ENOENT" });
   }

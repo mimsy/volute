@@ -836,6 +836,28 @@ describe("pages collaborative repo", () => {
     });
   }
 
+  it("never runs daemon git in another mind's worktree linked in as _system, without isolation", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const [a, b] = ["test-pages-link-a", "test-pages-link-b"];
+    const aDir = await createFakeMind(a);
+    const bDir = await createFakeMind(b);
+    await addPagesWorktree(a, aDir, dataDir);
+    await addPagesWorktree(b, bDir, dataDir);
+    const wtA = resolve(aDir, "home", "pages", "_system");
+    const wtB = resolve(bDir, "home", "pages", "_system");
+    writeFileSync(resolve(wtB, "draft.md"), "# B's draft\n");
+    rmSync(wtA, { recursive: true, force: true });
+    symlinkSync(wtB, wtA);
+
+    // Publishing is refused anyway (the branch is B's); reading B's drafts must be too.
+    await assert.rejects(pagesStatus(a, aDir, dataDir), /escapes base directory/);
+    assert.equal(await hasUnpublishedSharedChanges(a, aDir, dataDir), false);
+    const result = await pagesPullAndMerge(a, aDir, dataDir, "a");
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.match(git(wtB, "status", "--porcelain"), /\?\? draft\.md/);
+  });
+
   it("pins daemon git to the repo, whatever commondir says after vouching", async (t) => {
     t.mock.method(console, "warn", () => {});
     await ensurePagesRepo(dataDir);
