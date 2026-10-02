@@ -8,6 +8,15 @@ import log from "../packages/daemon/src/lib/util/logger.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Poll `cond` until it holds, failing with `what` after `ms`. */
+async function until(cond: () => boolean, ms: number, what: string): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`timed out after ${ms}ms waiting for ${what}`);
+    await delay(10);
+  }
+}
+
 // Tests reach into private members of MindManager.
 type AnyMgr = any;
 
@@ -114,9 +123,18 @@ describe("MindManager.stopMind signals", () => {
   ): Promise<{ sent: [number, string][]; logs: string[]; pgid: number }> {
     const name = `stopper-${Math.random().toString(36).slice(2, 8)}`;
     await addMind(name, 4993);
-    const child = spawn("sh", ["-c", "sleep 30 & wait"], { detached: true, stdio: "ignore" });
+    // sh prints the sleep's pid once it has forked it, so the group has a member
+    // below its leader before the stop looks for one.
+    const child = spawn("sh", ["-c", "sleep 30 & echo $!; wait"], {
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     const pgid = child.pid!;
-    await delay(100); // let sh fork the sleep
+    let forked = false;
+    child.stdout!.once("data", () => {
+      forked = true;
+    });
+    await until(() => forked, 5_000, "sh to fork the sleep");
     const sent: [number, string][] = [];
     const logs: string[] = [];
     const origKill = process.kill.bind(process);
@@ -129,7 +147,8 @@ describe("MindManager.stopMind signals", () => {
       const mgr = new MindManager() as AnyMgr;
       mgr.minds.set(name, { child, port: 4993, supervised });
       const p = mgr.stopMind(name);
-      await delay(50); // withLock + the group scan
+      // withLock, then the group scan: done once the SIGTERM is out.
+      await until(() => sent.length > 0, 5_000, "the stop's SIGTERM");
       (process as AnyMgr).kill = origKill;
       process.kill(-pgid, "SIGKILL"); // end it for real, as the stub didn't
       await p;
