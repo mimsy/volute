@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { MindManager } from "../packages/daemon/src/lib/daemon/mind-manager.js";
-import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import { addMind, removeMind, stateDir } from "../packages/daemon/src/lib/mind/registry.js";
 import log from "../packages/daemon/src/lib/util/logger.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -179,5 +181,159 @@ describe("MindManager.stopMind signals", () => {
       assert.deepEqual(sent, [[-pgid, "SIGTERM"]]);
       assert.ok(logs.some((l) => l.includes(`could not scan process group ${pgid}`)));
     }
+  });
+});
+
+describe("MindManager stop sweep of the mind's OS user (#1374)", () => {
+  /** A manager whose sweep and owner lookup are stubbed; returns what it was asked to sweep. */
+  function sweeper() {
+    const mgr = new MindManager() as AnyMgr;
+    const calls: { uid: number; opts: AnyMgr }[] = [];
+    mgr.mindOwner = async () => ({ uid: 1234, gid: 1234 });
+    mgr.sweepUid = async (uid: number, opts: AnyMgr) => {
+      calls.push({ uid, opts });
+      return 0;
+    };
+    return { mgr, calls };
+  }
+
+  async function withIsolation(fn: () => Promise<void>): Promise<void> {
+    const prev = process.env.VOLUTE_ISOLATION;
+    process.env.VOLUTE_ISOLATION = "user";
+    try {
+      await fn();
+    } finally {
+      if (prev === undefined) delete process.env.VOLUTE_ISOLATION;
+      else process.env.VOLUTE_ISOLATION = prev;
+    }
+  }
+
+  it("a stop sweeps the stopped mind's uid, sparing the daemon's children and the stopped group", () =>
+    withIsolation(async () => {
+      const { mgr, calls } = sweeper();
+      const name = `sweeper-${Math.random().toString(36).slice(2, 8)}`;
+      await addMind(name, 4994);
+      const child = spawn("true", [], { detached: true, stdio: "ignore" });
+      await new Promise((r) => child.once("exit", r));
+      try {
+        mgr.minds.set(name, { child, port: 4994, baseName: name, supervised: false });
+        await mgr.stopMind(name);
+      } finally {
+        await removeMind(name);
+      }
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].uid, 1234);
+      assert.equal(calls[0].opts.ancestor, process.pid);
+      assert.equal(calls[0].opts.spareGroup, child.pid);
+      assert.equal(calls[0].opts.proceed(), true);
+      // A variant coming up as the same user calls the rest of the sweep off.
+      mgr.minds.set(`${name}-v`, { child, port: 4995, baseName: name, supervised: false });
+      assert.equal(calls[0].opts.proceed(), false);
+    }));
+
+  it("does not sweep while a variant of the same base runs", () =>
+    withIsolation(async () => {
+      const { mgr, calls } = sweeper();
+      mgr.minds.set("base-v", { child: new EventEmitter(), port: 1, baseName: "base" });
+      await mgr.sweepMindUser("base", "base", 100);
+      assert.equal(calls.length, 0);
+      // Another base's variant is no reason to hold off.
+      mgr.minds.clear();
+      mgr.minds.set("other-v", { child: new EventEmitter(), port: 1, baseName: "other" });
+      await mgr.sweepMindUser("base", "base", 100);
+      assert.equal(calls.length, 1);
+    }));
+
+  it("never sweeps without user isolation, or the spirit's user", async () => {
+    const { mgr, calls } = sweeper();
+    await mgr.sweepMindUser("m", "m", 100);
+    await withIsolation(() => mgr.sweepMindUser("volute", "volute", 100));
+    assert.equal(calls.length, 0);
+  });
+});
+
+describe("MindManager stale mind.pid (#1366)", () => {
+  const PORT = 4996;
+  const serverArgs = (port = PORT) =>
+    `runuser -u mind-x -- /usr/bin/node --import tsx src/server.ts --port ${port}`;
+
+  /**
+   * A real detached process standing in for a previous daemon's orphan, a `mind.pid`
+   * naming it, and the identity the OS is said to report for it. Returns whether the
+   * process was signalled, and whether the PID file is gone.
+   */
+  async function stale(
+    fileText: (pid: number) => string,
+    identity: { args: string; start: string; boot: string | null } | null,
+  ): Promise<{ signalled: boolean; removed: boolean }> {
+    const name = `stale-${Math.random().toString(36).slice(2, 8)}`;
+    const dir = stateDir(name);
+    mkdirSync(dir, { recursive: true });
+    const child = spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
+    const exited = new Promise<boolean>((r) => child.once("exit", () => r(true)));
+    writeFileSync(resolve(dir, "mind.pid"), fileText(child.pid!));
+    const mgr = new MindManager() as AnyMgr;
+    mgr.processIdentity = async () => identity;
+    try {
+      await mgr.killStaleMind(name, PORT, null);
+      const signalled = await Promise.race([exited, delay(300).then(() => false)]);
+      return { signalled, removed: !existsSync(resolve(dir, "mind.pid")) };
+    } finally {
+      try {
+        process.kill(-child.pid!, "SIGKILL");
+      } catch {}
+    }
+  }
+
+  const record = (pid: number) => JSON.stringify({ pid, start: "777", boot: "b1" });
+
+  it("stops the process when it is still this mind's server", async () => {
+    const r = await stale(record, { args: serverArgs(), start: "777", boot: "b1" });
+    assert.deepEqual(r, { signalled: true, removed: true });
+  });
+
+  it("never signals a reused pid: another command, another start, another boot", async () => {
+    for (const id of [
+      { args: "node other-dev-server/server.ts --port 3000", start: "777", boot: "b1" },
+      { args: serverArgs(PORT + 1), start: "777", boot: "b1" },
+      { args: serverArgs(), start: "778", boot: "b1" },
+      { args: serverArgs(), start: "777", boot: "b2" },
+    ]) {
+      assert.deepEqual(await stale(record, id), { signalled: false, removed: true }, id.args);
+    }
+  });
+
+  it("checks an older daemon's bare-pid file by its command line alone", async () => {
+    const bare = (pid: number) => `${pid}\n`;
+    assert.deepEqual(await stale(bare, { args: serverArgs(), start: "1", boot: null }), {
+      signalled: true,
+      removed: true,
+    });
+    assert.deepEqual(
+      await stale(bare, { args: "vite --port 4996 server.ts", start: "1", boot: null }),
+      { signalled: false, removed: true },
+    );
+  });
+
+  it("removes the file without signalling when the process can't be read", async () => {
+    assert.deepEqual(await stale(record, null), { signalled: false, removed: true });
+  });
+
+  it("records the spawned server's identity, and nothing for a child no longer tracked", async () => {
+    const name = `pidrec-${Math.random().toString(36).slice(2, 8)}`;
+    const dir = stateDir(name);
+    mkdirSync(dir, { recursive: true });
+    const mgr = new MindManager() as AnyMgr;
+    mgr.processIdentity = async () => ({ args: serverArgs(), start: "4242", boot: "bx" });
+    const child = { pid: 9999 };
+    await mgr.saveMindPid(name, child, null);
+    assert.ok(!existsSync(resolve(dir, "mind.pid")), "an untracked child is not recorded");
+    mgr.minds.set(name, { child, port: PORT, baseName: name, supervised: false });
+    await mgr.saveMindPid(name, child, null);
+    assert.deepEqual(JSON.parse(readFileSync(resolve(dir, "mind.pid"), "utf-8")), {
+      pid: 9999,
+      start: "4242",
+      boot: "bx",
+    });
   });
 });

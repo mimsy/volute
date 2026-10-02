@@ -17,8 +17,8 @@ import log from "./logger.js";
 
 const plog = log.child("process-group");
 
-type Kill = (pid: number, signal: NodeJS.Signals | 0) => void;
-const defaultKill: Kill = (pid, signal) => process.kill(pid, signal);
+export type Kill = (pid: number, signal: NodeJS.Signals | 0) => void;
+export const defaultKill: Kill = (pid, signal) => process.kill(pid, signal);
 
 /** A process, and its start time (clock ticks since boot) to tell it from a reused pid. */
 export type Member = { pid: number; start: string };
@@ -29,16 +29,16 @@ export type GroupOpts = { procDir?: string; kill?: Kill };
 const SCAN_CONCURRENCY = 64;
 
 /** The process is gone: its /proc entry, or the process itself. */
-function isGone(err: unknown): boolean {
+export function isGone(err: unknown): boolean {
   const code = (err as NodeJS.ErrnoException)?.code;
   return code === "ENOENT" || code === "ESRCH";
 }
 
-/** A process's group and start time from `/proc/<pid>/stat`; null once it has exited. */
-async function readStat(
+/** A process's parent, group and start time from `/proc/<pid>/stat`; null once it has exited. */
+export async function readStat(
   procDir: string,
   pid: number,
-): Promise<{ pgrp: number; start: string } | null> {
+): Promise<{ ppid: number; pgrp: number; start: string } | null> {
   let stat: string;
   try {
     stat = await readFile(`${procDir}/${pid}/stat`, "utf-8");
@@ -47,9 +47,9 @@ async function readStat(
     throw err;
   }
   // `pid (comm) state ppid pgrp … starttime …` — comm may hold spaces and parens,
-  // so the fields are counted from the last ')': pgrp is field 5, starttime 22.
+  // so the fields are counted from the last ')': ppid is field 4, pgrp 5, starttime 22.
   const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-  return { pgrp: Number(fields[2]), start: fields[19] };
+  return { ppid: Number(fields[1]), pgrp: Number(fields[2]), start: fields[19] };
 }
 
 /**
