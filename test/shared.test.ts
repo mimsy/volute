@@ -262,7 +262,7 @@ describe("pages collaborative repo", () => {
     const mindDir = await createFakeMind("test-pages-pull-noop");
     await addPagesWorktree("test-pages-pull-noop", mindDir, dataDir);
 
-    const result = await pagesPull("test-pages-pull-noop", mindDir);
+    const result = await pagesPull("test-pages-pull-noop", mindDir, dataDir);
     assert.ok(result.ok);
 
     await removePagesWorktree("test-pages-pull-noop", mindDir, dataDir);
@@ -286,7 +286,7 @@ describe("pages collaborative repo", () => {
     writeFileSync(resolve(worktreeB, "from-b.html"), "<p>from B</p>");
 
     // Mind B pulls — should auto-commit B's file and get A's file
-    const result = await pagesPull("test-pages-pull-dirty-b", mindDirB);
+    const result = await pagesPull("test-pages-pull-dirty-b", mindDirB, dataDir);
     assert.ok(result.ok);
 
     // Both files should exist
@@ -312,7 +312,7 @@ describe("pages collaborative repo", () => {
     await pagesMerge("test-pages-pull-a", mindDirA, dataDir, "A's page");
 
     // Mind B pulls — should get A's file
-    const result = await pagesPull("test-pages-pull-b", mindDirB);
+    const result = await pagesPull("test-pages-pull-b", mindDirB, dataDir);
     assert.ok(result.ok);
 
     const content = readFileSync(resolve(worktreeB, "from-a.html"), "utf-8");
@@ -322,7 +322,7 @@ describe("pages collaborative repo", () => {
     await removePagesWorktree("test-pages-pull-b", mindDirB, dataDir);
   });
 
-  it("pagesPull detects conflicts and aborts cleanly", async () => {
+  it("pagesPull leaves a conflicted rebase stopped, and names the file", async () => {
     await ensurePagesRepo(dataDir);
     const mindDirA = await createFakeMind("test-pages-pull-conflict-a");
     const mindDirB = await createFakeMind("test-pages-pull-conflict-b");
@@ -345,13 +345,14 @@ describe("pages collaborative repo", () => {
     );
 
     // Mind B pulls — should detect conflict
-    const result = await pagesPull("test-pages-pull-conflict-b", mindDirB);
+    const result = await pagesPull("test-pages-pull-conflict-b", mindDirB, dataDir);
     assert.equal(result.ok, false);
     assert.equal(result.conflicts, true);
+    assert.match(result.message ?? "", /conflict in pages\/_system: conflict\.txt/);
 
-    // Worktree should be usable (rebase was aborted)
-    const branch = (await gitExec(["branch", "--show-current"], { cwd: worktreeB })).trim();
-    assert.equal(branch, "test-pages-pull-conflict-b");
+    // Stopped, not aborted: there is something to resolve, as the message says (#1330).
+    const status = await gitExec(["status"], { cwd: worktreeB });
+    assert.match(status, /rebasing branch 'test-pages-pull-conflict-b'/);
 
     await removePagesWorktree("test-pages-pull-conflict-a", mindDirA, dataDir);
     await removePagesWorktree("test-pages-pull-conflict-b", mindDirB, dataDir);
@@ -441,7 +442,7 @@ describe("pages collaborative repo", () => {
       "pagesMerge",
       (name: string, mindDir: string) => pagesMerge(name, mindDir, testDataDir(), "leak"),
     ],
-    ["pagesPull", (name: string, mindDir: string) => pagesPull(name, mindDir)],
+    ["pagesPull", (name: string, mindDir: string) => pagesPull(name, mindDir, dataDir)],
     [
       "pagesPullAndMerge",
       (name: string, mindDir: string) => pagesPullAndMerge(name, mindDir, testDataDir(), "leak"),
@@ -553,7 +554,7 @@ describe("pages collaborative repo", () => {
     await removePagesWorktree("test-pam-noop", mindDir, dataDir);
   });
 
-  it("pagesPullAndMerge detects conflicts during pull phase", async () => {
+  it("pagesPullAndMerge leaves a conflicted rebase stopped, and publishes nothing", async () => {
     await ensurePagesRepo(dataDir);
     const mindDirA = await createFakeMind("test-pam-conflict-a");
     const mindDirB = await createFakeMind("test-pam-conflict-b");
@@ -579,10 +580,11 @@ describe("pages collaborative repo", () => {
     const result = await pagesPullAndMerge("test-pam-conflict-b", mindDirB, dataDir, "B's version");
     assert.equal(result.ok, false);
     assert.equal(result.conflicts, true);
-
-    // Worktree should be usable (rebase was aborted)
-    const branch = (await gitExec(["branch", "--show-current"], { cwd: worktreeB })).trim();
-    assert.equal(branch, "test-pam-conflict-b");
+    assert.match(result.message ?? "", /conflict in pages\/_system: conflict\.txt/);
+    const status = await gitExec(["status"], { cwd: worktreeB });
+    assert.match(status, /rebasing branch 'test-pam-conflict-b'/);
+    const main = await gitExec(["show", "main:conflict.txt"], { cwd: pagesRepoDir(dataDir) });
+    assert.equal(main, "version A");
 
     await removePagesWorktree("test-pam-conflict-a", mindDirA, dataDir);
     await removePagesWorktree("test-pam-conflict-b", mindDirB, dataDir);
@@ -682,7 +684,7 @@ describe("pages collaborative repo", () => {
       "pagesMerge",
       (n: string, m: string, iso: IsolationInfo) => pagesMerge(n, m, dataDir, "x", iso),
     ],
-    ["pagesPull", (n: string, m: string, iso: IsolationInfo) => pagesPull(n, m, iso)],
+    ["pagesPull", (n: string, m: string, iso: IsolationInfo) => pagesPull(n, m, dataDir, iso)],
     [
       "pagesPullAndMerge",
       (n: string, m: string, iso: IsolationInfo) => pagesPullAndMerge(n, m, dataDir, "x", iso),
@@ -798,7 +800,7 @@ describe("pages collaborative repo", () => {
     const { isolation } = containingIsolation();
     // The commit after the filter fails on the decoy's missing objects; only who ran
     // the filter matters here.
-    await pagesPull(name, mindDir, isolation).catch(() => {});
+    await pagesPull(name, mindDir, dataDir, isolation).catch(() => {});
     assert.ok(existsSync(marker), "the filter never ran, so this proves nothing");
     for (const line of readFileSync(marker, "utf-8").trim().split("\n")) {
       assert.equal(line, `as=[${name}]`);
@@ -996,6 +998,306 @@ describe("pages collaborative repo", () => {
     // Root keeps the repo's own work: the squash merge is not the mind's to run.
     assert.equal(verbs.includes("merge"), false);
     await removePagesWorktree(name, mindDir, dataDir);
+  });
+
+  // #1330: a mind's git runs as a non-owner of the root-owned `.git`, so it can't take
+  // `.git/packed-refs.lock`, which git needs to delete any ref. A test can't change
+  // uid, so `.git` is made unwritable around each git the mind would run instead.
+  describe("rebase leftovers in a gitdir the mind can't delete refs from", () => {
+    const LEFTOVERS = ["CHERRY_PICK_HEAD", "REBASE_HEAD", "AUTO_MERGE"];
+
+    function asNonOwner(fn: () => void) {
+      const gitDir = resolve(pagesRepoDir(dataDir), ".git");
+      const mode = statSync(gitDir).mode;
+      chmodSync(gitDir, mode & ~0o222);
+      try {
+        fn();
+      } finally {
+        chmodSync(gitDir, mode);
+      }
+    }
+
+    /** `containingIsolation`, with every git the mind runs denied `.git` itself. */
+    function nonOwnerIsolation() {
+      const { isolation } = containingIsolation();
+      const gitDir = resolve(pagesRepoDir(dataDir), ".git");
+      isolation.wrapForIsolation = async (cmd, args) => [
+        "sh",
+        ["-c", 'chmod a-w "$0"; "$@"; r=$?; chmod u+w "$0"; exit $r', gitDir, cmd, ...args],
+      ];
+      return isolation;
+    }
+
+    /** The mind's own git in its worktree, as a non-owner of `.git`. */
+    const mindGit = (wt: string, ...args: string[]) => {
+      let out = "";
+      asNonOwner(() => {
+        out = execFileSync("git", ["-c", "user.name=m", "-c", "user.email=m@m", ...args], {
+          cwd: wt,
+          env: cleanGitEnv(),
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      });
+      return out;
+    };
+
+    const leftovers = (gitDir: string) => LEFTOVERS.filter((n) => existsSync(resolve(gitDir, n)));
+
+    /** A and B, B's branch holding a commit to replay onto a main A moved. */
+    async function diverged(tag: string, file: string, conflicting: boolean) {
+      await ensurePagesRepo(dataDir);
+      const [a, b] = [`test-pages-leftover-${tag}-a`, `test-pages-leftover-${tag}-b`];
+      const dirA = await createFakeMind(a);
+      const dirB = await createFakeMind(b);
+      await addPagesWorktree(a, dirA, dataDir);
+      await addPagesWorktree(b, dirB, dataDir);
+      const wtB = resolve(dirB, "home", "pages", "_system");
+      writeFileSync(resolve(dirA, "home", "pages", "_system", file), "version A\n");
+      assert.ok((await pagesPullAndMerge(a, dirA, dataDir, "A")).ok);
+      writeFileSync(resolve(wtB, conflicting ? file : `b-${file}`), "version B\n");
+      mindGit(wtB, "add", "-A");
+      // Dated apart from anything committed now, so a commit borrowing it stands out.
+      mindGit(wtB, "commit", "-qm", "B", "--date=2001-01-01T00:00:00Z");
+      const gitDir = worktreeGitDir(pagesRepoDir(dataDir), wtB)!;
+      return { b, dirB, wtB, gitDir };
+    }
+
+    it("a successful pull leaves no cherry-pick behind", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, gitDir } = await diverged("pull", "page.md", false);
+      const result = await pagesPull(b, dirB, dataDir, nonOwnerIsolation());
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.deepEqual(leftovers(gitDir), []);
+      assert.doesNotMatch(git(wtB, "status"), /cherry-pick/);
+    });
+
+    it("a conflict stops the rebase, and publishing again finishes it once resolved", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, gitDir } = await diverged("resolve", "page.md", true);
+      const isolation = nonOwnerIsolation();
+
+      const stopped = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.equal(stopped.ok, false);
+      assert.equal(stopped.conflicts, true);
+      assert.match(stopped.message ?? "", /stopped on a conflict in pages\/_system: page\.md/);
+      assert.match(stopped.message ?? "", /`git add` it, then publish/);
+      // What the mind will see matches what it was told.
+      const status = git(wtB, "status");
+      assert.match(status, /You are currently rebasing/);
+      assert.match(status, /both added:\s+page\.md|both modified:\s+page\.md/);
+      assert.match(readFileSync(resolve(wtB, "page.md"), "utf-8"), /<<<<<<< /);
+
+      // Publishing again before resolving refuses, and commits no conflict markers.
+      const unresolved = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.equal(unresolved.conflicts, true);
+      assert.match(unresolved.message ?? "", /page\.md/);
+      assert.equal(git(pagesRepoDir(dataDir), "show", "main:page.md"), "version A");
+      assert.ok(existsSync(resolve(gitDir, "rebase-merge")), "still the mind's to resolve");
+
+      // The documented recovery, as the mind: resolve, `git add`, publish again.
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      mindGit(wtB, "add", "page.md");
+      const published = await pagesPullAndMerge(b, dirB, dataDir, "B", isolation);
+      assert.ok(published.ok, JSON.stringify(published));
+      assert.equal(git(pagesRepoDir(dataDir), "show", "main:page.md"), "version A and B");
+      assert.deepEqual(leftovers(gitDir), []);
+      assert.match(git(wtB, "status"), new RegExp(`On branch ${b}\\b`));
+      assert.doesNotMatch(git(wtB, "status"), /cherry-pick|rebas/);
+    });
+
+    it("clears what a rebase the mind finished itself left behind", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, gitDir } = await diverged("self", "page.md", true);
+      const isolation = nonOwnerIsolation();
+      assert.equal((await pagesPull(b, dirB, dataDir, isolation)).conflicts, true);
+
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      mindGit(wtB, "add", "page.md");
+      // git prints the packed-refs.lock error here, finishes, and leaves its refs.
+      mindGit(wtB, "-c", "core.editor=true", "rebase", "--continue");
+      assert.ok(leftovers(gitDir).length > 0, "git could delete refs: the simulation is off");
+      assert.match(git(wtB, "status"), /cherry-pick/);
+
+      // A commit made over a stale CHERRY_PICK_HEAD takes that commit's author date.
+      writeFileSync(resolve(wtB, "next.md"), "next\n");
+      const result = await pagesPull(b, dirB, dataDir, isolation);
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.deepEqual(leftovers(gitDir), []);
+      assert.doesNotMatch(git(wtB, "status"), /cherry-pick/);
+      const [subject, year] = git(wtB, "log", "-1", "--format=%s|%ad", "--date=format:%Y").split(
+        "|",
+      );
+      assert.match(subject, /^wip: /);
+      assert.ok(Number(year) > 2001, `the commit borrowed a stale author date (${year})`);
+    });
+
+    /** B's publish stopped on a conflict in page.md, as the mind will find it. */
+    async function stoppedPublish(tag: string) {
+      const d = await diverged(tag, "page.md", true);
+      const isolation = nonOwnerIsolation();
+      const stopped = await pagesPullAndMerge(d.b, d.dirB, dataDir, "B", isolation);
+      assert.equal(stopped.conflicts, true, JSON.stringify(stopped));
+      const publish = () => pagesPullAndMerge(d.b, d.dirB, dataDir, "B", isolation);
+      return { ...d, isolation, publish };
+    }
+    const onMain = (file: string) => git(pagesRepoDir(dataDir), "show", `main:${file}`);
+
+    it("finishes a rebase whose resolution an older auto-commit already committed", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { wtB, gitDir, publish } = await stoppedPublish("autocommit");
+      // What auto-commit did before it learned to wait: `git add` and `git commit`.
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      mindGit(wtB, "add", "page.md");
+      mindGit(wtB, "commit", "-qm", "Update page.md");
+      // Nothing staged, so `--continue` must delete CHERRY_PICK_HEAD, which it can't.
+      assert.throws(() => mindGit(wtB, "-c", "core.editor=true", "rebase", "--continue"));
+
+      const result = await publish();
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.equal(onMain("page.md"), "version A and B");
+      assert.deepEqual(leftovers(gitDir), []);
+    });
+
+    for (const committed of [false, true]) {
+      it(`refuses conflict markers ${committed ? "committed" : "staged"} mid-rebase`, async (t) => {
+        t.mock.method(console, "warn", () => {});
+        const { wtB, gitDir, publish } = await stoppedPublish(`markers-${committed}`);
+        mindGit(wtB, "add", "page.md"); // markers and all
+        if (committed) mindGit(wtB, "commit", "-qm", "Update page.md");
+
+        const result = await publish();
+        assert.equal(result.ok, false);
+        assert.match(result.message ?? "", /still have conflict markers .*: page\.md/);
+        assert.equal(onMain("page.md"), "version A");
+        assert.ok(existsSync(resolve(gitDir, "rebase-merge")), "still the mind's to resolve");
+      });
+    }
+
+    it("publishes changes the mind made elsewhere while the rebase was stopped", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { wtB, publish } = await stoppedPublish("elsewhere");
+      writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+      mindGit(wtB, "add", "page.md");
+      // Left unstaged, as auto-commit now leaves them during a rebase: git's own
+      // `--continue` would refuse with "You must edit all merge conflicts".
+      writeFileSync(resolve(wtB, ".gitkeep"), "an edit to a tracked file\n");
+      // A page about conflicts may show a marker: it isn't one this rebase left.
+      writeFileSync(resolve(wtB, "new.md"), "a new page\n<<<<<<< like this\n");
+
+      const result = await publish();
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.equal(onMain("page.md"), "version A and B");
+      assert.equal(onMain(".gitkeep"), "an edit to a tracked file");
+      assert.equal(onMain("new.md"), "a new page\n<<<<<<< like this");
+    });
+
+    for (const op of ["cherry-pick", "merge"] as const) {
+      it(`leaves a ${op} the mind started alone until it is finished`, async (t) => {
+        t.mock.method(console, "warn", () => {});
+        const { b, dirB, wtB, gitDir } = await diverged(`own-${op}`, "page.md", true);
+        const isolation = nonOwnerIsolation();
+        const head = op === "merge" ? "MERGE_HEAD" : "CHERRY_PICK_HEAD";
+        assert.throws(() => mindGit(wtB, op, "main"));
+        assert.ok(existsSync(resolve(gitDir, head)));
+
+        const refused = await pagesPull(b, dirB, dataDir, isolation);
+        assert.equal(refused.ok, false);
+        assert.match(refused.message ?? "", new RegExp(`a ${op} you started`));
+        assert.ok(existsSync(resolve(gitDir, head)), `${head} kept`);
+        assert.match(git(wtB, "status", "--porcelain"), /^(UU|AA) page\.md/m);
+
+        // Resolved and staged, but not committed: still the mind's, still untouched.
+        writeFileSync(resolve(wtB, "page.md"), "version A and B\n");
+        mindGit(wtB, "add", "page.md");
+        const staged = await pagesPull(b, dirB, dataDir, isolation);
+        assert.match(staged.message ?? "", new RegExp(`a ${op} you started`));
+        assert.ok(existsSync(resolve(gitDir, head)), `${head} kept once staged`);
+
+        // Finished the ordinary way. The pull then gets as far as its own rebase.
+        mindGit(wtB, "-c", "core.editor=true", "commit", "--no-edit");
+        const pulled = await pagesPull(b, dirB, dataDir, isolation);
+        assert.doesNotMatch(pulled.message ?? "", /you started/);
+      });
+    }
+
+    it("clears the CHERRY_PICK_HEAD a finished cherry-pick of the mind's leaves", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, wtB, gitDir } = await diverged("own-finished", "page.md", false);
+      const isolation = nonOwnerIsolation();
+      assert.ok((await pagesPull(b, dirB, dataDir, isolation)).ok);
+      // Two edits to one line, then the first replayed on top: a conflict, all on B's
+      // own branch, so the pull after it has nothing of main's to rebase onto.
+      for (const v of ["one", "two"]) {
+        writeFileSync(resolve(wtB, "page.md"), `${v}\n`);
+        mindGit(wtB, "commit", "-qam", v);
+      }
+      assert.throws(() => mindGit(wtB, "cherry-pick", "HEAD~1"));
+      writeFileSync(resolve(wtB, "page.md"), "three\n");
+      mindGit(wtB, "add", "page.md");
+      mindGit(wtB, "-c", "core.editor=true", "commit", "--no-edit");
+      assert.match(git(wtB, "status"), /cherry-pick/, "git couldn't delete its ref");
+
+      const result = await pagesPull(b, dirB, dataDir, isolation);
+      assert.ok(result.ok, JSON.stringify(result));
+      assert.deepEqual(leftovers(gitDir), []);
+      assert.doesNotMatch(git(wtB, "status"), /cherry-pick/);
+    });
+
+    it("refuses a git am in progress instead of finishing it as a rebase", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const { b, dirB, gitDir } = await diverged("am", "page.md", false);
+      // What `git am` leaves while it waits: rebase-apply/, marked as an am session.
+      mkdirSync(resolve(gitDir, "rebase-apply"));
+      writeFileSync(resolve(gitDir, "rebase-apply", "applying"), "");
+      const result = await pagesPull(b, dirB, dataDir, nonOwnerIsolation());
+      assert.equal(result.ok, false);
+      assert.match(result.message ?? "", /`git am --continue`.*`git am --abort`/);
+      assert.ok(existsSync(resolve(gitDir, "rebase-apply", "applying")));
+      rmSync(resolve(gitDir, "rebase-apply"), { recursive: true });
+    });
+
+    it("refuses a worktree whose gitdir can't be vouched for, and commits nothing", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      await ensurePagesRepo(dataDir);
+      const name = "test-pages-leftover-unvouched";
+      const mindDir = await createFakeMind(name);
+      await addPagesWorktree(name, mindDir, dataDir);
+      const wt = resolve(mindDir, "home", "pages", "_system");
+      const real = readFileSync(resolve(wt, ".git"), "utf-8");
+      const decoy = resolve(voluteHome(), "test-pages-unvouched-decoy");
+      rmSync(decoy, { recursive: true, force: true });
+      execFileSync("git", ["init", "-q", decoy], { env: cleanGitEnv() });
+      writeFileSync(resolve(wt, ".git"), `gitdir: ${resolve(decoy, ".git")}\n`);
+      writeFileSync(resolve(wt, "page.md"), "draft\n");
+
+      const result = await pagesPull(name, mindDir, dataDir);
+      assert.equal(result.ok, false);
+      assert.match(result.message ?? "", /can't be checked/);
+      assert.throws(() => git(decoy, "rev-parse", "HEAD"), "nothing committed through it");
+      writeFileSync(resolve(wt, ".git"), real);
+    });
+
+    it("clears earlier leftovers at start, but never a stopped rebase's", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      await ensurePagesRepo(dataDir);
+      const name = "test-pages-leftover-start";
+      const mindDir = await createFakeMind(name);
+      await addPagesWorktree(name, mindDir, dataDir);
+      const wt = resolve(mindDir, "home", "pages", "_system");
+      const gitDir = worktreeGitDir(pagesRepoDir(dataDir), wt)!;
+      const head = git(wt, "rev-parse", "HEAD");
+      for (const n of LEFTOVERS) writeFileSync(resolve(gitDir, n), `${head}\n`);
+      const { isolation } = containingIsolation();
+
+      mkdirSync(resolve(gitDir, "rebase-merge"));
+      await addPagesWorktree(name, mindDir, dataDir, isolation);
+      assert.deepEqual(leftovers(gitDir), LEFTOVERS);
+
+      rmSync(resolve(gitDir, "rebase-merge"), { recursive: true });
+      await addPagesWorktree(name, mindDir, dataDir, isolation);
+      assert.deepEqual(leftovers(gitDir), []);
+    });
   });
 
   // #1326: worktrees provisioned while root still ran their git keep root-owned files

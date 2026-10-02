@@ -166,4 +166,39 @@ describe("auto-commit batching", () => {
       "draft.md must not be in the shared commit tree",
     );
   });
+
+  // #1330: committing mid-rebase stages half-resolved files and leaves a rebase the
+  // mind's git can't continue. The publish that finishes the rebase commits the rest.
+  it("does not commit in pages/_system while a rebase there is stopped", async () => {
+    const { trackFileChange, flushFileChanges } = await import(
+      "../templates/_base/src/lib/auto-commit.js"
+    );
+    const sharedDir = join(repoDir, "pages", "_system");
+    if (!existsSync(join(sharedDir, ".git"))) {
+      mkdirSync(sharedDir, { recursive: true });
+      git(["init", "-b", "main"], sharedDir);
+      git(["config", "user.email", "test@test.com"], sharedDir);
+      git(["config", "user.name", "Test"], sharedDir);
+    }
+    writeFileSync(join(sharedDir, "clash.md"), "base");
+    git(["add", "clash.md"], sharedDir);
+    git(["commit", "-m", "base"], sharedDir);
+    git(["checkout", "-q", "-b", "mine"], sharedDir);
+    writeFileSync(join(sharedDir, "clash.md"), "mine");
+    git(["commit", "-qam", "mine"], sharedDir);
+    git(["checkout", "-q", "main"], sharedDir);
+    writeFileSync(join(sharedDir, "clash.md"), "theirs");
+    git(["commit", "-qam", "theirs"], sharedDir);
+    git(["checkout", "-q", "mine"], sharedDir);
+    assert.throws(() => git(["rebase", "main"], sharedDir));
+    const head = git(["rev-parse", "HEAD"], sharedDir);
+
+    writeFileSync(join(sharedDir, "clash.md"), "half-resolved\n<<<<<<< still here\n");
+    trackFileChange("pages/_system/clash.md", repoDir);
+    await flushFileChanges(repoDir);
+
+    assert.equal(git(["rev-parse", "HEAD"], sharedDir), head, "nothing committed");
+    assert.match(git(["status", "--porcelain"], sharedDir), /^UU clash\.md/m);
+    git(["rebase", "--abort"], sharedDir);
+  });
 });

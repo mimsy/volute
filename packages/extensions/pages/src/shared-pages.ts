@@ -22,12 +22,16 @@ import {
   renameSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { chownTree } from "@volute/daemon/lib/util/chown-tree.js";
+import logger from "@volute/daemon/lib/util/logger.js";
 import { buildMindBaseEnv } from "@volute/daemon/lib/util/mind-env.js";
 import { isMultiplyLinkedFile } from "./ownership.js";
+
+const log = logger.child("pages");
 
 /** Isolation info needed by shared pages operations. */
 export type IsolationInfo = {
@@ -217,8 +221,11 @@ async function mindWorktree(
   };
 }
 
+/** Why nothing was published or pulled, in words for the mind. */
+type Refusal = { ok: false; conflicts?: boolean; message: string };
+
 /** What a mind is told when its worktree can't be contained. */
-function refusedWorktree(mindName: string, err: unknown): { ok: false; message: string } {
+function refusedWorktree(mindName: string, err: unknown): Refusal {
   console.warn(`[pages] refused ${mindName}'s worktree: ${(err as Error).message}`);
   if ((err as NodeJS.ErrnoException).code === "ENOENT") {
     // Never provisioned, or removed (#795).
@@ -484,6 +491,125 @@ async function reclaimWorktreeGitDir(
   }
 }
 
+/**
+ * Delete refs in a mind's worktree gitdir on the mind's behalf (#1330). Git takes the
+ * common `.git/packed-refs.lock` to delete any ref, even one that lives only in a
+ * worktree's gitdir, and `.git` is root's (`hardenPagesRepo`), so the mind's own git
+ * never can. Every deletion here goes through this one function. The gitdir is one
+ * `worktreeGitDir` vouched for, a direct child of root's `.git/worktrees/` the mind
+ * can't swap, and unlinking a name never follows it. Returns what it removed.
+ */
+function dropGitDirRefs(gitDir: string, names: string[]): string[] {
+  const removed: string[] = [];
+  for (const name of names) {
+    try {
+      unlinkSync(resolve(gitDir, name));
+      removed.push(name);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        log.warn("can't remove a ref from a mind's gitdir", {
+          gitDir,
+          name,
+          ...logger.errorData(err),
+        });
+      }
+    }
+  }
+  return removed;
+}
+
+/**
+ * What a finished rebase, cherry-pick or revert leaves in the gitdir when the mind's
+ * git can't delete it. `git status` then reports a cherry-pick that `--skip` and
+ * `--abort` can't clear either, for the same reason.
+ */
+const FINISHED_OP_REFS = ["CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD", "AUTO_MERGE"];
+
+/** Whether `name` exists in the gitdir. Nothing is followed. */
+function inGitDir(gitDir: string, name: string): boolean {
+  try {
+    lstatSync(resolve(gitDir, name));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function rebaseInProgress(gitDir: string): boolean {
+  return inGitDir(gitDir, "rebase-merge") || inGitDir(gitDir, "rebase-apply");
+}
+
+/** The files the index holds unmerged, as the mind's git sees them. */
+async function unmergedFiles(git: GitOpts, isolation?: IsolationInfo): Promise<string[]> {
+  const out = await gitExec(["diff", "--name-only", "-z", "--diff-filter=U"], git, isolation);
+  return [...new Set(out.split("\0").filter(Boolean))];
+}
+
+type WorktreeOp = "rebase" | "am" | "merge" | "cherry-pick" | "revert";
+
+/** Whether the index differs from HEAD: something staged and not yet committed. */
+async function hasStagedChanges(git: GitOpts, isolation?: IsolationInfo): Promise<boolean> {
+  try {
+    await gitExec(["diff", "--cached", "--quiet", "HEAD"], git, isolation);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Which git operation is in progress in the mind's worktree, if any, and what its
+ * index holds unmerged. A finished operation's refs are deleted on the way, since the
+ * mind can't. One the mind is still in the middle of is never touched: a stopped
+ * rebase or `git am` (which shares `rebase-apply/`), a multi-commit cherry-pick or
+ * revert (`sequencer/`), a merge, or a cherry-pick or revert not yet committed.
+ */
+async function inspectWorktree(
+  gitDir: string,
+  git: GitOpts,
+  isolation?: IsolationInfo,
+): Promise<{ op: WorktreeOp | null; unmerged: string[]; dropped: string[] }> {
+  const unmerged = await unmergedFiles(git, isolation);
+  const busy = (op: WorktreeOp) => ({ op, unmerged, dropped: [] });
+  if (inGitDir(gitDir, "rebase-apply/applying")) return busy("am");
+  if (rebaseInProgress(gitDir)) return busy("rebase");
+  const picking = inGitDir(gitDir, "REVERT_HEAD") ? "revert" : "cherry-pick";
+  if (inGitDir(gitDir, "sequencer")) return busy(picking);
+  // Git deletes MERGE_HEAD as a file, not a ref, so the mind's own git clears it.
+  if (inGitDir(gitDir, "MERGE_HEAD")) return busy("merge");
+  const pickHead = inGitDir(gitDir, "CHERRY_PICK_HEAD") || inGitDir(gitDir, "REVERT_HEAD");
+  if (pickHead && (unmerged.length > 0 || (await hasStagedChanges(git, isolation)))) {
+    return busy(picking);
+  }
+  return { op: null, unmerged, dropped: dropGitDirRefs(gitDir, FINISHED_OP_REFS) };
+}
+
+/**
+ * Clear what finished operations left in a mind's gitdir, at every start, for the
+ * ones no pull or publish has come along to clear yet.
+ */
+async function tidyWorktreeGitDir(
+  dir: string,
+  mindName: string,
+  mindDir: string,
+  isolation: IsolationInfo,
+): Promise<void> {
+  try {
+    const git = await mindWorktree(mindName, mindDir, isolation);
+    const gitDir = worktreeGitDir(dir, git.cwd);
+    if (!gitDir) return;
+    const { dropped } = await inspectWorktree(gitDir, git, isolation);
+    if (dropped.length > 0) {
+      log.info("cleared refs a finished git operation left", {
+        mind: mindName,
+        refs: dropped.join(", "),
+      });
+    }
+  } catch (err) {
+    log.warn("failed to tidy a mind's gitdir", { mind: mindName, ...logger.errorData(err) });
+  }
+}
+
 /** Add a git worktree at <mindDir>/home/pages/_system/ on a per-mind branch. */
 export async function addPagesWorktree(
   mindName: string,
@@ -530,8 +656,10 @@ export async function addPagesWorktree(
       return;
     }
     if (!isDanglingWorktree(wt)) {
-      if (isolation?.isIsolationEnabled())
+      if (isolation?.isIsolationEnabled()) {
         await reclaimWorktreeGitDir(dir, wt, mindName, isolation);
+        await tidyWorktreeGitDir(dir, mindName, mindDir, isolation);
+      }
       return;
     }
     // The repo was re-initialized under it: relink it, keeping the mind's files.
@@ -689,7 +817,7 @@ async function findMultiplyLinkedFiles(git: GitOpts, isolation?: IsolationInfo):
 }
 
 /**
- * Commit whatever the mind has left uncommitted in its worktree, or refuse.
+ * Stage whatever the mind has left uncommitted in its worktree, or refuse.
  *
  * `git add -A` stores a file by its *content*. It runs as the mind under user
  * isolation now (#1285), but it ran as root when #1095 was found, and it still runs
@@ -702,11 +830,11 @@ async function findMultiplyLinkedFiles(git: GitOpts, isolation?: IsolationInfo):
  * Like the containment checks in `ownership.ts`, this closes the durable hole, not
  * a link swapped in between the sweep and the `add`.
  */
-async function commitPendingChanges(
+async function stagePendingChanges(
   mindName: string,
   git: GitOpts,
   isolation?: IsolationInfo,
-): Promise<{ ok: false; message: string } | null> {
+): Promise<Refusal | boolean> {
   const linked = await findMultiplyLinkedFiles(git, isolation);
   if (linked.length > 0) {
     console.warn(
@@ -724,14 +852,247 @@ async function commitPendingChanges(
   }
 
   const status = (await gitExec(["status", "--porcelain"], git, isolation)).trim();
-  if (status) {
-    await gitExec(["add", "-A"], git, isolation);
+  if (!status) return false;
+  await gitExec(["add", "-A"], git, isolation);
+  return true;
+}
+
+/** `stagePendingChanges`, then commit what it staged. */
+async function commitPendingChanges(
+  mindName: string,
+  git: GitOpts,
+  isolation?: IsolationInfo,
+): Promise<Refusal | null> {
+  const staged = await stagePendingChanges(mindName, git, isolation);
+  if (typeof staged !== "boolean") return staged;
+  if (staged) {
     await gitExec(
       ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
       git,
       isolation,
     );
   }
+  return null;
+}
+
+/**
+ * What a mind is told when its rebase onto main stopped on a conflict. The rebase is
+ * left stopped, so `git status` in pages/_system shows the same thing (#1330).
+ */
+function stoppedOnConflict(files: string[]): Refusal {
+  return {
+    ok: false,
+    conflicts: true,
+    message:
+      "Nothing was published. Your pages are being rebased onto main, and the rebase " +
+      `stopped on a conflict in pages/_system: ${files.join(", ")}. In pages/_system, ` +
+      "edit each of those files to what it should say (removing the <<<<<<< ======= >>>>>>> " +
+      "markers) and `git add` it, then publish again: publishing commits the rest of your " +
+      "changes and finishes the rebase. Don't run `git rebase --continue` yourself: git " +
+      "can't delete its own bookkeeping refs in this repo, so it prints errors about " +
+      "packed-refs.lock, and can't finish at all once your resolution is committed. To " +
+      "set the rebase aside instead, `git rebase --abort` puts your branch back as it was " +
+      "(with the same packed-refs.lock errors), and the next publish meets this conflict again.",
+  };
+}
+
+const CONFLICT_MARKER = "^<{7}( |$)";
+
+/** `git grep -l` for a conflict marker in `paths` of `rev`, or of the index. */
+async function grepMarkers(
+  rev: string | null,
+  paths: string[],
+  git: GitOpts,
+  isolation?: IsolationInfo,
+): Promise<string[]> {
+  const found: string[] = [];
+  for (let i = 0; i < paths.length; i += 200) {
+    const chunk = paths.slice(i, i + 200);
+    const where = rev ? ["-E", CONFLICT_MARKER, rev] : ["--cached", "-E", CONFLICT_MARKER];
+    const args = ["--literal-pathspecs", "grep", "-l", "-z", ...where];
+    try {
+      const out = await gitExec([...args, "--", ...chunk], git, isolation);
+      found.push(...out.split("\0").filter(Boolean));
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== 1) throw err; // 1: no match
+    }
+  }
+  return found;
+}
+
+/**
+ * Files the stopped pick conflicted in that still hold a `<<<<<<<` line, staged or
+ * already committed. Only the files the commit being replayed (REBASE_HEAD) changes
+ * can have conflicted, and a marker line that commit already had is the mind's own
+ * content, so neither blocks.
+ */
+async function filesWithMarkers(git: GitOpts, isolation?: IsolationInfo): Promise<string[]> {
+  let picked: string[];
+  try {
+    const args = ["diff-tree", "-r", "--root", "--no-commit-id", "--name-only", "-z"];
+    picked = (await gitExec([...args, "REBASE_HEAD"], git, isolation)).split("\0").filter(Boolean);
+  } catch {
+    return []; // no REBASE_HEAD: not stopped on a pick
+  }
+  const marked = await grepMarkers(null, picked, git, isolation);
+  if (marked.length === 0) return [];
+  const own = new Set(
+    (await grepMarkers("REBASE_HEAD", marked, git, isolation)).map((p) =>
+      p.replace(/^REBASE_HEAD:/, ""),
+    ),
+  );
+  return marked.filter((p) => !own.has(p));
+}
+
+/** What git printed, without the packed-refs.lock lines it prints for every ref it can't delete. */
+function gitSaid(err: unknown): string {
+  const e = err as Error & { stdout?: string; stderr?: string };
+  const lines = `${e.stdout ?? ""}\n${e.stderr ?? ""}`.split("\n");
+  return lines.filter((l) => l.trim() && !l.includes("packed-refs.lock")).join("\n") || e.message;
+}
+
+/**
+ * Finish a rebase stopped in the mind's worktree, once nothing is left unmerged. The
+ * rest of the mind's changes go into the commit being replayed, never a conflict
+ * marker. CHERRY_PICK_HEAD goes first: with nothing new staged (the mind's resolution
+ * already committed), `rebase --continue` must delete it, and fails for good when it
+ * can't.
+ */
+async function finishStoppedRebase(
+  mindName: string,
+  gitDir: string,
+  git: GitOpts,
+  unmerged: string[],
+  isolation?: IsolationInfo,
+): Promise<Refusal | null> {
+  if (unmerged.length > 0) return stoppedOnConflict(unmerged);
+  const staged = await stagePendingChanges(mindName, git, isolation);
+  if (typeof staged !== "boolean") return staged;
+  const marked = await filesWithMarkers(git, isolation);
+  if (marked.length > 0) {
+    return {
+      ok: false,
+      conflicts: true,
+      message:
+        "Nothing was published. Your pages are being rebased onto main, and these files in " +
+        `pages/_system still have conflict markers (<<<<<<<) in them: ${marked.join(", ")}. ` +
+        "Edit each to what it should say, then publish again. Or, to set the rebase aside, " +
+        "`git rebase --abort` puts your branch back as it was (git prints errors about " +
+        "packed-refs.lock as it does), and the next publish meets the same conflict.",
+    };
+  }
+  dropGitDirRefs(gitDir, ["CHERRY_PICK_HEAD"]);
+  try {
+    await gitExec(["-c", "core.editor=true", "rebase", "--continue"], git, isolation);
+  } catch (err) {
+    // A later commit of the mind's can stop on a conflict of its own.
+    const next = rebaseInProgress(gitDir) ? await unmergedFiles(git, isolation) : [];
+    if (next.length > 0) return stoppedOnConflict(next);
+    return {
+      ok: false,
+      message:
+        "Nothing was published. Your pages are being rebased onto main, and the rebase " +
+        `couldn't be finished. Git said:\n${gitSaid(err)}\n` +
+        "`git status` in pages/_system shows where it stands. Publish again once that's sorted.",
+    };
+  }
+  dropGitDirRefs(gitDir, FINISHED_OP_REFS);
+  return null;
+}
+
+/** What a mind is told when a git operation it started is still in progress. */
+function operationInProgress(op: Exclude<WorktreeOp, "rebase">): Refusal {
+  if (op === "am") {
+    return {
+      ok: false,
+      message:
+        "Nothing was published: a `git am` you started in pages/_system is still in " +
+        "progress, and publishing would commit it half-done. Finish it with " +
+        "`git am --continue`, or drop it with `git am --abort`, then publish again.",
+    };
+  }
+  const drop =
+    op === "merge"
+      ? "`git merge --abort`"
+      : `\`git ${op} --quit\` then \`git reset --hard HEAD\`, which also discards your ` +
+        "uncommitted changes there. Git prints errors about packed-refs.lock along the way: " +
+        "it can't delete its bookkeeping refs in this repo, and the next publish clears them";
+  return {
+    ok: false,
+    message:
+      `Nothing was published: a ${op} you started in pages/_system is still in progress, and ` +
+      "publishing would commit it half-done. Finish it (resolve the conflicts, `git add`, " +
+      `then \`git commit\`) or drop it (${drop}). Then publish again.`,
+  };
+}
+
+/** What a mind is told when its worktree's gitdir can't be vouched for. */
+const UNVERIFIED_WORKTREE: Refusal = {
+  ok: false,
+  message:
+    "Nothing was done: pages/_system's .git doesn't lead to its place in the shared pages " +
+    "repo, so its state can't be checked. Move pages/_system aside and restart to provision " +
+    "a fresh worktree (your files stay in the copy you moved), then try again.",
+};
+
+/**
+ * Bring the mind's worktree to where a commit can start: a rebase it left stopped is
+ * finished, or the mind is told what's still in the way. Returns the vouched gitdir.
+ */
+async function settleWorktree(
+  mindName: string,
+  dir: string,
+  git: GitOpts,
+  isolation?: IsolationInfo,
+): Promise<{ gitDir: string } | { refused: Refusal }> {
+  const gitDir = worktreeGitDir(dir, git.cwd);
+  if (!gitDir) return { refused: UNVERIFIED_WORKTREE };
+  const { op, unmerged } = await inspectWorktree(gitDir, git, isolation);
+  if (op === "rebase") {
+    const refused = await finishStoppedRebase(mindName, gitDir, git, unmerged, isolation);
+    if (refused) return { refused };
+  } else if (op) {
+    return { refused: operationInProgress(op) };
+  }
+  return { gitDir };
+}
+
+/**
+ * Commit what the mind left, then rebase its branch onto main, as the mind. A conflict
+ * leaves the rebase stopped for the mind to resolve with git's ordinary workflow: an
+ * aborted one would leave nothing to resolve (#1330).
+ */
+async function pullIntoWorktree(
+  mindName: string,
+  dir: string,
+  git: GitOpts,
+  isolation?: IsolationInfo,
+): Promise<Refusal | null> {
+  const settled = await settleWorktree(mindName, dir, git, isolation);
+  if ("refused" in settled) return settled.refused;
+  const { gitDir } = settled;
+  const uncommittable = await commitPendingChanges(mindName, git, isolation);
+  if (uncommittable) return uncommittable;
+
+  try {
+    await gitExec(["rebase", "main"], git, isolation);
+  } catch (err) {
+    if (rebaseInProgress(gitDir)) {
+      const files = await unmergedFiles(git, isolation);
+      if (files.length > 0) return stoppedOnConflict(files);
+      try {
+        await gitExec(["rebase", "--abort"], git, isolation);
+      } catch (abortErr) {
+        log.error("rebase abort failed", { mind: mindName, ...logger.errorData(abortErr) });
+      }
+    }
+    if (!rebaseInProgress(gitDir)) dropGitDirRefs(gitDir, FINISHED_OP_REFS);
+    log.error("pull rebase failed", { mind: mindName, ...logger.errorData(err) });
+    return { ok: false, message: `Pull failed. Git said:\n${gitSaid(err)}` };
+  }
+
+  // The rebase finished, so what it couldn't delete is only bookkeeping now.
+  dropGitDirRefs(gitDir, FINISHED_OP_REFS);
   return null;
 }
 
@@ -754,6 +1115,8 @@ export async function pagesMerge(
       return refusedWorktree(mindName, err);
     }
 
+    const settled = await settleWorktree(mindName, dir, wt, isolation);
+    if ("refused" in settled) return settled.refused;
     const refused = await commitPendingChanges(mindName, wt, isolation);
     if (refused) return refused;
 
@@ -824,6 +1187,7 @@ export async function pagesMerge(
 export async function pagesPull(
   mindName: string,
   mindDir: string,
+  dataDir: string,
   isolation?: IsolationInfo,
 ): Promise<{ ok: boolean; conflicts?: boolean; message?: string }> {
   return withPagesLock(async () => {
@@ -834,37 +1198,8 @@ export async function pagesPull(
       return refusedWorktree(mindName, err);
     }
 
-    const refused = await commitPendingChanges(mindName, wt, isolation);
+    const refused = await pullIntoWorktree(mindName, pagesRepoDir(dataDir), wt, isolation);
     if (refused) return refused;
-
-    // Rebase onto main
-    try {
-      await gitExec(["rebase", "main"], wt, isolation);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      const isConflict =
-        errMsg.includes("CONFLICT") ||
-        errMsg.includes("could not apply") ||
-        errMsg.includes("merge conflict");
-
-      try {
-        await gitExec(["rebase", "--abort"], wt, isolation);
-      } catch (abortErr: unknown) {
-        console.error("[pages] rebase abort failed", abortErr);
-      }
-
-      if (isConflict) {
-        return {
-          ok: false,
-          conflicts: true,
-          message:
-            "Pull conflicts detected — your changes conflict with main. Reconcile the conflicting files, commit, and pull again.",
-        };
-      }
-
-      console.error("[pages] pull rebase failed", err);
-      return { ok: false, message: `Pull failed: ${errMsg}` };
-    }
 
     if (isolation?.isIsolationEnabled()) {
       try {
@@ -906,36 +1241,9 @@ export async function pagesPullAndMerge(
       return refusedWorktree(mindName, err);
     }
 
-    // Commit pending changes once (shared by pull and merge)
-    const refused = await commitPendingChanges(mindName, wt, isolation);
+    // Commit pending changes once (shared by pull and merge), then rebase onto main.
+    const refused = await pullIntoWorktree(mindName, dir, wt, isolation);
     if (refused) return refused;
-
-    // Rebase onto main (pull)
-    try {
-      await gitExec(["rebase", "main"], wt, isolation);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      const isConflict =
-        errMsg.includes("CONFLICT") ||
-        errMsg.includes("could not apply") ||
-        errMsg.includes("merge conflict");
-
-      try {
-        await gitExec(["rebase", "--abort"], wt, isolation);
-      } catch (abortErr: unknown) {
-        console.error("[pages] rebase abort failed", abortErr);
-      }
-
-      if (isConflict) {
-        return {
-          ok: false,
-          conflicts: true,
-          message:
-            "Pull conflicts detected — your changes conflict with main. Reconcile the conflicting files, commit, and try again.",
-        };
-      }
-      return { ok: false, message: `Pull failed: ${errMsg}` };
-    }
 
     // Check if there's anything to merge
     const diff = (
