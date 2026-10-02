@@ -55,7 +55,8 @@ const BUILTIN_DEFS: Record<string, BridgeDef> = {
 };
 
 export function getBridgeDef(type: string, bridgeDir?: string): BridgeDef | null {
-  if (BUILTIN_DEFS[type]) return BUILTIN_DEFS[type];
+  // Own keys only: `constructor` or `__proto__` must not read as a platform.
+  if (Object.hasOwn(BUILTIN_DEFS, type)) return BUILTIN_DEFS[type];
 
   if (bridgeDir) {
     const jsonPath = resolve(bridgeDir, "bridge.json");

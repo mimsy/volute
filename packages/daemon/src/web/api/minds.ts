@@ -18,7 +18,7 @@ import {
   recordNotice,
 } from "../../lib/chat/system-events.js";
 import { getSpiritName } from "../../lib/config/setup.js";
-import { getUpgradeBlocked } from "../../lib/daemon/auto-upgrade.js";
+import { upgradeBlockedReason } from "../../lib/daemon/auto-upgrade.js";
 import {
   forgetCredentialDegraded,
   getCredentialDegraded,
@@ -468,12 +468,13 @@ const app = new Hono<AuthEnv>()
         const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
         const lastActiveAt = lastActiveMap.get(entry.name) ?? null;
         if (!privileged) return toPublicMind(entry, mindStatus, { hasPages, lastActiveAt });
+        const templateStale = isTemplateStale(entry);
         return {
           ...entry,
           ...mindStatus,
           hasPages,
-          templateStale: isTemplateStale(entry),
-          upgradeBlocked: getUpgradeBlocked(entry.name)?.reason,
+          templateStale,
+          upgradeBlocked: upgradeBlockedReason(entry.name, templateStale),
           credentialDegraded: credentialDegradedField(entry.name),
           lastActiveAt,
         };
@@ -520,13 +521,14 @@ const app = new Hono<AuthEnv>()
     // so `mind status` can show why a mind is silent (#573). Admin/system only.
     const notice = await latestEvent(name);
 
+    const templateStale = isTemplateStale(entry);
     return c.json({
       ...entry,
       ...mindStatus,
       variants: variantStatuses,
       hasPages,
-      templateStale: isTemplateStale(entry),
-      upgradeBlocked: getUpgradeBlocked(name)?.reason,
+      templateStale,
+      upgradeBlocked: upgradeBlockedReason(name, templateStale),
       credentialDegraded: credentialDegradedField(name),
       ...(notice && {
         lastNotice: {

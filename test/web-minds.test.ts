@@ -629,6 +629,87 @@ describe("web minds routes", () => {
     }
   });
 
+  it("GET /:name — reports upgradeBlocked only while the template is still stale (#974)", async () => {
+    const { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const { addMind, findMind, mindDir, removeMind } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { composeTemplate, copyTemplateToDir, findTemplatesRoot } = await import(
+      "../packages/daemon/src/lib/template/template.js"
+    );
+    const { initMindManager, tryGetMindManager } = await import(
+      "../packages/daemon/src/lib/daemon/mind-manager.js"
+    );
+    const { autoUpgradeOne, resetAutoUpgradeState } = await import(
+      "../packages/daemon/src/lib/daemon/auto-upgrade.js"
+    );
+    if (!tryGetMindManager()) initMindManager();
+
+    const name = `web-blocked-${Date.now()}`;
+    const dir = resolve(mindDir(name));
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    const { composedDir, manifest } = composeTemplate(findTemplatesRoot(), "claude");
+    try {
+      copyTemplateToDir(composedDir, dir, name, manifest);
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
+    await addMind(name, 4198, undefined, "claude");
+    const entry = (await findMind(name))!;
+
+    // A failed auto-upgrade leaves a blocked record behind.
+    await autoUpgradeOne(entry, false, {
+      isUpOrRecovering: () => false,
+      runUpgrade: async () => {
+        throw new Error("hook refused");
+      },
+      abortUpgrade: async () => {},
+      alertHost: async () => {},
+      delay: async () => {},
+    });
+
+    const agent = resolve(dir, "src", "agent.ts");
+    const pristine = readFileSync(agent, "utf-8");
+    try {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const get = async () => {
+        const one = (await (
+          await app.request(`/api/v1/minds/${name}`, {
+            headers: { Cookie: `volute_session=${cookie}` },
+          })
+        ).json()) as { upgradeBlocked?: string };
+        const all = (await (
+          await app.request("/api/v1/minds", { headers: { Cookie: `volute_session=${cookie}` } })
+        ).json()) as Array<{ name: string; upgradeBlocked?: string }>;
+        return [one.upgradeBlocked, all.find((m) => m.name === name)?.upgradeBlocked];
+      };
+
+      // Staleness is cached on the newest mtime, so give every write its own distinct
+      // one — a filesystem with coarse mtimes could otherwise hide the change.
+      let tick = Math.floor(Date.now() / 1000) + 10;
+      const write = (content: string) => {
+        writeFileSync(agent, content);
+        tick += 10;
+        utimesSync(agent, tick, tick);
+      };
+
+      // Stale: the badge shows.
+      write(`${pristine}\n// drift\n`);
+      assert.deepEqual(await get(), ["hook refused", "hook refused"]);
+
+      // Current again (upgraded some other way): the badge is gone with it.
+      write(pristine);
+      assert.deepEqual(await get(), [undefined, undefined]);
+    } finally {
+      resetAutoUpgradeState();
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("GET /:name — a mind mid-wake reports waking, but only while its process is up (#920)", async () => {
     const { mkdirSync, rmSync } = await import("node:fs");
     const { createServer } = await import("node:http");

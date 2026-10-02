@@ -198,19 +198,21 @@ const app = new Hono<AuthEnv>()
       );
     }
 
-    const existing = getBridgeConfig(platform);
-    setBridgeConfig(platform, {
-      enabled: true,
-      defaultMind: body.defaultMind,
-      channelMappings: existing?.channelMappings ?? {},
-    });
-
     try {
       const daemonPort = parseInt(process.env.VOLUTE_DAEMON_PORT ?? "", 10);
       if (Number.isNaN(daemonPort)) {
         return c.json({ error: "VOLUTE_DAEMON_PORT not available" }, 500);
       }
-      await manager.startBridge(platform, daemonPort);
+      // Written in the bridge's own queue slot, so a concurrent disable can't leave the
+      // config and the process disagreeing.
+      await manager.startBridge(platform, daemonPort, () => {
+        const existing = getBridgeConfig(platform);
+        setBridgeConfig(platform, {
+          enabled: true,
+          defaultMind: body.defaultMind,
+          channelMappings: existing?.channelMappings ?? {},
+        });
+      });
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start bridge" }, 500);
@@ -220,15 +222,21 @@ const app = new Hono<AuthEnv>()
   // Disable bridge — admin only
   .delete("/:platform", requireAdmin, async (c) => {
     const platform = c.req.param("platform");
+    // The platform names a PID file the stop reads, signals and removes — as root on a
+    // system install — so only a known one gets that far.
+    if (!getBridgeDef(platform))
+      return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
     const manager = getBridgeManager();
-    await manager.stopBridge(platform);
-    removeBridgeConfig(platform);
+    await manager.stopBridge(platform, () => removeBridgeConfig(platform));
     return c.json({ ok: true });
   })
 
   // Set channel mapping — admin only
   .put("/:platform/mappings", requireAdmin, zValidator("json", mappingSchema), (c) => {
     const platform = c.req.param("platform");
+    // The platform keys bridges.json: `__proto__` would write through to the prototype.
+    if (!getBridgeDef(platform))
+      return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
     const body = c.req.valid("json");
     try {
       setChannelMapping(platform, body.externalChannel, body.voluteChannel);
@@ -241,6 +249,8 @@ const app = new Hono<AuthEnv>()
   // Remove channel mapping — admin only
   .delete("/:platform/mappings/:channel", requireAdmin, (c) => {
     const platform = c.req.param("platform");
+    if (!getBridgeDef(platform))
+      return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
     const channel = decodeURIComponent(c.req.param("channel"));
     removeChannelMapping(platform, channel);
     return c.json({ ok: true });
@@ -249,6 +259,8 @@ const app = new Hono<AuthEnv>()
   // List mappings
   .get("/:platform/mappings", (c) => {
     const platform = c.req.param("platform");
+    if (!getBridgeDef(platform))
+      return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
     const config = getBridgeConfig(platform);
     if (!config) return c.json({ error: "Bridge not configured" }, 404);
     return c.json(config.channelMappings);

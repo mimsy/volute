@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -200,5 +209,543 @@ describe("auto-commit batching", () => {
     assert.equal(git(["rev-parse", "HEAD"], sharedDir), head, "nothing committed");
     assert.match(git(["status", "--porcelain"], sharedDir), /^UU clash\.md/m);
     git(["rebase", "--abort"], sharedDir);
+    await flushFileChanges(repoDir); // the held file, now with nothing left to commit
+  });
+});
+
+describe("auto-commit retries (#1206)", () => {
+  let scratch: string;
+  let repoDir: string;
+  let binDir: string;
+  let gitLog: string;
+  let refuse: string;
+  let refuseOnce: string;
+  let hang: string;
+  let hookStarted: string;
+  let hookRuns: string;
+  let killOn: string;
+  let killAlways: string;
+
+  const mod = () => import("../templates/_base/src/lib/auto-commit.js");
+  const commits = (cwd = repoDir) => Number(git(["rev-list", "--count", "HEAD"], cwd).trim());
+  const runs = () =>
+    existsSync(hookRuns) ? readFileSync(hookRuns, "utf-8").split("\n").length - 1 : 0;
+
+  /** A pre-commit hook that counts runs, refuses while `refuse` exists, and hangs once on `hang`. */
+  function installHook(repo: string): void {
+    const hook = join(repo, ".git", "hooks", "pre-commit");
+    writeFileSync(
+      hook,
+      `#!/bin/sh
+echo run >> "${hookRuns}"
+if [ -f "${hang}" ]; then rm "${hang}"; sleep 0.5 & touch "${hookStarted}"; wait; fi
+if [ -f "${refuse}" ]; then exit 1; fi
+if [ -f "${refuseOnce}" ]; then rm "${refuseOnce}"; exit 1; fi
+exit 0
+`,
+    );
+    chmodSync(hook, 0o755);
+  }
+
+  function initRepo(repo: string): void {
+    mkdirSync(repo, { recursive: true });
+    git(["init", "-b", "main"], repo);
+    git(["config", "user.email", "test@test.com"], repo);
+    git(["config", "user.name", "Test"], repo);
+  }
+
+  before(() => {
+    scratch = mkdtempSync(join(tmpdir(), "volute-autocommit-retry-"));
+    repoDir = join(scratch, "repo");
+    binDir = join(scratch, "bin");
+    gitLog = join(scratch, "git-calls.txt");
+    refuse = join(scratch, "refuse");
+    refuseOnce = join(scratch, "refuse-once");
+    hang = join(scratch, "hang");
+    hookStarted = join(scratch, "hook-started");
+    hookRuns = join(scratch, "hook-runs");
+    killOn = join(scratch, "kill-on");
+    killAlways = join(scratch, "kill-always");
+    initRepo(repoDir);
+    writeFileSync(join(repoDir, "SOUL.md"), "soul");
+    writeFileSync(join(repoDir, "MEMORY.md"), "memory");
+    writeFileSync(join(repoDir, "ab.md"), "ab");
+    writeFileSync(join(repoDir, ".gitignore"), "scratch.txt\n");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "initial"], repoDir);
+    installHook(repoDir);
+
+    // A `git` on PATH that records each call, so tests can see what was run.
+    const realGit = execFileSync("which", ["git"], { encoding: "utf-8" }).trim();
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      join(binDir, "git"),
+      // …and kills itself, as a stop's SIGTERM would, on the one call named in `killOn`.
+      `#!/bin/sh\necho "$*" >> "${gitLog}"\nif [ -f "${killOn}" ] && [ "$*" = "$(cat "${killOn}")" ]; then rm "${killOn}"; kill -TERM $$; fi\nif [ -f "${killAlways}" ] && [ "$*" = "$(cat "${killAlways}")" ]; then kill -TERM $$; fi\nexec "${realGit}" "$@"\n`,
+    );
+    chmodSync(join(binDir, "git"), 0o755);
+  });
+
+  after(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  /** Run `fn` with the recording git on PATH; returns every git call it made. */
+  async function recordingCalls(fn: () => Promise<void>): Promise<string[]> {
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${priorPath}`;
+    writeFileSync(gitLog, "");
+    try {
+      await fn();
+    } finally {
+      process.env.PATH = priorPath;
+    }
+    return readFileSync(gitLog, "utf-8").split("\n").filter(Boolean);
+  }
+
+  /** Run `fn` with the recording git on PATH; returns the `git add` calls it made. */
+  async function recordingAdds(fn: () => Promise<void>): Promise<string[]> {
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${priorPath}`;
+    writeFileSync(gitLog, "");
+    try {
+      await fn();
+    } finally {
+      process.env.PATH = priorPath;
+    }
+    return readFileSync(gitLog, "utf-8")
+      .split("\n")
+      .filter((l) => / add /.test(` ${l} `));
+  }
+
+  it("a flush picks up what an earlier, failed flush re-queued", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const before = commits();
+    writeFileSync(refuseOnce, "");
+    writeFileSync(join(repoDir, "SOUL.md"), "soul, revised");
+    trackFileChange("SOUL.md", repoDir);
+    // Both queued before either runs: the second must still see the first's re-queue.
+    void flushFileChanges(repoDir);
+    await flushFileChanges(repoDir);
+    assert.equal(commits(), before + 1);
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update SOUL.md");
+  });
+
+  it("a commit that keeps failing gets one retry, then is given up", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const before = commits();
+    writeFileSync(refuse, "");
+    writeFileSync(join(hookRuns), "");
+    try {
+      writeFileSync(join(repoDir, "SOUL.md"), "soul, refused");
+      trackFileChange("SOUL.md", repoDir);
+      await flushFileChanges(repoDir); // fails, re-queued
+      await flushFileChanges(repoDir); // the one retry, fails, given up
+      await flushFileChanges(repoDir); // nothing left to try
+      assert.equal(runs(), 2, "retried more (or less) than once");
+      assert.equal(commits(), before);
+      // Given up on and unstaged, so it can't ride into another file's commit (#656).
+      assert.equal(git(["diff", "--cached", "--name-only"], repoDir), "");
+
+      rmSync(refuse);
+      writeFileSync(join(repoDir, "MEMORY.md"), "memory, committed alone");
+      trackFileChange("MEMORY.md", repoDir);
+      await flushFileChanges(repoDir);
+      assert.equal(git(["show", "--name-only", "--format=", "HEAD"], repoDir).trim(), "MEMORY.md");
+    } finally {
+      rmSync(refuse, { force: true });
+      git(["reset", "-q", "--", "SOUL.md"], repoDir);
+      git(["checkout", "-q", "--", "SOUL.md"], repoDir);
+    }
+  });
+
+  it("a file that stages again earns a fresh retry", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const lock = join(repoDir, ".git", "index.lock");
+    const lockedFlush = async () => {
+      writeFileSync(lock, "");
+      try {
+        await flushFileChanges(repoDir);
+      } finally {
+        rmSync(lock, { force: true });
+      }
+    };
+    writeFileSync(join(repoDir, "MEMORY.md"), "memory, busy once");
+    trackFileChange("MEMORY.md", repoDir);
+    await lockedFlush(); // add fails: re-queued, its one retry spent
+    await flushFileChanges(repoDir); // stages (and commits): the mark is cleared
+    writeFileSync(join(repoDir, "MEMORY.md"), "memory, busy again");
+    trackFileChange("MEMORY.md", repoDir);
+    await lockedFlush(); // a new failure: retried again, not given up
+    await flushFileChanges(repoDir);
+    assert.equal(git(["status", "--porcelain", "--", "MEMORY.md"], repoDir), "");
+  });
+
+  it("recognises an ignored file whatever its name", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const odd = "odd\nname.txt";
+    writeFileSync(join(repoDir, ".gitignore"), "scratch.txt\nodd*\n");
+    writeFileSync(join(repoDir, odd), "ignored, with a newline in its name");
+    try {
+      trackFileChange(odd, repoDir);
+      const adds = await recordingAdds(async () => {
+        await flushFileChanges(repoDir);
+        writeFileSync(gitLog, "");
+        await flushFileChanges(repoDir);
+      });
+      assert.deepEqual(adds, [], "an ignored file was retried");
+    } finally {
+      rmSync(join(repoDir, odd));
+      git(["checkout", "-q", "--", ".gitignore"], repoDir);
+    }
+  });
+
+  it("checks ignores one by one when the batch check fails", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const odd = "odd\nname.txt";
+    writeFileSync(join(repoDir, ".gitignore"), "scratch.txt\nodd*\n");
+    writeFileSync(join(repoDir, odd), "ignored, with a newline in its name");
+    writeFileSync(join(repoDir, "scratch.txt"), "ignored");
+    mkdirSync(join(repoDir, "real"), { recursive: true });
+    writeFileSync(join(repoDir, "real", "f.md"), "behind a symlink");
+    symlinkSync("real", join(repoDir, "link"));
+    try {
+      // A path beyond a symlink fails a batch check-ignore outright (128).
+      trackFileChange(odd, repoDir);
+      trackFileChange("scratch.txt", repoDir);
+      trackFileChange("link/f.md", repoDir);
+      const adds = await recordingAdds(async () => {
+        await flushFileChanges(repoDir);
+        writeFileSync(gitLog, "");
+        await flushFileChanges(repoDir); // the retry: only what wasn't proven ignored
+      });
+      assert.ok(adds.length > 0, "the unproven path wasn't retried");
+      assert.deepEqual(
+        [...new Set(adds)],
+        ["--literal-pathspecs add -- link/f.md"],
+        "an ignored file was retried",
+      );
+      await flushFileChanges(repoDir); // gives up on it
+    } finally {
+      rmSync(join(repoDir, "link"));
+      rmSync(join(repoDir, "real"), { recursive: true, force: true });
+      rmSync(join(repoDir, odd));
+      git(["checkout", "-q", "--", ".gitignore"], repoDir);
+    }
+  });
+
+  it("re-queues an add that failed for a reason other than gitignore", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const lock = join(repoDir, ".git", "index.lock");
+    writeFileSync(join(repoDir, "MEMORY.md"), "memory, while git is busy");
+    trackFileChange("MEMORY.md", repoDir);
+    writeFileSync(lock, "");
+    try {
+      await flushFileChanges(repoDir);
+    } finally {
+      rmSync(lock, { force: true });
+    }
+    await flushFileChanges(repoDir);
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update MEMORY.md");
+  });
+
+  it("never retries a gitignored file", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    writeFileSync(join(repoDir, "scratch.txt"), "not for history");
+    trackFileChange("scratch.txt", repoDir);
+    const adds = await recordingAdds(async () => {
+      await flushFileChanges(repoDir);
+      writeFileSync(gitLog, "");
+      await flushFileChanges(repoDir);
+    });
+    assert.deepEqual(adds, [], "a gitignored file was tried again");
+  });
+
+  it("stages a batch with one literal-pathspec git add", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    writeFileSync(join(repoDir, "SOUL.md"), "soul, again");
+    writeFileSync(join(repoDir, "MEMORY.md"), "memory, again");
+    trackFileChange("SOUL.md", repoDir);
+    trackFileChange("MEMORY.md", repoDir);
+    const adds = await recordingAdds(() => flushFileChanges(repoDir));
+    assert.deepEqual(adds, ["--literal-pathspecs add -- SOUL.md MEMORY.md"]);
+    assert.equal(git(["status", "--porcelain", "--", "SOUL.md", "MEMORY.md"], repoDir), "");
+  });
+
+  it("treats a file name as a name, never a glob", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    writeFileSync(join(repoDir, "a*.md"), "a file with a star in its name");
+    writeFileSync(join(repoDir, "ab.md"), "ab, edited but not by this turn");
+    trackFileChange("a*.md", repoDir);
+    await flushFileChanges(repoDir);
+    const committed = git(["show", "--name-only", "--format=", "HEAD"], repoDir).trim();
+    assert.equal(committed, "a*.md");
+    git(["checkout", "-q", "--", "ab.md"], repoDir);
+  });
+
+  it("drains a flush that starts while the shutdown flush is running", async () => {
+    const { trackFileChange, flushFileChanges, drainFileChanges } = await mod();
+    writeFileSync(hang, "");
+    writeFileSync(join(repoDir, "SOUL.md"), "soul, at shutdown");
+    trackFileChange("SOUL.md", repoDir);
+    const drained = drainFileChanges(repoDir);
+    while (!existsSync(hookStarted)) await new Promise((r) => setTimeout(r, 20));
+    // The reap ends a turn mid-shutdown, and its turn-end flush queues behind ours.
+    writeFileSync(join(repoDir, "MEMORY.md"), "memory, from the reaped turn");
+    trackFileChange("MEMORY.md", repoDir);
+    void flushFileChanges(repoDir);
+    await drained;
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update MEMORY.md");
+    assert.equal(git(["status", "--porcelain", "--", "SOUL.md", "MEMORY.md"], repoDir), "");
+  });
+
+  it("gives up on a failed add whose file is gone", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    trackFileChange("ghost.md", repoDir); // written and removed within the turn
+    const adds = await recordingAdds(async () => {
+      await flushFileChanges(repoDir);
+      writeFileSync(gitLog, "");
+      await flushFileChanges(repoDir);
+    });
+    assert.deepEqual(adds, [], "a file that is gone was tried again");
+  });
+
+  it("holds pages/_system files through a stopped rebase, and commits them after", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const sharedDir = join(scratch, "rebase-home", "pages", "_system");
+    const home = join(scratch, "rebase-home");
+    initRepo(home);
+    initRepo(sharedDir);
+    writeFileSync(join(sharedDir, "clash.md"), "base");
+    git(["add", "clash.md"], sharedDir);
+    git(["commit", "-qm", "base"], sharedDir);
+    git(["checkout", "-q", "-b", "mine"], sharedDir);
+    writeFileSync(join(sharedDir, "clash.md"), "mine");
+    git(["commit", "-qam", "mine"], sharedDir);
+    git(["checkout", "-q", "main"], sharedDir);
+    writeFileSync(join(sharedDir, "clash.md"), "theirs");
+    git(["commit", "-qam", "theirs"], sharedDir);
+    git(["checkout", "-q", "mine"], sharedDir);
+    assert.throws(() => git(["rebase", "main"], sharedDir));
+
+    writeFileSync(join(sharedDir, "note.md"), "written mid-rebase");
+    trackFileChange("pages/_system/note.md", home);
+    await flushFileChanges(home);
+    git(["rebase", "--abort"], sharedDir);
+
+    await flushFileChanges(home);
+    assert.equal(git(["log", "-1", "--format=%s"], sharedDir).trim(), "Update note.md");
+  });
+
+  /** Run `fn` with the recording git on PATH, killing the call named `call` once. */
+  async function withKill(call: string, fn: () => Promise<void>): Promise<string[]> {
+    writeFileSync(killOn, call);
+    try {
+      return await recordingAdds(fn);
+    } finally {
+      rmSync(killOn, { force: true });
+    }
+  }
+
+  it("retries a killed add of a deleted tracked file — the deletion stages fine", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    rmSync(join(repoDir, "ab.md"));
+    trackFileChange("ab.md", repoDir);
+    try {
+      await withKill("--literal-pathspecs add -- ab.md", () => flushFileChanges(repoDir));
+      await flushFileChanges(repoDir);
+      assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update ab.md");
+      assert.equal(git(["ls-files", "--", "ab.md"], repoDir), "");
+    } finally {
+      writeFileSync(join(repoDir, "ab.md"), "ab");
+      git(["add", "--", "ab.md"], repoDir);
+      git(["commit", "-qm", "restore ab.md"], repoDir);
+    }
+  });
+
+  it("retries a deletion whose add failed for a passing reason", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const lock = join(repoDir, ".git", "index.lock");
+    rmSync(join(repoDir, "ab.md"));
+    trackFileChange("ab.md", repoDir);
+    try {
+      writeFileSync(lock, "");
+      try {
+        await flushFileChanges(repoDir); // add fails on the lock, not killed
+      } finally {
+        rmSync(lock, { force: true });
+      }
+      await flushFileChanges(repoDir);
+      assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update ab.md");
+    } finally {
+      writeFileSync(join(repoDir, "ab.md"), "ab");
+      git(["add", "--", "ab.md"], repoDir);
+      git(["commit", "-qm", "restore ab.md"], repoDir);
+    }
+  });
+
+  it("counts a kill against only the file whose git was killed", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    mkdirSync(join(repoDir, "real"), { recursive: true });
+    writeFileSync(join(repoDir, "real", "f.md"), "behind a symlink");
+    symlinkSync("real", join(repoDir, "link"));
+    try {
+      writeFileSync(join(repoDir, "MEMORY.md"), "memory, killed once");
+      trackFileChange("MEMORY.md", repoDir);
+      trackFileChange("link/f.md", repoDir); // fails on its own, not killed
+      await withKill("--literal-pathspecs add -- MEMORY.md", () => flushFileChanges(repoDir));
+      await flushFileChanges(repoDir); // link/f.md's one retry: given up
+      const adds = await recordingAdds(() => flushFileChanges(repoDir));
+      assert.deepEqual(adds, [], "a file was retried as if its own git had been killed");
+      assert.equal(git(["status", "--porcelain", "--", "MEMORY.md"], repoDir), "");
+    } finally {
+      rmSync(join(repoDir, "link"));
+      rmSync(join(repoDir, "real"), { recursive: true, force: true });
+    }
+  });
+
+  it("drains until nothing is pending, not until a round changes nothing", async () => {
+    const { trackFileChange, flushFileChanges, drainFileChanges } = await mod();
+    writeFileSync(join(repoDir, "SOUL.md"), "soul, killed then refused");
+    trackFileChange("SOUL.md", repoDir);
+    // A commit the stop killed: re-queued, no retry spent.
+    await withKill("commit -m Update SOUL.md", () => flushFileChanges(repoDir));
+    // The first shutdown attempt is refused (re-queued, unchanged), the second lands.
+    writeFileSync(refuseOnce, "");
+    await drainFileChanges(repoDir);
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update SOUL.md");
+  });
+
+  it("survives a git that dies before reading its input", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    // More input than a pipe buffers (~100 KB of long, failing paths), so the write is
+    // still under way when the ignore check dies without reading: an EPIPE on its stdin,
+    // which unhandled would take this whole process down.
+    const deep = `${"d".repeat(200)}/`.repeat(4);
+    for (let i = 0; i < 100; i++) trackFileChange(`${deep}missing-${i}.md`, repoDir);
+    await withKill("check-ignore -z --stdin", () => flushFileChanges(repoDir));
+    await flushFileChanges(repoDir);
+  });
+
+  it("one failed flush doesn't fail every flush after it", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    trackFileChange("bad\0name", repoDir); // git can't even be spawned with this argument
+    await flushFileChanges(repoDir).catch(() => {});
+    writeFileSync(join(repoDir, "SOUL.md"), "soul, after a failed flush");
+    trackFileChange("SOUL.md", repoDir);
+    await flushFileChanges(repoDir);
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update SOUL.md");
+  });
+
+  it("leaves a given-up file alone until it changes", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    writeFileSync(refuse, "");
+    writeFileSync(hookRuns, "");
+    try {
+      writeFileSync(join(repoDir, "SOUL.md"), "soul, refused for good");
+      trackFileChange("SOUL.md", repoDir);
+      await flushFileChanges(repoDir);
+      await flushFileChanges(repoDir); // given up
+      assert.equal(runs(), 2);
+      // codex re-tracks every changed path each turn
+      trackFileChange("SOUL.md", repoDir);
+      await flushFileChanges(repoDir);
+      assert.equal(runs(), 2, "a given-up file went round again unchanged");
+
+      rmSync(refuse);
+      writeFileSync(join(repoDir, "SOUL.md"), "soul, rewritten — a change worth trying");
+      trackFileChange("SOUL.md", repoDir);
+      await flushFileChanges(repoDir);
+      assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update SOUL.md");
+    } finally {
+      rmSync(refuse, { force: true });
+    }
+  });
+
+  it("gives up on a file whose git is killed every time", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    writeFileSync(killAlways, "commit -m Update SOUL.md");
+    try {
+      writeFileSync(join(repoDir, "SOUL.md"), "soul, never quite committed");
+      trackFileChange("SOUL.md", repoDir);
+      const commitsTried = async () =>
+        (await recordingCalls(() => flushFileChanges(repoDir))).filter((l) =>
+          l.startsWith("commit "),
+        ).length;
+      assert.equal(await commitsTried(), 1);
+      assert.equal(await commitsTried(), 1);
+      assert.equal(await commitsTried(), 1); // the third kill: given up
+      assert.equal(await commitsTried(), 0, "a file killed every time kept looping");
+    } finally {
+      rmSync(killAlways, { force: true });
+      git(["reset", "-q", "--", "SOUL.md"], repoDir);
+      git(["checkout", "-q", "--", "SOUL.md"], repoDir);
+    }
+  });
+
+  it("names only the files it gives up on", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const warnings: string[] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+    writeFileSync(refuse, "");
+    try {
+      writeFileSync(join(repoDir, "SOUL.md"), "soul, refused twice");
+      trackFileChange("SOUL.md", repoDir);
+      await flushFileChanges(repoDir); // SOUL.md: its one retry is now spent
+      writeFileSync(join(repoDir, "MEMORY.md"), "memory, refused once");
+      trackFileChange("MEMORY.md", repoDir);
+      await flushFileChanges(repoDir); // both refused: SOUL.md given up, MEMORY.md retried
+    } finally {
+      console.error = realError;
+      rmSync(refuse, { force: true });
+    }
+    const givingUp = warnings.filter((w) => w.includes("will NOT be committed"));
+    assert.equal(givingUp.length, 1, warnings.join("\n"));
+    assert.match(givingUp[0], /SOUL\.md/);
+    assert.doesNotMatch(givingUp[0], /MEMORY\.md/, "named a file that is still being retried");
+    await flushFileChanges(repoDir); // MEMORY.md's retry lands
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update MEMORY.md");
+    git(["checkout", "-q", "--", "SOUL.md"], repoDir);
+  });
+
+  it("recognises an ignored file whose name starts with a space", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const name = " lead.txt";
+    writeFileSync(join(repoDir, ".gitignore"), "scratch.txt\n*lead.txt\n");
+    writeFileSync(join(repoDir, name), "ignored");
+    try {
+      trackFileChange(name, repoDir);
+      const adds = await recordingAdds(async () => {
+        await flushFileChanges(repoDir);
+        writeFileSync(gitLog, "");
+        await flushFileChanges(repoDir);
+      });
+      assert.deepEqual(adds, [], "an ignored file was retried");
+    } finally {
+      rmSync(join(repoDir, name));
+      git(["checkout", "-q", "--", ".gitignore"], repoDir);
+    }
+  });
+
+  it("re-queues a failed pages/_system commit too", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const sharedDir = join(repoDir, "pages", "_system");
+    initRepo(sharedDir);
+    writeFileSync(join(sharedDir, "index.md"), "page");
+    git(["add", "-A"], sharedDir);
+    git(["commit", "-m", "initial"], sharedDir);
+    installHook(sharedDir);
+
+    writeFileSync(refuse, "");
+    writeFileSync(join(sharedDir, "index.md"), "page v2");
+    trackFileChange("pages/_system/index.md", repoDir);
+    await flushFileChanges(repoDir);
+    rmSync(refuse);
+    assert.equal(git(["log", "-1", "--format=%s"], sharedDir).trim(), "initial", "refused");
+
+    await flushFileChanges(repoDir);
+    assert.equal(git(["log", "-1", "--format=%s"], sharedDir).trim(), "Update index.md");
+    assert.equal(git(["status", "--porcelain"], sharedDir), "");
   });
 });

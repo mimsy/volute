@@ -49,9 +49,17 @@ const failedThisRun = new Map<string, string>();
  */
 const alertedReason = new Map<string, string>();
 
-/** In-memory record of minds whose last auto-upgrade backed off (conflicts/errors). */
-export function getUpgradeBlocked(name: string): AutoUpgradeBlocked | undefined {
-  return blocked.get(name);
+/**
+ * The "upgrade blocked" badge for a mind — the reason its last auto-upgrade backed off
+ * (conflicts/errors) — but only while its template is still stale. Once it is current,
+ * upgraded by any path, there is no upgrade left to be blocked, so a record that
+ * outlived it is never shown (#974). Staleness alone is enough: a successful upgrade
+ * records the current template hash, and isTemplateStale's fast path then reads the
+ * mind as current until the template itself changes — which takes a new release, and
+ * so a daemon restart that clears this in-memory record anyway.
+ */
+export function upgradeBlockedReason(name: string, templateStale: boolean): string | undefined {
+  return templateStale ? blocked.get(name)?.reason : undefined;
 }
 
 /** Test seam: forget every in-memory auto-upgrade failure/alert record. */

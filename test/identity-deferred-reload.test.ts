@@ -214,7 +214,18 @@ describe("template wiring", () => {
 
   it("claude commits a cut-short turn's edits on shutdown (mid-turn self-restart)", () => {
     const shutdown = read("claude/src/server.ts").split("setupShutdown(")[1] ?? "";
-    assert.match(shutdown, /mind\.flushFileChanges\(\)/);
+    // Drained, so a commit the stop killed is retried (#1206).
+    assert.match(shutdown, /drainFileChanges\(resolve\("home"\)\)/);
+    // And again once the reap has settled, which can end a turn of its own.
+    assert.match(
+      shutdown,
+      /await Promise\.all\(\[drain\(\), mind\.reapAllSessions\(\)\]\);[\s\S]*?await drain\(\);/,
+    );
+  });
+
+  it("codex drains its commits on shutdown, like claude and pi (#1206)", () => {
+    const shutdown = read("codex/src/server.ts").split("setupShutdown(")[1] ?? "";
+    assert.match(shutdown, /drainFileChanges\(resolve\("home"\)\)/);
   });
 
   it("claude does not restart the mind on an identity edit", () => {

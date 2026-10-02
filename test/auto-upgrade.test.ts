@@ -5,18 +5,21 @@ import {
   type AutoUpgradeOneDeps,
   autoUpgradeOne,
   failureDetail,
-  getUpgradeBlocked,
   pruneAutoUpgradeState,
   pruneBlocked,
   resetAutoUpgradeState,
   type SelectEligibleDeps,
   selectEligible,
   UPGRADE_ALERT_KIND,
+  upgradeBlockedReason,
   upgradeFailureText,
 } from "../packages/daemon/src/lib/daemon/auto-upgrade.js";
 import { UpgradeBlockedByJoinError } from "../packages/daemon/src/lib/mind/join-lock.js";
 import type { MindEntry } from "../packages/daemon/src/lib/mind/registry.js";
 import { formatNotification } from "../packages/daemon/src/lib/version-notify.js";
+
+/** The recorded reason, as the badge would show it while the mind is stale. */
+const blockedReason = (name: string) => upgradeBlockedReason(name, true);
 
 function makeEntry(overrides: Partial<MindEntry> & { name: string }): MindEntry {
   return {
@@ -218,9 +221,9 @@ describe("autoUpgradeOne", () => {
     assert.equal(alerts[0].kind, UPGRADE_ALERT_KIND);
     assert.match(alerts[0].text, /SOUL\.md/);
     assert.match(alerts[0].text, /package\.json/);
-    const blocked = getUpgradeBlocked("conflict-mind");
+    const blocked = blockedReason("conflict-mind");
     assert.ok(blocked, "should record a blocked entry");
-    assert.match(blocked!.reason, /merge conflicts/);
+    assert.match(blocked!, /merge conflicts/);
   });
 
   it("thrown error: retries exactly once, then alerts the mind with the failing command's stderr", async () => {
@@ -251,9 +254,9 @@ describe("autoUpgradeOne", () => {
       /refusing this commit/,
       "the alert must carry the failing command's own stderr",
     );
-    const blocked = getUpgradeBlocked("retry-mind");
+    const blocked = blockedReason("retry-mind");
     assert.ok(blocked, "should record a blocked entry");
-    assert.match(blocked!.reason, /Command failed: git commit/);
+    assert.match(blocked!, /Command failed: git commit/);
   });
 
   it("join in progress: records a blocked reason without retrying, failing, or alerting (#988)", async () => {
@@ -271,7 +274,7 @@ describe("autoUpgradeOne", () => {
 
     assert.equal(attempts, 1, "a join in progress is not a transient failure to retry");
     assert.equal(alerts.length, 0);
-    assert.match(getUpgradeBlocked("joining-mind")!.reason, /variant join in progress/);
+    assert.match(blockedReason("joining-mind")!, /variant join in progress/);
     // Not gated as a failure: the next pass attempts again.
     await autoUpgradeOne(entry, false, deps);
     assert.equal(attempts, 2);
@@ -293,7 +296,7 @@ describe("autoUpgradeOne", () => {
 
     assert.equal(attempts, 2);
     assert.equal(alerts.length, 0, "a join is not an upgrade failure to alert about");
-    assert.match(getUpgradeBlocked("retry-joining-mind")!.reason, /variant join in progress/);
+    assert.match(blockedReason("retry-joining-mind")!, /variant join in progress/);
     await autoUpgradeOne(entry, false, deps);
     assert.equal(attempts, 3, "not gated as failed for the rest of the run");
   });

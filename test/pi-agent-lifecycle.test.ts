@@ -897,7 +897,8 @@ describe("pi shutdown", () => {
     // Source-level: exercising it would mean signalling a live server process.
     const server = readFileSync(resolvePath(repoRoot, "templates/pi/src/server.ts"), "utf-8");
     const shutdown = server.split("setupShutdown(")[1] ?? "";
-    assert.match(shutdown, /flushFileChanges\(/);
+    // Drained, so a commit the stop killed is retried (#1206).
+    assert.match(shutdown, /drainFileChanges\(resolve\("home"\)\)/);
   });
 
   it("never restarts the mind on an identity edit", () => {
