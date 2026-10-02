@@ -2,7 +2,7 @@ import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { checkMissingBridgeEnv, getBridgeDef } from "../bridges/bridge-defs.js";
-import { getBridgeConfig, readBridgesConfig } from "../bridges/bridges.js";
+import { readBridgesConfig } from "../bridges/bridges.js";
 import { readEnv, sharedEnvPath } from "../config/env.js";
 import { daemonLoopback, voluteSystemDir } from "../mind/registry.js";
 import log from "../util/logger.js";
@@ -30,7 +30,6 @@ type TrackedBridge = {
 
 export class BridgeManager {
   private bridges = new Map<string, TrackedBridge>();
-  private stopping = new Set<string>();
   private shuttingDown = false;
   private restartTracker = new RestartTracker();
   /**
@@ -74,43 +73,11 @@ export class BridgeManager {
     // This start supersedes any pending crash restart, which would otherwise kill it.
     this.cancelPendingRestart(platform);
 
-    // Stop existing bridge if running
+    // Replace the running bridge, if any. The kill is deliberate, so its exit must not
+    // count as a crash — that would spend a restart attempt and schedule a restart that
+    // then kills the replacement.
     const existing = this.bridges.get(platform);
-    if (existing) {
-      // Mark it stopping, exactly as stopBridge does: this kill is deliberate, so the
-      // old child's exit must not be recorded as a crash. Without this it spends a
-      // restart attempt and schedules a restart that then kills the replacement.
-      this.stopping.add(platform);
-      await new Promise<void>((res) => {
-        existing.child.on("exit", () => res());
-        try {
-          if (existing.child.pid) {
-            process.kill(-existing.child.pid, "SIGTERM");
-          } else {
-            existing.child.kill("SIGTERM");
-          }
-        } catch (err: unknown) {
-          if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ESRCH") {
-            blog.warn(`failed to stop existing bridge ${platform}`, log.errorData(err));
-          }
-          res();
-        }
-        setTimeout(() => {
-          try {
-            if (existing.child.pid) {
-              process.kill(-existing.child.pid, "SIGKILL");
-            } else {
-              existing.child.kill("SIGKILL");
-            }
-          } catch {
-            // SIGKILL cleanup — process likely already exited
-          }
-          res();
-        }, 3000);
-      });
-      this.stopping.delete(platform);
-      this.bridges.delete(platform);
-    }
+    if (existing) await this.terminate(platform, existing.child, 3000);
 
     // Kill orphan from previous daemon session
     this.killOrphanBridge(platform);
@@ -170,19 +137,21 @@ export class BridgeManager {
     // own budget forever, so it never backed off and never gave up (#1033).
     this.restartTracker.armHealthyReset(platform);
 
-    // Crash recovery
+    // This child's exit handler is the one owner of its lifecycle: whoever ended it,
+    // it untracks this child and its PID file, and only then decides whether it crashed.
     child.on("exit", (code) => {
-      const tracked = this.bridges.get(platform);
-      if (tracked?.child === child) {
+      const current = this.bridges.get(platform)?.child === child;
+      if (current) {
         // This spawn died before it earned a reset — keep its accumulated count.
         // Scoped to the tracked child so a stale child's late exit can't cancel
         // the reset armed by the spawn that replaced it.
         this.restartTracker.cancelHealthyReset(platform);
         this.bridges.delete(platform);
       }
+      if (child.pid && this.readBridgePid(platform) === child.pid) this.removeBridgePid(platform);
 
-      if (this.shuttingDown) return;
-      if (this.stopping.has(platform)) return;
+      // Only the tracked child can crash: one we killed or replaced was untracked first.
+      if (!current || this.shuttingDown) return;
 
       blog.error(`bridge ${platform} exited with code ${code}`);
       if (lastStderr) blog.warn(`bridge ${platform} last output: ${lastStderr}`);
@@ -196,77 +165,74 @@ export class BridgeManager {
       blog.info(
         `restarting bridge ${platform} — attempt ${attempt}/${this.restartTracker.maxRestartAttempts}, in ${delay}ms`,
       );
-      const timer = setTimeout(() => {
-        this.pendingRestarts.delete(platform);
-        if (this.shuttingDown || this.stopping.has(platform)) return;
-        // Disabled since the crash, by a path that didn't go through stopBridge.
-        if (!getBridgeConfig(platform)?.enabled) {
-          blog.info(`not restarting bridge ${platform} — it is no longer enabled`);
-          this.restartTracker.reset(platform);
-          return;
-        }
-        this.startBridge(platform, daemonPort).catch((err) => {
-          blog.error(`failed to restart bridge ${platform}`, log.errorData(err));
-        });
-      }, delay);
-      this.pendingRestarts.set(platform, timer);
+      this.scheduleRestart(platform, daemonPort, delay);
     });
 
     blog.info(`started bridge ${platform}`);
   }
 
   async stopBridge(platform: string): Promise<void> {
+    // A crashed bridge waiting out its backoff is untracked, so the pending restart is
+    // the only thing left to stop (#1352).
     const cancelled = this.cancelPendingRestart(platform);
     const tracked = this.bridges.get(platform);
-    if (!tracked) {
-      if (cancelled) {
-        // Crashed and waiting out its backoff: nothing to kill, but the restart is off.
-        this.restartTracker.reset(platform);
-        this.removeBridgePid(platform);
-        blog.info(`stopped bridge ${platform} (cancelled pending restart)`);
-      }
-      return;
-    }
+    if (tracked) await this.terminate(platform, tracked.child, 5000);
 
-    this.stopping.add(platform);
-    this.bridges.delete(platform);
+    // Also covers a bridge that gave up after crashing: nothing tracked, nothing pending,
+    // but its budget is spent and a PID file may remain.
+    this.restartTracker.reset(platform);
+    if (!this.bridges.has(platform)) this.removeBridgePid(platform);
+    if (tracked || cancelled) blog.info(`stopped bridge ${platform}`);
+  }
 
-    await new Promise<void>((resolve) => {
-      tracked.child.on("exit", () => resolve());
+  /**
+   * Kill `child` on purpose and wait for it to exit (SIGKILL after `graceMs`). It is
+   * untracked first, which is what tells its exit handler the exit is not a crash.
+   */
+  private async terminate(platform: string, child: ChildProcess, graceMs: number): Promise<void> {
+    if (this.bridges.get(platform)?.child === child) this.bridges.delete(platform);
+    await new Promise<void>((res) => {
+      child.on("exit", () => res());
       try {
-        if (tracked.child.pid) {
-          process.kill(-tracked.child.pid, "SIGTERM");
+        if (child.pid) {
+          process.kill(-child.pid, "SIGTERM");
         } else {
-          tracked.child.kill("SIGTERM");
+          child.kill("SIGTERM");
         }
       } catch (err: unknown) {
         if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ESRCH") {
           blog.warn(`failed to stop bridge ${platform}`, log.errorData(err));
         }
-        resolve();
+        res();
       }
       setTimeout(() => {
         try {
-          if (tracked.child.pid) {
-            process.kill(-tracked.child.pid, "SIGKILL");
+          if (child.pid) {
+            process.kill(-child.pid, "SIGKILL");
           } else {
-            tracked.child.kill("SIGKILL");
+            child.kill("SIGKILL");
           }
         } catch {
           // SIGKILL cleanup — process likely already exited
         }
-        resolve();
-      }, 5000);
+        res();
+      }, graceMs);
     });
+  }
 
-    this.stopping.delete(platform);
-    this.restartTracker.reset(platform);
-    try {
-      this.removeBridgePid(platform);
-    } catch (err) {
-      blog.warn(`failed to remove PID file for bridge ${platform}`, log.errorData(err));
-    }
-    blog.info(`stopped bridge ${platform}`);
+  /** Arm a crash restart, replacing any already pending for this platform. */
+  private scheduleRestart(platform: string, daemonPort: number, delay: number): void {
+    this.cancelPendingRestart(platform);
+    const timer = setTimeout(() => {
+      // Only the live timer may act — a cancelled or superseded one is stale.
+      if (this.pendingRestarts.get(platform) !== timer) return;
+      this.pendingRestarts.delete(platform);
+      if (this.shuttingDown) return;
+      this.startBridge(platform, daemonPort).catch((err) => {
+        blog.error(`failed to restart bridge ${platform}`, log.errorData(err));
+      });
+    }, delay);
+    this.pendingRestarts.set(platform, timer);
   }
 
   async stopAll(): Promise<void> {
@@ -306,6 +272,14 @@ export class BridgeManager {
     writeFileSync(pidPath, String(pid));
   }
 
+  private readBridgePid(platform: string): number | null {
+    try {
+      return parseInt(readFileSync(this.bridgePidPath(platform), "utf-8").trim(), 10);
+    } catch {
+      return null;
+    }
+  }
+
   private removeBridgePid(platform: string): void {
     try {
       unlinkSync(this.bridgePidPath(platform));
@@ -321,21 +295,27 @@ export class BridgeManager {
     if (!existsSync(pidPath)) return;
     try {
       const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
-      if (pid > 0) {
-        let killed = false;
-        try {
-          process.kill(-pid, "SIGTERM");
-          killed = true;
-        } catch {
+      // Never 1: `kill(-1)` signals every process we're allowed to.
+      if (pid > 1) {
+        // Only ESRCH means it's gone; anything else (EPERM) means it may still be up.
+        let failure: NodeJS.ErrnoException | undefined;
+        for (const target of [-pid, pid]) {
           try {
-            process.kill(pid, "SIGTERM");
-            killed = true;
-          } catch {
-            // Process already gone — the usual case on a crash restart, whose PID file
-            // still names the child that just exited.
+            process.kill(target, "SIGTERM");
+            failure = undefined;
+            blog.warn(`killed orphan bridge ${platform} (pid ${pid})`);
+            break;
+          } catch (err) {
+            failure = err as NodeJS.ErrnoException;
+            if (failure.code !== "ESRCH") break;
           }
         }
-        if (killed) blog.warn(`killed orphan bridge ${platform} (pid ${pid})`);
+        if (failure && failure.code !== "ESRCH") {
+          blog.warn(
+            `could not kill orphan bridge ${platform} (pid ${pid}) — it may still be running`,
+            log.errorData(failure),
+          );
+        }
       }
     } catch (err: unknown) {
       if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ESRCH") {
