@@ -134,6 +134,20 @@ export async function ensureMindDir(
   return dir;
 }
 
+/**
+ * The real path of the existing directory `relPath` inside a mind's directory, through the
+ * same anchor and walk as {@link readMindFile}, or null if it (or a directory on the way)
+ * is absent. A link anywhere on the way out of the mind refuses.
+ */
+export async function resolveMindDir(
+  mindDir: string,
+  relPath: string,
+  owner: MindFileOwner | null,
+): Promise<string | null> {
+  const target = resolveWithinBase(mindDir, relPath);
+  return walkDirs(mindDir, relative(resolve(mindDir), target), owner, false);
+}
+
 /** Step 3. Null when the file is absent (without O_CREAT) or present (with O_EXCL). */
 async function openVetted(path: string, flags: number, mode: number): Promise<FileHandle | null> {
   const { O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = constants;

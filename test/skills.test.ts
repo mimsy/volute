@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   cpSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -14,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
@@ -27,6 +29,7 @@ import {
 import { minds, sharedSkills } from "../packages/daemon/src/lib/schema.js";
 import {
   autoUpdateMindSkills,
+  copySkillTree,
   getSharedSkill,
   HOOK_SHIM_PREFIX,
   hookShimName,
@@ -60,6 +63,15 @@ async function cleanup() {
   if (existsSync(skillsDir)) rmSync(skillsDir, { recursive: true });
   const tmpDir = join(voluteHome(), "tmp-skill-source");
   if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
+}
+
+function lexistsSync(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Create a temp skill source directory with SKILL.md */
@@ -504,6 +516,7 @@ describe("mind skill operations", () => {
   // planted at a skill file must not aim the merge's write at a file elsewhere.
   it("refuses to update through a symlink planted at a skill file", async () => {
     const source = createSkillSource("shared-skill", "Version 1");
+    writeFileSync(join(source, "A.md"), "v1\n"); // merged ahead of SKILL.md
     await importSkillFromDir(source, "author");
     await installSkill(mindName, mindDir, "shared-skill");
     const skillMd = join(mindDir, "home", ".claude", "skills", "shared-skill", "SKILL.md");
@@ -516,10 +529,36 @@ describe("mind skill operations", () => {
       join(source, "SKILL.md"),
       "---\nname: shared-skill\ndescription: Version 2\n---\n\n# Updated Content\n",
     );
+    writeFileSync(join(source, "A.md"), "v2\n");
     await importSkillFromDir(source, "author");
     const before = readFileSync(outside, "utf-8");
     await assert.rejects(() => updateSkill(mindName, mindDir, "shared-skill"));
     assert.equal(readFileSync(outside, "utf-8"), before, "link target untouched");
+    // Refused before the merge wrote anything, so no half-update is left behind.
+    assert.equal(readFileSync(join(dirname(skillMd), "A.md"), "utf-8"), "v1\n");
+  });
+
+  it("refuses a publish id that would leave the skills dir, before staging anything", async () => {
+    const escaped = join(mindDir, "home", ".claude", "escape");
+    mkdirSync(escaped, { recursive: true });
+    writeFileSync(join(escaped, "SKILL.md"), "---\nname: escape\n---\n");
+    const outside = join(tmpdir(), "escape");
+    rmSync(outside, { recursive: true, force: true });
+    await assert.rejects(() => publishSkill(mindName, mindDir, "../escape"), /Invalid skill ID/);
+    assert.ok(!existsSync(outside), "nothing written beside the staging dir");
+  });
+
+  it("keeps a script executable from publish through the pool to an install", async () => {
+    const skill = join(mindDir, "home", ".claude", "skills", "exec-skill");
+    mkdirSync(join(skill, "scripts"), { recursive: true });
+    writeFileSync(join(skill, "SKILL.md"), "---\nname: exec-skill\n---\n");
+    writeFileSync(join(skill, "scripts", "run.sh"), "echo hi\n", { mode: 0o755 });
+    await publishSkill(mindName, mindDir, "exec-skill");
+    const pooled = join(sharedSkillsDir(), "exec-skill", "scripts", "run.sh");
+    assert.equal(lstatSync(pooled).mode & 0o111, 0o111, "executable in the pool");
+    rmSync(skill, { recursive: true });
+    await installSkill(mindName, mindDir, "exec-skill");
+    assert.equal(lstatSync(join(skill, "scripts", "run.sh")).mode & 0o111, 0o111);
   });
 
   it("refuses to install into a skills dir linked out of the mind", async () => {
@@ -534,6 +573,173 @@ describe("mind skill operations", () => {
       assert.deepEqual(readdirSync(elsewhere), []);
     } finally {
       rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  // #1263: the copy goes file by file through the mind-file helpers, so a skill dir the
+  // mind swaps for a link after it is created can't redirect the daemon's writes.
+  it("refuses to copy a skill through a dir the mind swapped for a link", async () => {
+    const source = createSkillSource("shared-skill");
+    mkdirSync(join(source, "references"));
+    writeFileSync(join(source, "references", "a.md"), "a\n");
+    const elsewhere = mkdtempSync(join(tmpdir(), "skills-elsewhere-"));
+    try {
+      // The dest dir exists (as installSkill would just have made it), and the mind has
+      // put a link where a subdir of the skill is about to go.
+      const destDir = join(mindDir, "home", ".claude", "skills", "shared-skill");
+      mkdirSync(destDir, { recursive: true });
+      symlinkSync(elsewhere, join(destDir, "references"));
+      await assert.rejects(() =>
+        copySkillTree(source, mindDir, join("home", ".claude", "skills", "shared-skill"), null),
+      );
+      assert.deepEqual(readdirSync(elsewhere), []);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("never follows a link in the pool into the mind, and leaves no partial install", async () => {
+    const source = createSkillSource("shared-skill");
+    await importSkillFromDir(source, "author");
+    const secret = join(voluteHome(), "secret.txt");
+    writeFileSync(secret, "SECRET\n");
+    symlinkSync(secret, join(sharedSkillsDir(), "shared-skill", "leak.md"));
+    await assert.rejects(() => installSkill(mindName, mindDir, "shared-skill"), /regular file/);
+    const destDir = join(mindDir, "home", ".claude", "skills", "shared-skill");
+    assert.ok(!existsSync(destDir), "partial copy removed, so a retry isn't wedged");
+  });
+
+  it("refuses to publish a skill holding a link, a hard link or a FIFO", async () => {
+    const secret = join(voluteHome(), "secret.txt");
+    writeFileSync(secret, "SECRET\n");
+    const skillDir = (id: string) => join(mindDir, "home", ".claude", "skills", id);
+    const plant: Record<string, (at: string) => void> = {
+      soft: (at) => symlinkSync(secret, at),
+      hard: (at) => linkSync(secret, at),
+      fifo: (at) => execFileSync("mkfifo", [at]),
+    };
+    for (const [id, make] of Object.entries(plant)) {
+      mkdirSync(skillDir(id), { recursive: true });
+      writeFileSync(join(skillDir(id), "SKILL.md"), `---\nname: ${id}\n---\n`);
+      make(join(skillDir(id), "leak.md"));
+      await assert.rejects(() => publishSkill(mindName, mindDir, id), /refusing/, id);
+      assert.equal(await getSharedSkill(id), undefined, id);
+    }
+    // A FIFO at SKILL.md itself refuses rather than hanging the daemon.
+    mkdirSync(skillDir("fifo-md"), { recursive: true });
+    execFileSync("mkfifo", [join(skillDir("fifo-md"), "SKILL.md")]);
+    await assert.rejects(() => publishSkill(mindName, mindDir, "fifo-md"), /refusing/);
+  });
+
+  it("imports hard-linked files from a trusted source (a package manager's store)", async () => {
+    const source = createSkillSource("shared-skill");
+    const store = join(voluteHome(), "store.md");
+    writeFileSync(store, "from the store\n");
+    linkSync(store, join(source, "linked.md"));
+    await importSkillFromDir(source, "volute");
+    const pooled = join(sharedSkillsDir(), "shared-skill", "linked.md");
+    assert.equal(readFileSync(pooled, "utf-8"), "from the store\n");
+  });
+
+  it("refuses to publish a skill dir linked out of the mind", async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), "skills-elsewhere-"));
+    try {
+      writeFileSync(join(elsewhere, "SKILL.md"), "---\nname: theirs\n---\nsomeone else's\n");
+      symlinkSync(elsewhere, join(mindDir, "home", ".claude", "skills", "theirs"));
+      await assert.rejects(() => publishSkill(mindName, mindDir, "theirs"));
+      assert.equal(await getSharedSkill("theirs"), undefined);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to uninstall through a skills dir linked out of the mind", async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), "skills-elsewhere-"));
+    try {
+      mkdirSync(join(elsewhere, "shared-skill"));
+      writeFileSync(join(elsewhere, "shared-skill", "SKILL.md"), "not the mind's\n");
+      const skillsDir = join(mindDir, "home", ".claude", "skills");
+      rmSync(skillsDir, { recursive: true, force: true });
+      symlinkSync(elsewhere, skillsDir);
+      await assert.rejects(() => uninstallSkill(mindName, mindDir, "shared-skill"));
+      assert.ok(existsSync(join(elsewhere, "shared-skill", "SKILL.md")), "target untouched");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("uninstall never unlinks a bin or hook name through a linked .local dir", async () => {
+    const source = writeWiredSkill("wired", ["  bin: scripts/passwd.sh"], ["passwd.sh"]);
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+    const elsewhere = mkdtempSync(join(tmpdir(), "skills-elsewhere-"));
+    try {
+      writeFileSync(join(elsewhere, "passwd"), "root:x:0:0\n");
+      mkdirSync(join(elsewhere, "pre-prompt"));
+      writeFileSync(join(elsewhere, "pre-prompt", hookShimName("wired")), "theirs\n");
+      rmSync(binDir(), { recursive: true, force: true });
+      symlinkSync(elsewhere, binDir());
+      rmSync(hooksDir(), { recursive: true, force: true });
+      symlinkSync(elsewhere, hooksDir());
+      await uninstallSkill(mindName, mindDir, "wired");
+      assert.ok(existsSync(join(elsewhere, "passwd")), "bin target untouched");
+      assert.ok(existsSync(join(elsewhere, "pre-prompt", hookShimName("wired"))), "hook untouched");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  // A skill dir linked out of the mind is the mind's link, not a way in: uninstall removes
+  // the link, and never takes direction (here, a bin name) from what it points at.
+  it("uninstalls a skill dir linked out of the mind by removing just the link", async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), "skills-elsewhere-"));
+    try {
+      writeFileSync(
+        join(elsewhere, "SKILL.md"),
+        "---\nname: foo\nmetadata:\n  bin: scripts/notes.sh\n---\n",
+      );
+      mkdirSync(binDir(), { recursive: true });
+      writeFileSync(join(binDir(), "notes"), "the mind's own command\n");
+      const link = join(mindDir, "home", ".claude", "skills", "foo");
+      symlinkSync(elsewhere, link);
+      await exec("git", ["add", "-A"], { cwd: mindDir });
+      await exec("git", ["commit", "-qm", "link a skill"], { cwd: mindDir });
+      await uninstallSkill(mindName, mindDir, "foo");
+      assert.ok(!lexistsSync(link), "link removed");
+      assert.ok(existsSync(join(elsewhere, "SKILL.md")), "its target untouched");
+      assert.ok(existsSync(join(binDir(), "notes")), "no bin name taken from outside the mind");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("never follows or blocks on a SKILL.md that isn't a plain file when listing", async () => {
+    const secret = join(voluteHome(), "secret.md");
+    writeFileSync(secret, "---\nname: leaked\ndescription: SECRET\n---\n");
+    const skills = join(mindDir, "home", ".claude", "skills");
+    mkdirSync(join(skills, "linked"), { recursive: true });
+    symlinkSync(secret, join(skills, "linked", "SKILL.md"));
+    mkdirSync(join(skills, "piped"), { recursive: true });
+    execFileSync("mkfifo", [join(skills, "piped", "SKILL.md")]);
+    const listed = await listMindSkills(mindDir);
+    const linked = listed.find((sk) => sk.id === "linked");
+    assert.equal(linked?.name, "linked");
+    assert.equal(linked?.description, "");
+    assert.ok(listed.some((sk) => sk.id === "piped"));
+  });
+
+  it("auto-update at startup doesn't hang on a FIFO at a skill's SKILL.md", async () => {
+    const source = createSkillSource("shared-skill");
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "shared-skill");
+    await addMind(mindName, 4197);
+    try {
+      const md = join(mindDir, "home", ".claude", "skills", "shared-skill", "SKILL.md");
+      rmSync(md);
+      execFileSync("mkfifo", [md]);
+      await autoUpdateMindSkills(); // reconciles shims for a current skill: reads SKILL.md
+    } finally {
+      await (await getDb()).delete(minds).where(eq(minds.name, mindName));
     }
   });
 
@@ -1263,7 +1469,7 @@ describe("migrateSkillsToTemplate", () => {
     installBinShim(dir, skillId, "scripts/run.ts", subdir);
   }
 
-  it("moves installed skills to the new template dir and rewrites shims", () => {
+  it("moves installed skills to the new template dir and rewrites shims", async () => {
     const dir = join(voluteHome(), `test-migrate-${Date.now()}`);
     seedInstalledSkill(dir, ".claude/skills", "my-skill");
 
@@ -1273,7 +1479,7 @@ describe("migrateSkillsToTemplate", () => {
     assert.ok(readFileSync(hookShim, "utf-8").includes(".claude/skills/my-skill"));
     assert.ok(readFileSync(binShim, "utf-8").includes(".claude/skills/my-skill"));
 
-    const migrated = migrateSkillsToTemplate(dir, "claude", "pi");
+    const migrated = await migrateSkillsToTemplate(dir, "claude", "pi", null);
     assert.deepEqual(migrated, ["my-skill"]);
 
     // Skill moved to .pi/skills, old dir removed.
@@ -1298,33 +1504,80 @@ describe("migrateSkillsToTemplate", () => {
     rmSync(dir, { recursive: true });
   });
 
-  it("is a no-op when the template is unchanged", () => {
+  it("refuses a new skills dir the mind linked out of its tree", async () => {
+    const dir = join(voluteHome(), `test-migrate-link-${Date.now()}`);
+    seedInstalledSkill(dir, ".claude/skills", "my-skill");
+    const elsewhere = mkdtempSync(join(tmpdir(), "skills-elsewhere-"));
+    try {
+      symlinkSync(elsewhere, join(dir, "home", ".pi"));
+      await assert.rejects(() => migrateSkillsToTemplate(dir, "claude", "pi", null));
+      assert.deepEqual(readdirSync(elsewhere), []);
+      assert.ok(existsSync(join(dir, "home", ".claude", "skills", "my-skill", "SKILL.md")));
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("refuses an old skills dir the mind linked out of its tree", async () => {
+    const dir = join(voluteHome(), `test-migrate-oldlink-${Date.now()}`);
+    mkdirSync(join(dir, "home", ".claude"), { recursive: true });
+    const elsewhere = mkdtempSync(join(tmpdir(), "skills-elsewhere-"));
+    try {
+      mkdirSync(join(elsewhere, "theirs"));
+      writeFileSync(join(elsewhere, "theirs", "SKILL.md"), "someone else's\n");
+      symlinkSync(elsewhere, join(dir, "home", ".claude", "skills"));
+      await assert.rejects(() => migrateSkillsToTemplate(dir, "claude", "pi", null));
+      assert.ok(existsSync(join(elsewhere, "theirs", "SKILL.md")), "nothing moved in");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("removes an old skills dir the mind linked into its own tree as a link only", async () => {
+    const dir = join(voluteHome(), `test-migrate-inlink-${Date.now()}`);
+    const project = join(dir, "home", "projects", "kept");
+    mkdirSync(project, { recursive: true });
+    writeFileSync(join(project, "notes.md"), "the mind's work\n");
+    mkdirSync(join(dir, "home", ".claude"), { recursive: true });
+    symlinkSync(project, join(dir, "home", ".claude", "skills"));
+    try {
+      await migrateSkillsToTemplate(dir, "claude", "pi", null);
+      assert.equal(readFileSync(join(project, "notes.md"), "utf-8"), "the mind's work\n");
+      assert.ok(!lexistsSync(join(dir, "home", ".claude", "skills")), "link removed");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("is a no-op when the template is unchanged", async () => {
     const dir = join(voluteHome(), `test-migrate-noop-${Date.now()}`);
     seedInstalledSkill(dir, ".claude/skills", "my-skill");
 
-    const migrated = migrateSkillsToTemplate(dir, "claude", "claude");
+    const migrated = await migrateSkillsToTemplate(dir, "claude", "claude", null);
     assert.deepEqual(migrated, []);
     assert.ok(existsSync(join(dir, "home", ".claude", "skills", "my-skill", "SKILL.md")));
 
     rmSync(dir, { recursive: true });
   });
 
-  it("removes an empty old skills dir and migrates nothing", () => {
+  it("removes an empty old skills dir and migrates nothing", async () => {
     const dir = join(voluteHome(), `test-migrate-empty-${Date.now()}`);
     mkdirSync(join(dir, "home", ".claude", "skills"), { recursive: true });
 
-    const migrated = migrateSkillsToTemplate(dir, "claude", "codex");
+    const migrated = await migrateSkillsToTemplate(dir, "claude", "codex", null);
     assert.deepEqual(migrated, []);
     assert.ok(!existsSync(join(dir, "home", ".claude", "skills")), "empty old dir removed");
 
     rmSync(dir, { recursive: true });
   });
 
-  it("does nothing when the old skills dir is absent", () => {
+  it("does nothing when the old skills dir is absent", async () => {
     const dir = join(voluteHome(), `test-migrate-absent-${Date.now()}`);
     mkdirSync(join(dir, "home"), { recursive: true });
 
-    const migrated = migrateSkillsToTemplate(dir, "claude", "pi");
+    const migrated = await migrateSkillsToTemplate(dir, "claude", "pi", null);
     assert.deepEqual(migrated, []);
 
     rmSync(dir, { recursive: true });

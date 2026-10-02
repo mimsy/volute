@@ -579,7 +579,17 @@ export async function syncSpiritTemplate(): Promise<void> {
   const homeTemplate = detectHomeTemplate(dir);
   if (homeTemplate && homeTemplate !== expectedTemplate) {
     applyTemplateHomeFiles(resolve(dir, "home"), expectedTemplate);
-    const migrated = migrateSkillsToTemplate(dir, homeTemplate, expectedTemplate);
+    // A refusal (a skills dir linked out of the spirit's tree) mustn't keep the spirit
+    // from starting: its skills stay where they are.
+    const migrated = await migrateSkillsToTemplate(
+      dir,
+      homeTemplate,
+      expectedTemplate,
+      await mindFileOwner(spiritName),
+    ).catch((err) => {
+      slog.warn("failed to migrate the spirit's skills", log.errorData(err));
+      return [];
+    });
     const { chownMindDir } = await import("./isolation.js");
     await chownMindDir(dir, spiritName);
     slog.info(`spirit home switched ${homeTemplate} → ${expectedTemplate}`, { migrated });
