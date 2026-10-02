@@ -19,10 +19,9 @@ import { cleanGitEnv } from "./helpers/test-git-env.js";
 
 // Runs in its own file so flipping VOLUTE_ISOLATION only affects this process
 // (node runs each test file in a separate process). The `mind-<name>` OS user
-// intentionally does not exist, so chownMindDir's real `chown` fails — that
-// failure is the observable proving the failed-merge recovery path now hands
-// ownership of the parent worktree back to the mind under user isolation
-// (without it, the git ops leave the parent's files root-owned).
+// intentionally does not exist, so chownMindDir's real `chown` fails. The join's
+// git runs as the mind (#961), so it hands the tree to the mind first — and a
+// chown that can't do that must stop the join before any git touches the repo.
 
 const parentName = `vjoin-iso-${Date.now()}`;
 const variantName = `${parentName}-var`;
@@ -92,7 +91,8 @@ describe("failed variant join restores parent ownership under user isolation", (
     await db.delete(users).where(eq(users.username, "vjoin-iso-admin"));
   });
 
-  it("aborts the conflicting merge and triggers chownMindDir (fails against the absent mind user)", async () => {
+  it("refuses before any git runs when the tree can't be handed to the mind", async () => {
+    const head = (await exec("git", ["rev-parse", "HEAD"], { cwd: parentDir })).trim();
     const app = createApp();
     const res = await app.request(`/minds/${parentName}/variants/${variantName}/merge`, {
       method: "POST",
@@ -100,25 +100,20 @@ describe("failed variant join restores parent ownership under user isolation", (
       body: JSON.stringify({ skipVerify: true }),
     });
 
-    // The merge conflicts and is aborted, then chownMindDir runs to hand the
-    // parent worktree back to the mind user. That chown fails because the
-    // `mind-<name>` OS user does not exist here — proving ownership restore is
-    // wired into the failed-join path. Its conflict list still surfaces.
+    // The chown that hands the tree to the mind fails (no `mind-<name>` user), and
+    // the join stops there: no merge was attempted, so nothing ran as anyone.
     assert.equal(res.status, 500);
-    const body = (await res.json()) as { error: string; conflicts?: string[] };
+    const body = (await res.json()) as { error: string };
     assert.match(body.error, /chown/i);
-    assert.ok(
-      body.conflicts?.includes("MEMORY.md"),
-      `expected MEMORY.md in conflicts: ${JSON.stringify(body.conflicts)}`,
-    );
+    assert.equal((await exec("git", ["rev-parse", "HEAD"], { cwd: parentDir })).trim(), head);
+    assert.equal(existsSync(resolve(parentDir, ".git", "MERGE_HEAD")), false);
+    assert.ok(existsSync(variantDir), "the variant must be left intact");
   });
 });
 
-// A non-conflict early return: the main-worktree auto-commit fails (forced by a
-// failing pre-commit hook). This path used to return without restoring
-// ownership; it must now run chownMindDir too, so the same absent-mind-user
-// chown failure surfaces — proving every root-git-write early return in the
-// merge handler restores ownership, not only the conflict/abort path.
+// The main-worktree auto-commit would fail (a failing pre-commit hook), but with
+// no mind user to run it as, the join must not reach it: the hook never runs, and
+// least of all as the daemon.
 const acParent = `vjoin-ac-${Date.now()}`;
 const acVariant = `${acParent}-var`;
 
@@ -181,7 +176,7 @@ describe("failed auto-commit before merge restores ownership under user isolatio
     await db.delete(users).where(eq(users.username, "vjoin-ac-admin"));
   });
 
-  it("restores ownership when the pre-merge auto-commit fails", async () => {
+  it("never runs the mind's pre-commit hook when the tree can't be handed over", async () => {
     const app = createApp();
     const res = await app.request(`/minds/${acParent}/variants/${acVariant}/merge`, {
       method: "POST",
@@ -189,14 +184,15 @@ describe("failed auto-commit before merge restores ownership under user isolatio
       body: JSON.stringify({ skipVerify: true }),
     });
 
-    // The main auto-commit fails, then chownMindDir runs and fails against the
-    // absent mind user — the response carries both the auto-commit error and the
-    // ownership-restore failure, proving the early return now hands ownership
-    // back instead of leaving the parent root-owned.
     assert.equal(res.status, 500);
     const body = (await res.json()) as { error: string };
-    assert.match(body.error, /auto-commit main/i);
     assert.match(body.error, /chown/i);
+    assert.doesNotMatch(body.error, /auto-commit/i, "the auto-commit must not have been tried");
+    assert.match(
+      await exec("git", ["status", "--porcelain"], { cwd: acParentDir }),
+      /^ M MEMORY\.md$/m,
+      "the parent's uncommitted change must be left as it was",
+    );
   });
 });
 

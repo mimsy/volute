@@ -86,7 +86,7 @@ api() {
     -H "Authorization: Bearer $TOKEN" \
     -H "Origin: http://127.0.0.1:1618" \
     -H "Content-Type: application/json" \
-    "http://localhost:$HOST_PORT/api$path" "$@"
+    "http://localhost:$HOST_PORT/api/v1$path" "$@"
 }
 
 # Allow non-zero exit from curl (used in checks where we handle failure)
@@ -97,7 +97,7 @@ api_raw() {
     -H "Authorization: Bearer $TOKEN" \
     -H "Origin: http://127.0.0.1:1618" \
     -H "Content-Type: application/json" \
-    "http://localhost:$HOST_PORT/api$path" "$@"
+    "http://localhost:$HOST_PORT/api/v1$path" "$@"
 }
 
 poll_until() {
@@ -161,9 +161,9 @@ TOKEN=$(docker exec "$CONTAINER" sh -c "cat /data/system/daemon-token" | tr -d '
 
 assert_not_empty "$TOKEN" "Daemon token is non-empty"
 
-# Verify token works
-health_resp=$(api GET /health)
-assert_contains "$health_resp" '"ok":true' "Token authenticates successfully"
+# Verify token works (an authenticated route — /api/health takes no token)
+minds_list=$(api GET /minds)
+assert_contains "$minds_list" '^\[' "Token authenticates successfully"
 
 # ─── Phase 3: Create two minds ───────────────────────────────────────────────
 
@@ -173,8 +173,12 @@ echo "Phase 3: Create two minds"
 # The container entrypoint never runs `volute setup`, but CLI commands are now
 # gated on setup completion. Write the setup config the container path expects
 # (system install, per-mind user isolation — matching VOLUTE_ISOLATION=user).
+# An enabled model is required too: mind creation refuses when none is (#606).
+# Like daemon-e2e, the provider credential is the ANTHROPIC_API_KEY env, if any.
+# Sleep is off: inside the default 00:00–08:00 window the minds go to sleep
+# mid-run, and every later "is running" check fails for a reason that isn't one.
 docker exec "$CONTAINER" sh -c \
-  'mkdir -p /data/system && printf %s "{\"setup\":{\"type\":\"system\",\"isolation\":\"user\"},\"setupCompleted\":true}" > /data/system/config.json'
+  'mkdir -p /data/system && printf %s "{\"setup\":{\"type\":\"system\",\"isolation\":\"user\"},\"setupCompleted\":true,\"ai\":{\"providers\":{},\"models\":[\"anthropic:claude-sonnet-4-5\"]},\"mindDefaults\":{\"sleep\":{\"enabled\":false}}}" > /data/system/config.json'
 pass "Setup config written"
 
 # CLI commands proxy through the daemon and need an operator session. Register
@@ -453,6 +457,135 @@ else
   else
     fail "merge context message not found in parent history"
   fi
+fi
+
+# ─── Phase 7c: Git in a mind's repo runs the mind's hooks as the mind (#961) ─
+#
+# A mind can point core.hooksPath at hooks it wrote. Every git command the
+# daemon makes in the mind's repo — upgrade, split, join — must run as the mind,
+# or those hooks execute with the daemon's (root's) privilege. bob gets a
+# recording hook for each hook git can fire; every recorded uid must be bob's.
+
+echo ""
+echo "Phase 7c: Daemon git in a mind's repo runs the mind's hooks as the mind"
+
+BOB_UID=$(docker exec "$CONTAINER" id -u mind-bob)
+HOOK_LOG=/minds/bob/home/.hook-uids.log
+
+bob_git() { docker exec -u mind-bob -e HOME=/minds/bob/home "$CONTAINER" sh -c "$1"; }
+
+# Give the template branch something to update (a stray file the template
+# doesn't ship), so the upgrade makes its template-update commit, not just the
+# home/ migration ones. Done before the hooks are installed so none of it is logged.
+bob_git '
+  set -e
+  cd /minds/bob
+  git worktree add -q /tmp/bob-tpl volute/template
+  echo drift > /tmp/bob-tpl/drift.txt
+  git -C /tmp/bob-tpl add -A
+  git -C /tmp/bob-tpl commit -qm drift
+  git worktree remove --force /tmp/bob-tpl
+'
+
+# Each hook records its name, its uid, and the git command that fired it.
+bob_git '
+  set -e
+  d=/minds/bob/home/.hooks-961
+  mkdir -p "$d"
+  cat > "$d/record" <<"HOOK"
+#!/bin/sh
+cat >/dev/null 2>&1 || true
+echo "$(basename "$0") $(id -u) $(tr "\0" " " < /proc/$PPID/cmdline)" >> /minds/bob/home/.hook-uids.log
+HOOK
+  chmod +x "$d/record"
+  for h in pre-commit prepare-commit-msg commit-msg post-commit pre-merge-commit \
+           post-merge post-checkout post-rewrite reference-transaction post-index-change; do
+    cp "$d/record" "$d/$h"
+  done
+  git -C /minds/bob config core.hooksPath "$d"
+'
+
+# Assert every hook recorded since the last call ran as bob, then start afresh.
+# $1 labels the step; any further args are patterns that must appear in the log,
+# so a step that fired no hooks can't pass vacuously.
+check_hook_uids() {
+  local label=$1
+  shift
+  local log
+  log=$(docker exec "$CONTAINER" cat "$HOOK_LOG" 2>/dev/null || true)
+  local pattern
+  for pattern in "$@"; do
+    assert_contains "$log" "$pattern" "$label fired a hook matching '$pattern'"
+  done
+  local foreign
+  foreign=$(printf '%s\n' "$log" | awk -v uid="$BOB_UID" 'NF >= 2 && $2 != uid' | sort -u)
+  if [[ -z "$foreign" ]]; then
+    pass "$label ran every hook as mind-bob (uid $BOB_UID)"
+  else
+    fail "$label ran bob's hooks as another user:"
+    printf '    %s\n' "$foreign"
+  fi
+  bob_git ": > $HOOK_LOG"
+}
+
+check_bob_owns_tree() {
+  local root_owned
+  root_owned=$(docker exec "$CONTAINER" find /minds/bob -user root -print -quit 2>/dev/null)
+  if [[ -z "$root_owned" ]]; then
+    pass "no root-owned files under /minds/bob after $1"
+  else
+    fail "root-owned file under /minds/bob after $1: $root_owned"
+  fi
+}
+
+if upgrade_out=$(api POST /minds/bob/upgrade -d '{}' 2>&1); then
+  assert_contains "$upgrade_out" '"ok":true' "bob upgrade succeeded"
+else
+  fail "bob upgrade request failed"
+  echo "$upgrade_out"
+fi
+check_hook_uids "upgrade" "^pre-commit .* commit -m template update" "^post-checkout "
+check_bob_owns_tree "upgrade"
+
+# A mind that deleted volute/template makes the next upgrade rebuild a merge
+# base (establishTemplateBase): update-index/update-ref in the mind's repo.
+bob_git 'git -C /minds/bob branch -D volute/template >/dev/null'
+bob_git ": > $HOOK_LOG"
+if upgrade_out=$(api POST /minds/bob/upgrade -d '{}' 2>&1); then
+  assert_contains "$upgrade_out" '"ok":true' "bob upgrade without volute/template succeeded"
+else
+  fail "bob upgrade without volute/template failed"
+  echo "$upgrade_out"
+fi
+check_hook_uids "upgrade rebuilding the template base" "^reference-transaction .* update-ref HEAD"
+check_bob_owns_tree "upgrade rebuilding the template base"
+
+# Split and join: the worktree checkout, the variant's auto-commit, the merge.
+if split_out=$(docker exec "$CONTAINER" node dist/cli.js \
+  mind split bob-var --from bob --no-start --purpose "docker e2e: #961 hook uids" 2>&1); then
+  pass "variant bob-var split from bob"
+else
+  fail "variant bob-var split failed"
+  echo "$split_out"
+fi
+check_hook_uids "split" "^post-checkout .* worktree add"
+docker exec -u mind-bob "$CONTAINER" sh -c 'echo variant > /minds/bob/.variants/bob-var/variant-961.txt'
+if join_out=$(docker exec "$CONTAINER" node dist/cli.js \
+  mind join bob-var --skip-verify --summary "docker e2e" --justification "#961 hook uids" 2>&1); then
+  assert_contains "$join_out" "joined and cleaned up" "bob-var joined"
+else
+  fail "variant bob-var join failed"
+  echo "$join_out"
+fi
+check_hook_uids "join" "^pre-commit .* commit -m Auto-commit uncommitted changes before merge" "^post-commit .* commit --no-edit"
+check_bob_owns_tree "join"
+
+bob_git 'git -C /minds/bob config --unset core.hooksPath' || true
+
+if poll_until 90 mind_is_running bob; then
+  pass "bob running again after upgrade and join"
+else
+  fail "bob did not come back after upgrade and join"
 fi
 
 # ─── Phase 8: Stop minds & final checks ──────────────────────────────────────

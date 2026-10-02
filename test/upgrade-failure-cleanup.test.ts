@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { failureDetail } from "../packages/daemon/src/lib/daemon/auto-upgrade.js";
@@ -135,6 +135,24 @@ describe("mindGitOpts", () => {
     const opts = mindGitOpts("/minds/mimsy", "mimsy");
     assert.notEqual(opts.env?.HOME, "/minds/mimsy/home");
   });
+});
+
+describe("upgrade git runs as the mind (#961)", () => {
+  // The uid itself is only observable under real per-mind users — test/docker-e2e.sh
+  // Phase 7c records it from inside the mind's hooks. This pins the source side: a
+  // git call here that builds its own `{ cwd }` runs as the daemon, so none may.
+  for (const file of ["upgrade.ts", "variant-cleanup.ts"]) {
+    it(`has no git options in ${file} that bypass mindGitOpts`, () => {
+      const source = readFileSync(
+        resolve(import.meta.dirname, "../packages/daemon/src/lib/mind", file),
+        "utf-8",
+      );
+      // Whitespace collapsed first: the formatter splits a long call's options object
+      // across lines, which is exactly the shape the original root-run commits had.
+      const bare = source.replace(/\s+/g, " ").match(/\{ cwd: (?!string)[^}]*\}/g);
+      assert.equal(bare, null, `git options that bypass mindGitOpts: ${bare?.join(", ")}`);
+    });
+  }
 });
 
 describe("npmInstallEnv", () => {

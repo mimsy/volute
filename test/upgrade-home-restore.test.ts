@@ -118,7 +118,7 @@ describe("restoreMergeDeletedHomeFiles", () => {
     assert.ok(!existsSync(join(dir, "home", "with space.md")));
     assert.ok(!existsSync(join(dir, "home", "notes [draft]*.md")));
 
-    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead);
+    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead, "test-mind");
 
     assert.deepEqual(restored.sort(), [
       "home/.gitconfig",
@@ -157,7 +157,7 @@ describe("restoreMergeDeletedHomeFiles", () => {
 
     assert.ok(!existsSync(join(dir, "home", ".gitconfig")), "repro precondition: file deleted");
 
-    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead);
+    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead, "test-mind");
 
     assert.deepEqual(restored.sort(), [
       "home/.gitconfig",
@@ -187,7 +187,7 @@ describe("restoreMergeDeletedHomeFiles", () => {
       },
     });
 
-    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead);
+    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead, "test-mind");
 
     assert.ok(!restored.includes("home/memory/obsolete.md"), "template deletion must stand");
     assert.ok(!existsSync(join(dir, "home", "memory", "obsolete.md")));
@@ -216,7 +216,7 @@ describe("restoreMergeDeletedHomeFiles", () => {
 
     assert.ok(!existsSync(join(dir, "home", "old-doc.md")), "repro precondition: file deleted");
 
-    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead);
+    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead, "test-mind");
 
     assert.ok(restored.includes("home/old-doc.md"), "rename detection must not hide the deletion");
     assert.equal(readFileSync(join(dir, "home", "old-doc.md"), "utf-8"), content);
@@ -231,7 +231,7 @@ describe("restoreMergeDeletedHomeFiles", () => {
 
     const preMergeHead = runUpgradeSequence(dir, wt);
 
-    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead);
+    const restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead, "test-mind");
     assert.deepEqual(restored, []);
 
     // Untracked home files were never touched by any of this

@@ -57,7 +57,7 @@ describe("mergeWithUntrackResolution", () => {
     write("home/.claude/junk.txt", "main's modified content\n");
     await commitAll("main activity");
 
-    const result = await mergeWithUntrackResolution(repo, "upgrade");
+    const result = await mergeWithUntrackResolution(repo, "upgrade", "test-mind");
 
     assert.deepEqual(result, { merged: true });
 
@@ -83,7 +83,7 @@ describe("mergeWithUntrackResolution", () => {
     await commitAll("main edits value");
     const preMergeContent = readFileSync(resolve(repo, "src/file.ts"), "utf-8");
 
-    const result = await mergeWithUntrackResolution(repo, "upgrade");
+    const result = await mergeWithUntrackResolution(repo, "upgrade", "test-mind");
 
     assert.deepEqual(result, { merged: false, files: ["src/file.ts"] });
     assert.ok(!existsSync(resolve(repo, ".git/MERGE_HEAD")));
@@ -111,7 +111,7 @@ describe("mergeWithUntrackResolution", () => {
     write("home/.claude/junk.txt", "main line\n");
     await commitAll("edit ignored file on main");
 
-    const result = await mergeWithUntrackResolution(repo, "upgrade");
+    const result = await mergeWithUntrackResolution(repo, "upgrade", "test-mind");
 
     assert.deepEqual(result, { merged: true });
 
@@ -144,7 +144,7 @@ describe("mergeWithUntrackResolution", () => {
     const preMergeJunk = readFileSync(resolve(repo, "home/.claude/junk.txt"), "utf-8");
     const preMergeSrc = readFileSync(resolve(repo, "src/file.ts"), "utf-8");
 
-    const result = await mergeWithUntrackResolution(repo, "upgrade");
+    const result = await mergeWithUntrackResolution(repo, "upgrade", "test-mind");
 
     assert.equal(result.merged, false);
     if (!result.merged) {
@@ -174,7 +174,7 @@ describe("mergeWithUntrackResolution", () => {
     write("home/.claude/junk.txt", "main modified\n");
     await commitAll("add different .gitignore + edit file on main");
 
-    const result = await mergeWithUntrackResolution(repo, "upgrade");
+    const result = await mergeWithUntrackResolution(repo, "upgrade", "test-mind");
 
     assert.equal(result.merged, false);
     if (!result.merged) {
@@ -270,7 +270,7 @@ describe("resolvePackageJsonConflict", () => {
       { "@anthropic-ai/tokenizer": "^0.0.4", tsx: "^4.23.15", zod: "^4.0.0" },
     );
 
-    assert.equal(await resolvePackageJsonConflict(repo, null), true);
+    assert.equal(await resolvePackageJsonConflict(repo, "test-mind"), true);
 
     assert.equal(
       readFileSync(resolve(repo, "package.json"), "utf-8"),
@@ -290,7 +290,7 @@ describe("resolvePackageJsonConflict", () => {
       { "@anthropic-ai/tokenizer": "^0.0.4", tsx: "^4.23.15" },
     );
 
-    assert.equal(await resolvePackageJsonConflict(repo, null), false);
+    assert.equal(await resolvePackageJsonConflict(repo, "test-mind"), false);
 
     assert.equal((await git("diff", "--name-only", "--diff-filter=U")).trim(), "package.json");
   });
