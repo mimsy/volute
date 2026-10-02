@@ -367,7 +367,7 @@ describe("pages collaborative repo", () => {
     const worktreePath = resolve(mindDir, "home", "pages", "_system");
 
     // No HTML files — should show no pages
-    let status = await pagesStatus("test-pages-status", mindDir);
+    let status = await pagesStatus("test-pages-status", mindDir, dataDir);
     assert.equal(status, "No shared pages found.");
 
     // Make a change and commit — should show as draft
@@ -377,13 +377,13 @@ describe("pages collaborative repo", () => {
       cwd: worktreePath,
     });
 
-    status = await pagesStatus("test-pages-status", mindDir);
+    status = await pagesStatus("test-pages-status", mindDir, dataDir);
     assert.ok(status.includes("new.html"));
     assert.ok(status.includes("draft"));
 
     // Merge to main — should show as published
     await pagesMerge("test-pages-status", mindDir, dataDir, "publish");
-    status = await pagesStatus("test-pages-status", mindDir);
+    status = await pagesStatus("test-pages-status", mindDir, dataDir);
     assert.ok(status.includes("new.html"));
     assert.ok(status.includes("published"));
 
@@ -1621,6 +1621,13 @@ describe("pages collaborative repo", () => {
         R.refusedWorktree("some-mind", new Error("a symlink")),
       ].map((r) => r.message);
       assert.equal(refusals.length, Object.keys(R).length + 5, "every refusal, every variant");
+      // Every way back to publishing names the shared publish: a plain one never
+      // sends pages/_system (#1353).
+      const publishAgain = refusals.filter((x) => /publish(ing)? again/i.test(x));
+      assert.ok(publishAgain.length >= 11, `${publishAgain.length} refusals say publish again`);
+      for (const said of publishAgain) {
+        assert.ok(said.includes('`volute pages publish --shared "<note>"`'), said);
+      }
       const discards =
         /reset --hard|checkout -- \.|checkout -f|restore \.|clean -f|switch -f|--discard-changes/;
       for (const said of refusals) {

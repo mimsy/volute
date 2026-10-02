@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   linkSync,
@@ -365,6 +366,37 @@ describe("pages commands", () => {
     assert.equal(ctx._events[0].metadata.iframeUrl, "/ext/pages/public/test-mind/index.html");
   });
 
+  it("publish command names where the pages went, and that the commons is separate", async () => {
+    writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
+    const result = await createCommands().publish.handler(
+      { args: {}, flags: { remote: false, shared: false }, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in result, JSON.stringify(result));
+    assert.match(
+      result.output,
+      /^Published 1 files \(1 new\) to your personal pages \(http:\/\/localhost:\d+\/ext\/pages\/public\/test-mind\/\)\. Shared pages in pages\/_system publish separately with --shared\./,
+    );
+  });
+
+  it("publish command refuses a message without --shared, and publishes nothing", async () => {
+    writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
+    for (const remote of [false, true]) {
+      const result = await createCommands().publish.handler(
+        {
+          args: { message: "resolved the lore conflict" },
+          flags: { remote, shared: false },
+          rest: [],
+        },
+        makeCtx(),
+      );
+      assert.ok("error" in result, JSON.stringify(result));
+      assert.match(result.error, /only used with --shared/);
+      assert.match(result.error, /volute pages publish --shared "<note>"/);
+    }
+    assert.ok(!existsSync(resolve(dataDir, "sites", "test-mind")), "nothing was snapshotted");
+  });
+
   it("publish command reports removed files", async () => {
     // First publish with two HTML files
     writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
@@ -423,7 +455,7 @@ describe("pages commands", () => {
 
     const commands = createCommands();
     const ctx = makeCtx();
-    await commands.publish.handler(
+    const result = await commands.publish.handler(
       { args: {}, flags: { remote: false, shared: false }, rest: [] },
       ctx,
     );
@@ -432,6 +464,24 @@ describe("pages commands", () => {
     assert.ok(existsSync(resolve(snapshotDir, "index.html")));
     assert.ok(!existsSync(resolve(snapshotDir, "_system")));
     assert.ok(!existsSync(resolve(snapshotDir, "_system", "shared.html")));
+    // A bare _system dir isn't a worktree: git isn't asked about it, so no hint.
+    assert.ok("output" in result);
+    assert.doesNotMatch(result.output, /unpublished/);
+  });
+
+  it("publish command doesn't ask the mind's home repo about a _system that isn't a worktree", async () => {
+    // home/ is a git repo in a real mind. Without its own .git, git run in _system
+    // would walk up and report home's changes as the commons'.
+    execFileSync("git", ["init", "-q"], { cwd: resolve(mindDir, "home") });
+    writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
+    mkdirSync(resolve(pagesDir, "_system"));
+    writeFileSync(resolve(pagesDir, "_system", "shared.html"), "<h1>Shared</h1>");
+    const result = await createCommands().publish.handler(
+      { args: {}, flags: { remote: false, shared: false }, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in result, JSON.stringify(result));
+    assert.doesNotMatch(result.output, /unpublished/);
   });
 
   it("publish command rejects when no pages dir exists", async () => {

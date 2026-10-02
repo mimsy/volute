@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -205,5 +206,84 @@ describe("shared publish command events", () => {
     assert.ok("output" in result && result.output.includes("Nothing to publish"));
     assert.equal(ctx._activity.length, 1); // only the first publish
     assert.equal(ctx._announcements.length, 1);
+  });
+
+  // A plain publish never sends pages/_system, so it says when there's something
+  // there that only `--shared` would send — a mind ran plain publish after
+  // resolving a commons conflict and believed its work had gone out.
+  describe("plain publish and unpublished shared changes", () => {
+    const plain = (ctx: any) =>
+      createCommands().publish.handler(
+        { args: {}, flags: { remote: false, shared: false }, rest: [] },
+        ctx,
+      );
+    const hint = /pages\/_system has unpublished changes .*volute pages publish --shared "<note>"/;
+
+    it("says nothing about pages/_system when it matches main", async () => {
+      const result = await plain(makeCtx("alpha", mindA));
+      assert.ok("output" in result, JSON.stringify(result));
+      assert.doesNotMatch(result.output, /unpublished/);
+    });
+
+    it("points at --shared for uncommitted edits in pages/_system", async () => {
+      writeFileSync(join(mindA, "home/pages/_system/lore.md"), "# Lore\n");
+      const result = await plain(makeCtx("alpha", mindA));
+      assert.ok("output" in result, JSON.stringify(result));
+      assert.match(result.output, hint);
+    });
+
+    it("points at --shared for commits main doesn't have", async () => {
+      const wt = join(mindA, "home/pages/_system");
+      writeFileSync(join(wt, "lore.md"), "# Lore\n");
+      const git = (...args: string[]) =>
+        execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: wt });
+      git("add", "-A");
+      git("commit", "-qm", "wip");
+      const result = await plain(makeCtx("alpha", mindA));
+      assert.ok("output" in result, JSON.stringify(result));
+      assert.match(result.output, hint);
+    });
+
+    // A .git the mind planted brings its own config, and outside user isolation git
+    // runs as the daemon: neither plain publish nor `list --shared` may run git there.
+    it("runs no git in a pages/_system whose gitdir isn't vouched for", async (t) => {
+      t.mock.method(console, "warn", () => {});
+      const wt = join(mindA, "home/pages/_system");
+      rmSync(wt, { recursive: true, force: true });
+      mkdirSync(wt);
+      const marker = join(mindA, "probe-ran");
+      const probe = join(mindA, "probe");
+      writeFileSync(probe, `#!/bin/sh\necho ran >> "${marker}"\n`, { mode: 0o755 });
+      execFileSync("git", ["init", "-q"], { cwd: wt });
+      execFileSync("git", ["config", "core.fsmonitor", probe], { cwd: wt });
+      writeFileSync(join(wt, "lore.md"), "# Lore\n");
+
+      const ctx = makeCtx("alpha", mindA);
+      const result = await plain(ctx);
+      assert.ok("output" in result, JSON.stringify(result));
+      assert.doesNotMatch(result.output, /unpublished/);
+      const listed = await createCommands().list.handler(
+        { args: {}, flags: { shared: true }, rest: [] },
+        ctx as any,
+      );
+      assert.ok("error" in listed, JSON.stringify(listed));
+      assert.equal(existsSync(marker), false, "git ran in the planted repo");
+
+      // The probe does run when git is asked, so its absence above means something.
+      execFileSync("git", ["status"], { cwd: wt, stdio: "ignore" });
+      assert.ok(existsSync(marker));
+    });
+
+    it("stops pointing once the shared publish has gone out", async () => {
+      writeFileSync(join(mindA, "home/pages/_system/lore.md"), "# Lore\n");
+      const ctx = makeCtx("alpha", mindA);
+      await createCommands().publish.handler(
+        { args: { message: "start lore" }, flags: { remote: false, shared: true }, rest: [] },
+        ctx as any,
+      );
+      const result = await plain(ctx);
+      assert.ok("output" in result, JSON.stringify(result));
+      assert.doesNotMatch(result.output, /unpublished/);
+    });
   });
 });
