@@ -10,6 +10,7 @@ import {
   closeSync,
   constants,
   existsSync,
+  fchmodSync,
   fstatSync,
   lstatSync,
   mkdirSync,
@@ -219,13 +220,73 @@ async function isRepoValid(dir: string, isolation?: IsolationInfo): Promise<bool
   }
 }
 
+/**
+ * Give `path` `mode` through a handle opened without following a link, refusing
+ * anything that isn't a `dir`/file the daemon owns.
+ */
+function setDaemonMode(path: string, mode: number, dir: boolean): void {
+  const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+  const fd = openSync(path, dir ? flags | constants.O_DIRECTORY : flags);
+  try {
+    const st = fstatSync(fd);
+    if ((dir ? !st.isDirectory() : !st.isFile()) || st.uid !== process.getuid?.()) {
+      throw new Error(`${path} is not the daemon's own ${dir ? "directory" : "file"}`);
+    }
+    fchmodSync(fd, mode);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Keep the repo's own config, hooks and attributes the daemon's alone (#1285).
+ *
+ * `init --shared=group` makes all of `.git` writable by the `volute` group, and every
+ * mind is in it. Root runs merge and commit here, so a filter driver or hook a mind
+ * wrote into `.git/config` or `.git/hooks` would run as root. Minds need only
+ * `objects/` and `refs/` (and their own gitdir under `worktrees/`) to commit in
+ * their worktrees. So the work tree, `.git` itself (or a mind could rename `config`
+ * away and write its own), `hooks/`, `info/` and `worktrees/` go to 2755, and
+ * `config` and `HEAD` to 0644. An entry in `hooks/` or `info/` the daemon doesn't own
+ * is removed, and the rest lose group write.
+ *
+ * Throws if `.git`, one of those directories, `config` or `HEAD` is not the
+ * daemon's own: then the repo can't be trusted and the caller re-initializes it.
+ */
+export function hardenPagesRepo(dir: string): void {
+  const gitDir = resolve(dir, ".git");
+  setDaemonMode(dir, 0o2755, true);
+  setDaemonMode(gitDir, 0o2755, true);
+  for (const sub of ["hooks", "info", "worktrees"]) {
+    const path = resolve(gitDir, sub);
+    mkdirSync(path, { recursive: true });
+    setDaemonMode(path, 0o2755, true);
+  }
+  for (const file of ["config", "HEAD"]) setDaemonMode(resolve(gitDir, file), 0o644, false);
+  for (const sub of ["hooks", "info"]) {
+    for (const name of readdirSync(resolve(gitDir, sub))) {
+      const path = resolve(gitDir, sub, name);
+      const st = lstatSync(path);
+      if (st.isFile() && st.uid === process.getuid?.()) chmodSync(path, st.mode & 0o755);
+      else rmSync(path, { recursive: true, force: true });
+    }
+  }
+}
+
 /** Idempotently initialize the collaborative pages git repo. */
 export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo): Promise<void> {
   const dir = pagesRepoDir(dataDir);
   mkdirSync(dir, { recursive: true });
 
   if (existsSync(resolve(dir, ".git"))) {
-    if (await isRepoValid(dir, isolation)) return;
+    let trusted = true;
+    try {
+      hardenPagesRepo(dir);
+    } catch (err) {
+      console.warn(`[pages] repo tampered with: ${(err as Error).message}`);
+      trusted = false;
+    }
+    if (trusted && (await isRepoValid(dir, isolation))) return;
     // Any invalid or incomplete state — a husk .git from an interrupted init, or
     // a repo with no commits — is wiped and re-initialized. The repo's content
     // is regenerable (it's synced from minds' pages), so aggressive re-init is
@@ -249,8 +310,8 @@ export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo
     } catch {
       console.warn("[pages] failed to chgrp pages repo to volute group");
     }
-    chmodSync(dir, 0o2775);
   }
+  hardenPagesRepo(dir);
 }
 
 /** Add a git worktree at <mindDir>/home/pages/_system/ on a per-mind branch. */

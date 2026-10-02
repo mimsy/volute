@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -638,7 +641,7 @@ describe("pages collaborative repo", () => {
       },
       wrapForIsolation: async (cmd, args, mind) => {
         asMind.push({ mind, args });
-        return [cmd, args];
+        return ["env", [`PAGES_GIT_AS=${mind}`, cmd, ...args]];
       },
     };
     return { asMind, isolation };
@@ -737,6 +740,89 @@ describe("pages collaborative repo", () => {
     const { isolation } = containingIsolation();
     await removePagesWorktree("test-pages-swap-remove-a", a, dataDir, isolation);
     assert.ok(existsSync(resolve(b, "home", "pages", "_system", ".git")));
+  });
+
+  it("runs a filter from a redirected commondir as the mind, never as the daemon", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    t.mock.method(console, "error", () => {});
+    await ensurePagesRepo(dataDir);
+    const name = "test-pages-commondir";
+    const mindDir = await createFakeMind(name);
+    await addPagesWorktree(name, mindDir, dataDir);
+    const wt = resolve(mindDir, "home", "pages", "_system");
+    const gitDir = worktreeGitDir(pagesRepoDir(dataDir), wt)!;
+
+    // The mind owns its gitdir, so it can point `commondir` at a repo whose config
+    // defines a filter, and name that filter from its worktree.
+    const decoy = resolve(voluteHome(), "test-pages-commondir-decoy");
+    rmSync(decoy, { recursive: true, force: true });
+    mkdirSync(decoy, { recursive: true });
+    git(decoy, "init", "-q");
+    const marker = resolve(voluteHome(), "test-pages-commondir-ran");
+    rmSync(marker, { force: true });
+    const filter = resolve(decoy, "probe");
+    writeFileSync(filter, `#!/bin/sh\necho "as=[$PAGES_GIT_AS]" >> "${marker}"\ncat\n`, {
+      mode: 0o755,
+    });
+    git(decoy, "config", "filter.probe.clean", filter);
+    writeFileSync(resolve(gitDir, "commondir"), resolve(decoy, ".git"));
+    writeFileSync(resolve(wt, ".gitattributes"), "*.md filter=probe\n");
+    writeFileSync(resolve(wt, "lore.md"), "# Lore\n");
+
+    const { isolation } = containingIsolation();
+    // The commit after the filter fails on the decoy's missing objects; only who ran
+    // the filter matters here.
+    await pagesPull(name, mindDir, isolation).catch(() => {});
+    assert.ok(existsSync(marker), "the filter never ran, so this proves nothing");
+    for (const line of readFileSync(marker, "utf-8").trim().split("\n")) {
+      assert.equal(line, `as=[${name}]`);
+    }
+  });
+
+  it("keeps the repo's config, hooks and info out of the minds' group", async () => {
+    await ensurePagesRepo(dataDir);
+    const repo = pagesRepoDir(dataDir);
+    const gitDir = resolve(repo, ".git");
+    const head = git(repo, "rev-parse", "main");
+    // What `init --shared=group` leaves, plus a link a mind planted.
+    chmodSync(repo, 0o2775);
+    chmodSync(gitDir, 0o2775);
+    chmodSync(resolve(gitDir, "config"), 0o664);
+    chmodSync(resolve(gitDir, "hooks"), 0o2775);
+    writeFileSync(resolve(gitDir, "info", "attributes"), "*.md filter=probe\n", { mode: 0o664 });
+    symlinkSync("/bin/sh", resolve(gitDir, "hooks", "post-merge"));
+
+    await ensurePagesRepo(dataDir);
+
+    // Permission bits only: setgid needs root wherever the group isn't the test user's.
+    const mode = (p: string) => statSync(p).mode & 0o777;
+    for (const d of [
+      repo,
+      gitDir,
+      ...["hooks", "info", "worktrees"].map((d) => resolve(gitDir, d)),
+    ]) {
+      assert.equal(mode(d), 0o755, d);
+    }
+    assert.equal(mode(resolve(gitDir, "config")), 0o644);
+    assert.equal(mode(resolve(gitDir, "HEAD")), 0o644);
+    assert.equal(mode(resolve(gitDir, "info", "attributes")), 0o644);
+    assert.equal(existsSync(resolve(gitDir, "hooks", "post-merge")), false);
+    assert.equal(git(repo, "rev-parse", "main"), head, "a repair, not a re-init");
+  });
+
+  it("re-initializes a repo whose config was swapped for a link", async (t) => {
+    const warn = t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const config = resolve(pagesRepoDir(dataDir), ".git", "config");
+    const planted = resolve(voluteHome(), "test-pages-planted-config");
+    writeFileSync(planted, readFileSync(config, "utf-8"));
+    rmSync(config);
+    symlinkSync(planted, config);
+
+    await ensurePagesRepo(dataDir);
+
+    assert.ok(lstatSync(config).isFile());
+    assert.match(warn.mock.calls.map((c) => String(c.arguments[0])).join("\n"), /tampered/);
   });
 
   it("runs git in the mind's worktree as the mind, and no hook at all", async (t) => {
