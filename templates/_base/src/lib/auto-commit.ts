@@ -11,6 +11,8 @@ export function gitArgs(args: string[]): string[] {
 type Run = {
   code: number;
   stdout: string;
+  /** stdout untouched — for NUL-separated output, where a name may start with a space. */
+  raw: string;
   /** Ended by a signal (a stop's SIGTERM, say). */
   killed: boolean;
 };
@@ -19,7 +21,8 @@ function exec(cmd: string, args: string[], cwd: string, input?: string): Promise
   return new Promise((r) => {
     const child = execFile(cmd, args, { cwd }, (err, stdout) => {
       const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
-      r({ code, stdout: (stdout ?? "").trim(), killed: Boolean(err?.signal) });
+      const raw = stdout ?? "";
+      r({ code, stdout: raw.trim(), raw, killed: Boolean(err?.signal) });
     });
     // A git that dies before reading its input must not take the mind down with an
     // unhandled EPIPE; its own exit already reports the failure.
@@ -111,7 +114,7 @@ async function vanishedAmong(
   if (gone.length === 0) return new Set();
   const ls = await git(["--literal-pathspecs", "ls-files", "-z", "--", ...gone]);
   if (ls.code !== 0) return new Set();
-  const tracked = new Set(ls.stdout.split("\0").filter(Boolean));
+  const tracked = new Set(ls.raw.split("\0").filter(Boolean));
   return new Set(gone.filter((p) => !tracked.has(p)));
 }
 
@@ -126,7 +129,7 @@ async function ignoredAmong(
   git: (a: string[], input?: string) => Promise<Run>,
 ): Promise<Set<string>> {
   const all = await git(["check-ignore", "-z", "--stdin"], `${paths.join("\0")}\0`);
-  if (all.code === 0) return new Set(all.stdout.split("\0").filter(Boolean));
+  if (all.code === 0) return new Set(all.raw.split("\0").filter(Boolean));
   if (all.code === 1 && !all.killed) return new Set();
   const flagged = new Set<string>();
   for (const p of paths) {
@@ -154,6 +157,14 @@ const commitRetried = new Set<string>();
 const RETRIED_MAX = 1000;
 
 /**
+ * Kills per file. A kill is usually a stop landing mid-commit and always worth a retry,
+ * but a git killed every time (out of memory, say) must not loop silently: after
+ * KILLS_MAX the file is given up like any other. Cleared when its commit lands.
+ */
+const kills = new Map<string, number>();
+const KILLS_MAX = 3;
+
+/**
  * Files given up on, with the state they were in. Skipped until they change — codex
  * re-tracks every changed path from `git status` each turn, and without this a file
  * that can't be committed would go round fail, retry, give up every other turn.
@@ -168,6 +179,12 @@ function stamp(cwd: string, f: string): string {
   } catch {
     return "gone";
   }
+}
+
+/** A file's commit landed (or had nothing to do): clear its commit-retry and kill counts. */
+function settled(f: string): void {
+  commitRetried.delete(f);
+  kills.delete(f);
 }
 
 /** Whether a tracked file is worth trying: not given up on, or changed since. */
@@ -198,7 +215,17 @@ function requeue(
   for (const f of files) {
     // Killed first: a killed add of a tracked file's deletion must be retried, though
     // the file is gone — the deletion stages fine.
-    if (killed(f)) into.add(f);
+    if (killed(f)) {
+      const n = (kills.get(f) ?? 0) + 1;
+      if (n >= KILLS_MAX) {
+        kills.delete(f);
+        dropped.push(f);
+      } else {
+        kills.set(f, n);
+        if (kills.size > RETRIED_MAX) kills.delete(kills.keys().next().value as string);
+        into.add(f);
+      }
+    }
     // A failed add of a file that's gone and was never tracked would only fail again.
     else if (vanished(f)) dropped.push(f);
     else if (retried.delete(f)) dropped.push(f);
@@ -306,13 +333,14 @@ async function commitPending(cwd: string): Promise<void> {
     // mind ran `git add` itself), which isn't this batch's to name or claim.
     const changed =
       staged.length > 0 && (await exec("git", ["diff", "--cached", "--quiet"], cwd)).code !== 0;
-    if (!changed) for (const f of staged) commitRetried.delete(f); // nothing left to commit
+    // Nothing left to commit: whatever went wrong before is over.
+    if (!changed) for (const f of staged) settled(f);
     if (changed) {
       const names = staged.map((f) => f.replace(/^.*\//, "")).join(", ");
       const message = `Update ${names}`;
       const commit = await exec("git", ["commit", "-m", message], cwd);
       if (commit.code === 0) {
-        for (const f of staged) commitRetried.delete(f);
+        for (const f of staged) settled(f);
         log("auto-commit", message);
         // Push if a remote is configured
         const { stdout: remote } = await exec("git", ["remote"], cwd);
@@ -325,7 +353,7 @@ async function commitPending(cwd: string): Promise<void> {
       } else {
         const dropped = requeue(staged, () => commit.killed, pendingFiles, commitRetried, cwd);
         if (dropped.length === 0) log("auto-commit", `commit failed for: ${names} — will retry`);
-        else await giveUp(dropped, cwd, (a) => a, `commit failed twice for ${names}`);
+        else await giveUp(dropped, cwd, (a) => a, `commit kept failing for ${dropped.join(", ")}`);
       }
     }
   }
@@ -363,7 +391,7 @@ async function commitPending(cwd: string): Promise<void> {
     const changed =
       sharedStaged.length > 0 &&
       (await exec("git", gitArgs(["diff", "--cached", "--quiet"]), sharedCwd)).code !== 0;
-    if (!changed) for (const f of sharedStaged) commitRetried.delete(f);
+    if (!changed) for (const f of sharedStaged) settled(f);
     if (changed) {
       const names = shared.staged.map((f) => f.replace(/^.*\//, "")).join(", ");
       const message = `Update ${names}`;
@@ -374,7 +402,7 @@ async function commitPending(cwd: string): Promise<void> {
         sharedCwd,
       );
       if (commit.code === 0) {
-        for (const f of sharedStaged) commitRetried.delete(f);
+        for (const f of sharedStaged) settled(f);
         log("auto-commit", `[pages/_system] ${message}`);
       } else {
         const dropped = requeue(
@@ -390,7 +418,7 @@ async function commitPending(cwd: string): Promise<void> {
             dropped.map((f) => f.slice(sharedPrefix.length)),
             sharedCwd,
             gitArgs,
-            `[pages/_system] commit failed twice for ${names}`,
+            `[pages/_system] commit kept failing for ${dropped.join(", ")}`,
           );
         }
       }
@@ -428,7 +456,7 @@ function reportUnstaged(ignored: string[], dropped: string[], consequence = ""):
     const pronoun = dropped.length === 1 ? "it" : "they";
     warn(
       "auto-commit",
-      `git add failed for ${dropped.join(", ")} (twice, or the file is gone), so ${pronoun} will NOT be committed${tail}`,
+      `git add kept failing for ${dropped.join(", ")} (or the file is gone), so ${pronoun} will NOT be committed${tail}`,
     );
   }
 }

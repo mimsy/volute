@@ -224,6 +224,7 @@ describe("auto-commit retries (#1206)", () => {
   let hookStarted: string;
   let hookRuns: string;
   let killOn: string;
+  let killAlways: string;
 
   const mod = () => import("../templates/_base/src/lib/auto-commit.js");
   const commits = (cwd = repoDir) => Number(git(["rev-list", "--count", "HEAD"], cwd).trim());
@@ -264,6 +265,7 @@ exit 0
     hookStarted = join(scratch, "hook-started");
     hookRuns = join(scratch, "hook-runs");
     killOn = join(scratch, "kill-on");
+    killAlways = join(scratch, "kill-always");
     initRepo(repoDir);
     writeFileSync(join(repoDir, "SOUL.md"), "soul");
     writeFileSync(join(repoDir, "MEMORY.md"), "memory");
@@ -279,7 +281,7 @@ exit 0
     writeFileSync(
       join(binDir, "git"),
       // …and kills itself, as a stop's SIGTERM would, on the one call named in `killOn`.
-      `#!/bin/sh\necho "$*" >> "${gitLog}"\nif [ -f "${killOn}" ] && [ "$*" = "$(cat "${killOn}")" ]; then rm "${killOn}"; kill -TERM $$; fi\nexec "${realGit}" "$@"\n`,
+      `#!/bin/sh\necho "$*" >> "${gitLog}"\nif [ -f "${killOn}" ] && [ "$*" = "$(cat "${killOn}")" ]; then rm "${killOn}"; kill -TERM $$; fi\nif [ -f "${killAlways}" ] && [ "$*" = "$(cat "${killAlways}")" ]; then kill -TERM $$; fi\nexec "${realGit}" "$@"\n`,
     );
     chmodSync(join(binDir, "git"), 0o755);
   });
@@ -287,6 +289,19 @@ exit 0
   after(() => {
     rmSync(scratch, { recursive: true, force: true });
   });
+
+  /** Run `fn` with the recording git on PATH; returns every git call it made. */
+  async function recordingCalls(fn: () => Promise<void>): Promise<string[]> {
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${priorPath}`;
+    writeFileSync(gitLog, "");
+    try {
+      await fn();
+    } finally {
+      process.env.PATH = priorPath;
+    }
+    return readFileSync(gitLog, "utf-8").split("\n").filter(Boolean);
+  }
 
   /** Run `fn` with the recording git on PATH; returns the `git add` calls it made. */
   async function recordingAdds(fn: () => Promise<void>): Promise<string[]> {
@@ -644,6 +659,72 @@ exit 0
       assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update SOUL.md");
     } finally {
       rmSync(refuse, { force: true });
+    }
+  });
+
+  it("gives up on a file whose git is killed every time", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    writeFileSync(killAlways, "commit -m Update SOUL.md");
+    try {
+      writeFileSync(join(repoDir, "SOUL.md"), "soul, never quite committed");
+      trackFileChange("SOUL.md", repoDir);
+      const commitsTried = async () =>
+        (await recordingCalls(() => flushFileChanges(repoDir))).filter((l) =>
+          l.startsWith("commit "),
+        ).length;
+      assert.equal(await commitsTried(), 1);
+      assert.equal(await commitsTried(), 1);
+      assert.equal(await commitsTried(), 1); // the third kill: given up
+      assert.equal(await commitsTried(), 0, "a file killed every time kept looping");
+    } finally {
+      rmSync(killAlways, { force: true });
+      git(["reset", "-q", "--", "SOUL.md"], repoDir);
+      git(["checkout", "-q", "--", "SOUL.md"], repoDir);
+    }
+  });
+
+  it("names only the files it gives up on", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const warnings: string[] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+    writeFileSync(refuse, "");
+    try {
+      writeFileSync(join(repoDir, "SOUL.md"), "soul, refused twice");
+      trackFileChange("SOUL.md", repoDir);
+      await flushFileChanges(repoDir); // SOUL.md: its one retry is now spent
+      writeFileSync(join(repoDir, "MEMORY.md"), "memory, refused once");
+      trackFileChange("MEMORY.md", repoDir);
+      await flushFileChanges(repoDir); // both refused: SOUL.md given up, MEMORY.md retried
+    } finally {
+      console.error = realError;
+      rmSync(refuse, { force: true });
+    }
+    const givingUp = warnings.filter((w) => w.includes("will NOT be committed"));
+    assert.equal(givingUp.length, 1, warnings.join("\n"));
+    assert.match(givingUp[0], /SOUL\.md/);
+    assert.doesNotMatch(givingUp[0], /MEMORY\.md/, "named a file that is still being retried");
+    await flushFileChanges(repoDir); // MEMORY.md's retry lands
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update MEMORY.md");
+    git(["checkout", "-q", "--", "SOUL.md"], repoDir);
+  });
+
+  it("recognises an ignored file whose name starts with a space", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const name = " lead.txt";
+    writeFileSync(join(repoDir, ".gitignore"), "scratch.txt\n*lead.txt\n");
+    writeFileSync(join(repoDir, name), "ignored");
+    try {
+      trackFileChange(name, repoDir);
+      const adds = await recordingAdds(async () => {
+        await flushFileChanges(repoDir);
+        writeFileSync(gitLog, "");
+        await flushFileChanges(repoDir);
+      });
+      assert.deepEqual(adds, [], "an ignored file was retried");
+    } finally {
+      rmSync(join(repoDir, name));
+      git(["checkout", "-q", "--", ".gitignore"], repoDir);
     }
   });
 
