@@ -888,11 +888,14 @@ function stoppedOnConflict(files: string[]): Refusal {
       `stopped on a conflict in pages/_system: ${files.join(", ")}. In pages/_system, ` +
       "edit each of those files to what it should say (removing the <<<<<<< ======= >>>>>>> " +
       "markers) and `git add` it, then publish again: publishing commits the rest of your " +
-      "changes and finishes the rebase. Don't run `git rebase --continue` yourself: git " +
-      "can't delete its own bookkeeping refs in this repo, so it prints errors about " +
-      "packed-refs.lock, and can't finish at all once your resolution is committed. To " +
-      "set the rebase aside instead, `git rebase --abort` puts your branch back as it was " +
-      "(with the same packed-refs.lock errors), and the next publish meets this conflict again.",
+      "changes and finishes the rebase. `git status` will suggest `git rebase --continue`; " +
+      "that's git's generic hint, so publish again instead: git can't delete its own " +
+      "bookkeeping refs in this repo, so it prints errors about packed-refs.lock and can " +
+      "leave the rebase half-finished. If you already ran it, publishing again still " +
+      "recovers: first check those files have no <<<<<<< markers left, since once the " +
+      "rebase is through, publishing no longer looks for them. To set the rebase aside " +
+      "instead, `git rebase --abort` puts your branch back as it was (with the same " +
+      "packed-refs.lock errors), and the next publish meets this conflict again.",
   };
 }
 
