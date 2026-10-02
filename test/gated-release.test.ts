@@ -28,6 +28,7 @@ import {
   setRoutesChangeListener,
 } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import { createChannel } from "../packages/daemon/src/lib/events/conversations.js";
+import { upsertEventRule } from "../packages/daemon/src/lib/mind/event-routes.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { channelGates, deliveryQueue, mindHistory } from "../packages/daemon/src/lib/schema.js";
 
@@ -876,6 +877,44 @@ describe("gated-channel release (#537)", () => {
         ["discord:a", "discord:b"],
         "both rules survive",
       );
+    });
+
+    it("does not lose an event rule written while an accept is in flight (#1261)", async () => {
+      // accept's read and its replace must be one step: an upsertEventRule landing between
+      // them would otherwise be overwritten by accept's stale copy. Start the upsert at a
+      // spread of points through the accept so one lands in that window.
+      manager = makeManager().manager;
+      for (let ticks = 0; ticks < 40; ticks++) {
+        const name = createMind({ rules: [], default: "main" });
+        cleanup.push(name);
+        const dir = resolve(process.env.VOLUTE_HOME!, "minds", name);
+        const accept = manager.acceptChannel(name, "discord:general", "discord");
+        for (let i = 0; i < ticks; i++) await new Promise((r) => setImmediate(r));
+        await upsertEventRule(dir, "schedule:dream", "dreams", { owner: null, name });
+        await accept;
+
+        const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
+        assert.ok(
+          written.rules?.some((r) => r.event === "schedule:dream"),
+          `event rule survives (upsert after ${ticks} ticks)`,
+        );
+        assert.ok(
+          written.rules?.some((r) => r.channel === "discord:general"),
+          "accept rule too",
+        );
+      }
+    });
+
+    it("treats an empty routes.json as no routing yet, as the router does", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      manager = makeManager().manager;
+      writeFileSync(routesPath(name), "  \n");
+
+      const result = await manager.acceptChannel(name, "discord:general", "discord");
+      assert.equal(result.ruleAdded, true);
+      const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
+      assert.deepEqual(written.rules, [{ channel: "discord:general", thread: "discord" }]);
     });
 
     it("refuses to touch a malformed routes.json", async () => {
