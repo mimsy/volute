@@ -10,6 +10,7 @@ import {
   closeSync,
   constants,
   existsSync,
+  fchmodSync,
   fstatSync,
   lstatSync,
   mkdirSync,
@@ -17,6 +18,7 @@ import {
   readdirSync,
   readSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -31,6 +33,7 @@ export type IsolationInfo = {
   isIsolationEnabled: () => boolean;
   getMindUser: (name: string) => string;
   containMindPath: (name: string, path: string) => Promise<string>;
+  wrapForIsolation: (cmd: string, args: string[], name: string) => Promise<[string, string[]]>;
 };
 
 /** Extract IsolationInfo from an ExtensionContext-shaped object. */
@@ -39,6 +42,7 @@ export function isolationFrom(ctx: IsolationInfo): IsolationInfo {
     isIsolationEnabled: ctx.isIsolationEnabled,
     getMindUser: ctx.getMindUser,
     containMindPath: ctx.containMindPath,
+    wrapForIsolation: ctx.wrapForIsolation,
   };
 }
 
@@ -74,25 +78,46 @@ async function chownToMindTree(isolation: IsolationInfo, mindName: string, path:
 const IDENTITY_ARGS = ["-c", "user.name=volute", "-c", "user.email=volute@localhost"];
 
 /**
- * Run a git command. Adds safe.directory when isolation is enabled, and a
- * committer identity for `commit` so commits never depend on host git config.
+ * Where a git command runs, and as whom. `asMind` runs it as that mind under user
+ * isolation, with `home` as its HOME; see `mindWorktree`.
+ */
+type GitOpts = { cwd: string; asMind?: { name: string; home: string } };
+
+/**
+ * How long one git command may run. A mind owns its gitdir under `.git/worktrees/`,
+ * and root's `worktree prune`, `branch -D` and checked-out-branch checks read every
+ * gitdir there: a FIFO planted in one would otherwise hang the command, and the
+ * pages lock it holds, forever.
+ */
+const GIT_TIMEOUT_MS = 120_000;
+
+/**
+ * Run a git command. Adds safe.directory when isolation is enabled, and a committer
+ * identity so commits, and the commits a rebase replays, never depend on host or
+ * mind git config.
+ *
+ * Hooks and fsmonitor are off for every call, so no git here runs a program it found
+ * on disk that way. Git run as a mind doesn't auto-gc either: that would write
+ * `.git/gc.pid` and `packed-refs`, which only root may write (`hardenPagesRepo`).
  *
  * The env is the daemon's mind allowlist, not `process.env`: the commit, merge and
- * rebase here run in worktrees minds write to, and a hook a mind plants there must
- * not see `VOLUTE_DAEMON_TOKEN` (#966).
+ * rebase here run in worktrees minds write to, and a program a mind gets git to run
+ * there (a filter driver, say) must not see `VOLUTE_DAEMON_TOKEN` (#966).
  */
-function gitExec(
-  args: string[],
-  opts: { cwd: string },
-  isolation?: IsolationInfo,
-): Promise<string> {
-  const prefix: string[] = [];
-  if (isolation?.isIsolationEnabled()) prefix.push("-c", "safe.directory=*");
-  if (args[0] === "commit") prefix.push(...IDENTITY_ARGS);
-  const fullArgs = prefix.length ? [...prefix, ...args] : args;
+async function gitExec(args: string[], opts: GitOpts, isolation?: IsolationInfo): Promise<string> {
+  const isIso = isolation?.isIsolationEnabled() ?? false;
+  const prefix = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...IDENTITY_ARGS];
+  if (isIso) prefix.push("-c", "safe.directory=*");
+  const env = buildMindBaseEnv();
+  let [cmd, argv] = ["git", [...prefix, ...args]];
+  if (isIso && opts.asMind) {
+    argv = [...prefix, "-c", "gc.auto=0", "-c", "maintenance.auto=false", ...args];
+    [cmd, argv] = await isolation!.wrapForIsolation(cmd, argv, opts.asMind.name);
+    env.HOME = opts.asMind.home;
+  }
   return new Promise((resolve, reject) => {
-    const env = buildMindBaseEnv();
-    execFileCb("git", fullArgs, { cwd: opts.cwd, env }, (err, stdout, stderr) => {
+    const execOpts = { cwd: opts.cwd, env, timeout: GIT_TIMEOUT_MS };
+    execFileCb(cmd, argv, execOpts, (err, stdout, stderr) => {
       if (err) {
         const e = err as Error & { stderr?: string; stdout?: string };
         e.stderr = stderr;
@@ -150,6 +175,16 @@ export function worktreeGitDir(repoDir: string, worktree: string): string | null
   }
 }
 
+/** Whether the worktree's `.git` names a gitdir that no longer exists. */
+function isDanglingWorktree(wt: string): boolean {
+  try {
+    const match = readPointerFile(resolve(wt, ".git")).match(/^gitdir:\s*(.+)$/);
+    return !!match && !existsSync(resolve(wt, match[1]));
+  } catch {
+    return false;
+  }
+}
+
 /** Path to the collaborative pages repo within the extension data directory. */
 export function pagesRepoDir(dataDir: string): string {
   return resolve(dataDir, "repo");
@@ -157,6 +192,49 @@ export function pagesRepoDir(dataDir: string): string {
 
 function worktreePath(mindDir: string): string {
   return resolve(mindDir, "home", "pages", "_system");
+}
+
+/**
+ * Git options for the mind's worktree. Under user isolation the worktree is contained
+ * first, because the mind owns `home/` and `home/pages` and can swap either for a
+ * symlink into another mind's pages (#1285). Git then runs as the mind, not as root.
+ * The worktree's gitdir is the mind's (`addPagesWorktree` hands it over), and its
+ * `commondir` file decides which repo's config git reads. So root git here would run
+ * any filter driver or other program that config names. Throws if containment
+ * refuses, or if the worktree isn't there.
+ */
+async function mindWorktree(
+  mindName: string,
+  mindDir: string,
+  isolation?: IsolationInfo,
+): Promise<GitOpts> {
+  const wt = worktreePath(mindDir);
+  if (!isolation?.isIsolationEnabled()) return { cwd: wt };
+  return {
+    cwd: await isolation.containMindPath(mindName, wt),
+    asMind: { name: mindName, home: resolve(mindDir, "home") },
+  };
+}
+
+/** What a mind is told when its worktree can't be contained. */
+function refusedWorktree(mindName: string, err: unknown): { ok: false; message: string } {
+  console.warn(`[pages] refused ${mindName}'s worktree: ${(err as Error).message}`);
+  if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    // Never provisioned, or removed (#795).
+    return {
+      ok: false,
+      message:
+        "Nothing was done: pages/_system doesn't exist yet. It's set up when you start, " +
+        "so restart and try again.",
+    };
+  }
+  return {
+    ok: false,
+    message:
+      `Nothing was done: pages/_system can't be used (${(err as Error).message}). ` +
+      "If home/pages or pages/_system is a symlink or was moved, put the real directory back " +
+      "(or move it aside and restart to provision a fresh worktree), then try again.",
+  };
 }
 
 /**
@@ -173,17 +251,151 @@ async function isRepoValid(dir: string, isolation?: IsolationInfo): Promise<bool
   }
 }
 
+/**
+ * Give `path` `mode` through a handle opened without following a link, refusing
+ * anything that isn't a `dir`/file the daemon owns. A file with a second name is
+ * refused too: the chmod would reach whatever else that name is.
+ */
+function setDaemonMode(path: string, mode: number, dir: boolean): void {
+  const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+  const fd = openSync(path, dir ? flags | constants.O_DIRECTORY : flags);
+  try {
+    const st = fstatSync(fd);
+    const wrongKind = dir ? !st.isDirectory() : !st.isFile() || isMultiplyLinkedFile(st);
+    if (wrongKind || st.uid !== process.getuid?.()) {
+      throw new Error(`${path} is not the daemon's own ${dir ? "directory" : "file"}`);
+    }
+    fchmodSync(fd, mode);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * The repo config keys `git init` writes. Anything else in the config was put there
+ * by someone else, when the config was still group-writable.
+ */
+const REPO_CONFIG_KEYS = new Set([
+  "core.repositoryformatversion",
+  "core.filemode",
+  "core.bare",
+  "core.logallrefupdates",
+  "core.sharedrepository",
+  "core.ignorecase",
+  "core.precomposeunicode",
+  "core.symlinks",
+  "extensions.objectformat",
+  "extensions.refstorage",
+  "extensions.relativeworktrees",
+  "receive.denynonfastforwards",
+]);
+
+/** Whether `path` is a regular file the daemon owns, with no second name. */
+function isDaemonFile(path: string): boolean {
+  try {
+    const st = lstatSync(path);
+    return st.isFile() && st.uid === process.getuid?.() && !isMultiplyLinkedFile(st);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Keep the repo's own config, hooks and attributes the daemon's alone (#1285).
+ *
+ * `init --shared=group` makes all of `.git` writable by the `volute` group, and every
+ * mind is in it. Root runs merge and commit here, and minds run git in their
+ * worktrees, all reading this config. So a filter or merge driver, `include.path` or
+ * `gpg.program` one mind wrote into it would run as root, or as every other mind.
+ * Minds need only `objects/` and `refs/` (and their own gitdir under `worktrees/`)
+ * to commit in their worktrees, so:
+ *
+ * - `.git`, `hooks/`, `info/` and `worktrees/` go to 2755. They are not
+ *   group-writable at all, so no sticky bit is needed for a mind to be unable to
+ *   rename `config` away or replace another mind's gitdir;
+ * - a `config` or `HEAD` that isn't the daemon's own file is replaced, and history
+ *   kept: `HEAD` names `main` again, and `git init` writes a fresh config. Both go
+ *   to 0644, and `config` keeps only the keys `git init` writes;
+ * - `hooks/` is emptied (hooks never run here), and `info/` keeps only an
+ *   `exclude` that is the daemon's own file;
+ * - `commondir`, `gitdir` and `config.worktree` in `.git` are removed: a main repo
+ *   never has them, and each would change where git reads config from.
+ *
+ * Runs at every daemon start, so it also repairs installs from before it existed.
+ * Throws if `.git` or one of those directories is not the daemon's own: the repo
+ * can't be trusted, and the caller re-initializes it.
+ */
+export async function hardenPagesRepo(dir: string, isolation?: IsolationInfo): Promise<void> {
+  const gitDir = resolve(dir, ".git");
+  setDaemonMode(gitDir, 0o2755, true);
+  for (const sub of ["hooks", "info", "worktrees"]) {
+    const path = resolve(gitDir, sub);
+    mkdirSync(path, { recursive: true });
+    setDaemonMode(path, 0o2755, true);
+  }
+  for (const name of ["commondir", "gitdir", "config.worktree"]) {
+    rmSync(resolve(gitDir, name), { recursive: true, force: true });
+  }
+  for (const name of readdirSync(resolve(gitDir, "hooks"))) {
+    rmSync(resolve(gitDir, "hooks", name), { recursive: true, force: true });
+  }
+  for (const name of readdirSync(resolve(gitDir, "info"))) {
+    const path = resolve(gitDir, "info", name);
+    if (name === "exclude" && isDaemonFile(path)) chmodSync(path, 0o644);
+    else rmSync(path, { recursive: true, force: true });
+  }
+
+  const head = resolve(gitDir, "HEAD");
+  const config = resolve(gitDir, "config");
+  if (!isDaemonFile(head)) {
+    console.warn("[pages] replacing a pages repo HEAD that isn't the daemon's");
+    rmSync(head, { recursive: true, force: true });
+    writeFileSync(head, "ref: refs/heads/main\n");
+  }
+  if (!isDaemonFile(config)) {
+    console.warn("[pages] replacing a pages repo config that isn't the daemon's");
+    rmSync(config, { recursive: true, force: true });
+    const shared = isolation?.isIsolationEnabled() ? ["--shared=group"] : [];
+    await gitExec(["init", "-q", ...shared], { cwd: dir }, isolation);
+    // A re-init re-applies the shared permissions it would give a new repo.
+    return hardenPagesRepo(dir, isolation);
+  }
+  setDaemonMode(head, 0o644, false);
+  setDaemonMode(config, 0o644, false);
+
+  // Read and edited as a plain file, never as a repo's config: no include followed.
+  const keys = await gitExec(
+    ["config", "--file", config, "--no-includes", "--name-only", "--list"],
+    { cwd: dirname(dir) },
+  );
+  for (const key of new Set(keys.split("\n").filter(Boolean))) {
+    if (REPO_CONFIG_KEYS.has(key.toLowerCase())) continue;
+    console.warn(`[pages] removing ${key} from the pages repo config`);
+    await gitExec(["config", "--file", config, "--unset-all", key], { cwd: dirname(dir) });
+  }
+}
+
 /** Idempotently initialize the collaborative pages git repo. */
 export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo): Promise<void> {
   const dir = pagesRepoDir(dataDir);
   mkdirSync(dir, { recursive: true });
+  // The work tree itself is never wiped: if it isn't the daemon's own directory,
+  // nothing here can be trusted to repair, so fail and leave it to a host.
+  setDaemonMode(dir, 0o2755, true);
 
   if (existsSync(resolve(dir, ".git"))) {
-    if (await isRepoValid(dir, isolation)) return;
-    // Any invalid or incomplete state — a husk .git from an interrupted init, or
-    // a repo with no commits — is wiped and re-initialized. The repo's content
-    // is regenerable (it's synced from minds' pages), so aggressive re-init is
-    // safe, and it self-heals boxes stuck with a broken repo on next daemon start.
+    let trusted = true;
+    try {
+      await hardenPagesRepo(dir, isolation);
+    } catch (err) {
+      console.warn(`[pages] repo tampered with: ${(err as Error).message}`);
+      trusted = false;
+    }
+    if (trusted && (await isRepoValid(dir, isolation))) return;
+    // What's left — a husk .git from an interrupted init, a repo with no commits, or
+    // a .git that isn't the daemon's — is wiped and re-initialized. That drops every
+    // mind's branch, unpublished commits included; `addPagesWorktree` relinks each
+    // worktree to the new repo on the mind's next start, keeping its files.
     console.warn("[pages] repo invalid or incomplete, re-initializing");
     rmSync(resolve(dir, ".git"), { recursive: true, force: true });
   }
@@ -203,8 +415,8 @@ export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo
     } catch {
       console.warn("[pages] failed to chgrp pages repo to volute group");
     }
-    chmodSync(dir, 0o2775);
   }
+  await hardenPagesRepo(dir, isolation);
 }
 
 /** Add a git worktree at <mindDir>/home/pages/_system/ on a per-mind branch. */
@@ -222,7 +434,25 @@ export async function addPagesWorktree(
     return;
   }
 
-  const wt = worktreePath(mindDir);
+  // Under isolation the daemon is root, and the mind can swap `home` or `home/pages`
+  // for a symlink into another mind's tree: contain each before root writes in it,
+  // and hand git the real path (#1285).
+  let pages = resolve(mindDir, "home", "pages");
+  if (isolation?.isIsolationEnabled()) {
+    try {
+      const home = await isolation.containMindPath(mindName, resolve(mindDir, "home"));
+      mkdirSync(resolve(home, "pages"), { recursive: true });
+      pages = await isolation.containMindPath(mindName, resolve(home, "pages"));
+    } catch (err) {
+      console.warn(`[pages] refused ${mindName}'s home/pages: ${(err as Error).message}`);
+      return;
+    }
+  } else {
+    mkdirSync(pages, { recursive: true });
+  }
+
+  let wt = resolve(pages, "_system");
+  let relink = false;
   if (existsSync(wt)) {
     // A real worktree has a `.git` file. A plain directory here is what a mind
     // creates by hand when publishing failed for lack of a worktree (#795) — say
@@ -232,12 +462,21 @@ export async function addPagesWorktree(
       console.warn(
         `[pages] ${wt} exists but is not a worktree — shared publishing will fail for ${mindName}. Move it aside and restart the mind to provision one.`,
       );
+      return;
     }
-    return;
+    if (!isDanglingWorktree(wt)) return;
+    // The repo was re-initialized under it: relink it, keeping the mind's files.
+    if (isolation?.isIsolationEnabled()) {
+      try {
+        wt = await isolation.containMindPath(mindName, wt);
+      } catch (err) {
+        console.warn(`[pages] refused ${mindName}'s worktree: ${(err as Error).message}`);
+        return;
+      }
+    }
+    console.warn(`[pages] ${mindName}'s worktree lost its gitdir; relinking it`);
+    relink = true;
   }
-
-  // Ensure parent pages/ directory exists
-  mkdirSync(resolve(mindDir, "home", "pages"), { recursive: true });
 
   let branchExists = false;
   try {
@@ -247,10 +486,19 @@ export async function addPagesWorktree(
     // branch doesn't exist
   }
 
+  // A relink checks the branch out nowhere, then moves its `.git` into the worktree.
+  const target = relink ? resolve(pages, "._system.relink") : wt;
+  if (relink) rmSync(target, { recursive: true, force: true });
+  const add = relink ? ["worktree", "add", "--no-checkout"] : ["worktree", "add"];
   if (branchExists) {
-    await gitExec(["worktree", "add", wt, mindName], { cwd: dir }, isolation);
+    await gitExec([...add, target, mindName], { cwd: dir }, isolation);
   } else {
-    await gitExec(["worktree", "add", "-b", mindName, wt], { cwd: dir }, isolation);
+    await gitExec([...add, "-b", mindName, target], { cwd: dir }, isolation);
+  }
+  if (relink) {
+    renameSync(resolve(target, ".git"), resolve(wt, ".git"));
+    rmSync(target, { recursive: true, force: true });
+    await gitExec(["worktree", "repair", wt], { cwd: dir }, isolation);
   }
 
   if (isolation?.isIsolationEnabled()) {
@@ -264,7 +512,6 @@ export async function addPagesWorktree(
     } catch (err) {
       console.warn(`[pages] refused the gitdir of ${wt}: ${(err as Error).message}`);
     }
-    const pages = resolve(mindDir, "home", "pages");
     try {
       await chownToMindTree(isolation, mindName, pages);
     } catch (err) {
@@ -280,6 +527,10 @@ export async function addPagesWorktree(
       }
     }
   }
+  // The index starts empty after `--no-checkout`: read it from the branch, as the
+  // mind, so the mind's files show as its changes against the branch.
+  if (relink)
+    await gitExec(["reset", "-q"], await mindWorktree(mindName, mindDir, isolation), isolation);
 }
 
 /** Remove the worktree and branch for a mind. */
@@ -292,9 +543,18 @@ export async function removePagesWorktree(
   const dir = pagesRepoDir(dataDir);
   if (!existsSync(resolve(dir, ".git"))) return;
 
-  const wt = worktreePath(mindDir);
+  // `worktree remove --force` deletes the tree as root: never through a swapped link.
+  let wt: string | null = worktreePath(mindDir);
+  try {
+    wt = (await mindWorktree(mindName, mindDir, isolation)).cwd;
+  } catch (err) {
+    if (existsSync(wt)) {
+      console.warn(`[pages] refused ${mindName}'s worktree: ${(err as Error).message}`);
+    }
+    wt = null;
+  }
 
-  if (existsSync(wt)) {
+  if (wt && existsSync(wt)) {
     try {
       await gitExec(["worktree", "remove", "--force", wt], { cwd: dir }, isolation);
     } catch (err) {
@@ -340,17 +600,17 @@ async function withPagesLock<T>(fn: () => Promise<T>): Promise<T> {
  * shows up as modified: its inode changes, and differing content is all that could
  * leak. Symlinks pass: `lstat` does not follow them, and git stores them as a path.
  */
-async function findMultiplyLinkedFiles(wt: string, isolation?: IsolationInfo): Promise<string[]> {
+async function findMultiplyLinkedFiles(git: GitOpts, isolation?: IsolationInfo): Promise<string[]> {
   const out = await gitExec(
     ["--no-optional-locks", "ls-files", "-z", "-o", "-m", "--exclude-standard"],
-    { cwd: wt },
+    git,
     isolation,
   );
   const found = new Set<string>();
   for (const rel of out.split("\0")) {
     if (!rel) continue;
     try {
-      if (isMultiplyLinkedFile(lstatSync(resolve(wt, rel)))) found.add(rel);
+      if (isMultiplyLinkedFile(lstatSync(resolve(git.cwd, rel)))) found.add(rel);
     } catch (err: any) {
       // Listed as modified because it was deleted, or removed since the listing.
       if (err?.code !== "ENOENT") throw err;
@@ -362,22 +622,23 @@ async function findMultiplyLinkedFiles(wt: string, isolation?: IsolationInfo): P
 /**
  * Commit whatever the mind has left uncommitted in its worktree, or refuse.
  *
- * `git add -A` runs as the daemon — root under user isolation — and stores a file
- * by its *content*. A hard link the mind planted to a file it cannot read (possible
- * on macOS, which has no `protected_hardlinks`) would be read and committed with
- * root's privileges, and once squash-merged it is an ordinary file everywhere, past
- * every per-read guard from #1089 (#1095). So what `add -A` would stage is swept
- * first, and the whole operation is refused if any of it has a second name.
+ * `git add -A` stores a file by its *content*. It runs as the mind under user
+ * isolation now (#1285), but it ran as root when #1095 was found, and it still runs
+ * as the daemon's user without isolation. A hard link to a file the mind cannot read
+ * (possible on macOS, which has no `protected_hardlinks`) would then be committed
+ * with the daemon's privileges, and once squash-merged it is an ordinary file
+ * everywhere, past every per-read guard from #1089. So what `add -A` would stage is
+ * swept first, and the whole operation is refused if any of it has a second name.
  *
  * Like the containment checks in `ownership.ts`, this closes the durable hole, not
  * a link swapped in between the sweep and the `add`.
  */
 async function commitPendingChanges(
   mindName: string,
-  wt: string,
+  git: GitOpts,
   isolation?: IsolationInfo,
 ): Promise<{ ok: false; message: string } | null> {
-  const linked = await findMultiplyLinkedFiles(wt, isolation);
+  const linked = await findMultiplyLinkedFiles(git, isolation);
   if (linked.length > 0) {
     console.warn(
       `[pages] refused to commit ${mindName}'s worktree: hard-linked ${linked.join(", ")}`,
@@ -393,12 +654,12 @@ async function commitPendingChanges(
     };
   }
 
-  const status = (await gitExec(["status", "--porcelain"], { cwd: wt }, isolation)).trim();
+  const status = (await gitExec(["status", "--porcelain"], git, isolation)).trim();
   if (status) {
-    await gitExec(["add", "-A"], { cwd: wt }, isolation);
+    await gitExec(["add", "-A"], git, isolation);
     await gitExec(
       ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
-      { cwd: wt },
+      git,
       isolation,
     );
   }
@@ -417,7 +678,12 @@ export async function pagesMerge(
 ): Promise<{ ok: boolean; conflicts?: boolean; message?: string }> {
   return withPagesLock(async () => {
     const dir = pagesRepoDir(dataDir);
-    const wt = worktreePath(mindDir);
+    let wt: GitOpts;
+    try {
+      wt = await mindWorktree(mindName, mindDir, isolation);
+    } catch (err) {
+      return refusedWorktree(mindName, err);
+    }
 
     const refused = await commitPendingChanges(mindName, wt, isolation);
     if (refused) return refused;
@@ -459,7 +725,7 @@ export async function pagesMerge(
 
     // Reset mind's branch to main
     try {
-      await gitExec(["reset", "--hard", "main"], { cwd: wt }, isolation);
+      await gitExec(["reset", "--hard", "main"], wt, isolation);
     } catch (err: unknown) {
       console.error(`[pages] branch reset failed for ${mindName}`, err);
       return {
@@ -470,10 +736,12 @@ export async function pagesMerge(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        await chownToMindTree(isolation, mindName, wt);
+        await chownToMindTree(isolation, mindName, wt.cwd);
       } catch (err) {
         // Non-fatal: mind still functions but may hit permission errors
-        console.warn(`[pages] failed to chown ${wt} for ${mindName}: ${(err as Error).message}`);
+        console.warn(
+          `[pages] failed to chown ${wt.cwd} for ${mindName}: ${(err as Error).message}`,
+        );
       }
     }
 
@@ -490,14 +758,19 @@ export async function pagesPull(
   isolation?: IsolationInfo,
 ): Promise<{ ok: boolean; conflicts?: boolean; message?: string }> {
   return withPagesLock(async () => {
-    const wt = worktreePath(mindDir);
+    let wt: GitOpts;
+    try {
+      wt = await mindWorktree(mindName, mindDir, isolation);
+    } catch (err) {
+      return refusedWorktree(mindName, err);
+    }
 
     const refused = await commitPendingChanges(mindName, wt, isolation);
     if (refused) return refused;
 
     // Rebase onto main
     try {
-      await gitExec(["rebase", "main"], { cwd: wt }, isolation);
+      await gitExec(["rebase", "main"], wt, isolation);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       const isConflict =
@@ -506,7 +779,7 @@ export async function pagesPull(
         errMsg.includes("merge conflict");
 
       try {
-        await gitExec(["rebase", "--abort"], { cwd: wt }, isolation);
+        await gitExec(["rebase", "--abort"], wt, isolation);
       } catch (abortErr: unknown) {
         console.error("[pages] rebase abort failed", abortErr);
       }
@@ -526,9 +799,11 @@ export async function pagesPull(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        await chownToMindTree(isolation, mindName, wt);
+        await chownToMindTree(isolation, mindName, wt.cwd);
       } catch (err) {
-        console.warn(`[pages] failed to chown ${wt} for ${mindName}: ${(err as Error).message}`);
+        console.warn(
+          `[pages] failed to chown ${wt.cwd} for ${mindName}: ${(err as Error).message}`,
+        );
       }
     }
 
@@ -554,8 +829,13 @@ export async function pagesPullAndMerge(
   priorAuthors?: Record<string, string[]>;
 }> {
   return withPagesLock(async () => {
-    const wt = worktreePath(mindDir);
     const dir = pagesRepoDir(dataDir);
+    let wt: GitOpts;
+    try {
+      wt = await mindWorktree(mindName, mindDir, isolation);
+    } catch (err) {
+      return refusedWorktree(mindName, err);
+    }
 
     // Commit pending changes once (shared by pull and merge)
     const refused = await commitPendingChanges(mindName, wt, isolation);
@@ -563,7 +843,7 @@ export async function pagesPullAndMerge(
 
     // Rebase onto main (pull)
     try {
-      await gitExec(["rebase", "main"], { cwd: wt }, isolation);
+      await gitExec(["rebase", "main"], wt, isolation);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       const isConflict =
@@ -572,7 +852,7 @@ export async function pagesPullAndMerge(
         errMsg.includes("merge conflict");
 
       try {
-        await gitExec(["rebase", "--abort"], { cwd: wt }, isolation);
+        await gitExec(["rebase", "--abort"], wt, isolation);
       } catch (abortErr: unknown) {
         console.error("[pages] rebase abort failed", abortErr);
       }
@@ -651,7 +931,7 @@ export async function pagesPullAndMerge(
 
     // Reset mind's branch to main
     try {
-      await gitExec(["reset", "--hard", "main"], { cwd: wt }, isolation);
+      await gitExec(["reset", "--hard", "main"], wt, isolation);
     } catch (err: unknown) {
       console.error(`[pages] branch reset failed for ${mindName}`, err);
       return {
@@ -664,10 +944,12 @@ export async function pagesPullAndMerge(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        await chownToMindTree(isolation, mindName, wt);
+        await chownToMindTree(isolation, mindName, wt.cwd);
       } catch (err) {
         // Non-fatal: mind still functions but may hit permission errors
-        console.warn(`[pages] failed to chown ${wt} for ${mindName}: ${(err as Error).message}`);
+        console.warn(
+          `[pages] failed to chown ${wt.cwd} for ${mindName}: ${(err as Error).message}`,
+        );
       }
     }
 
@@ -712,25 +994,29 @@ export function isPageFile(f: string): boolean {
 }
 
 /** Show files in the mind's shared pages worktree with draft/published status. */
-export async function pagesStatus(mindDir: string, isolation?: IsolationInfo): Promise<string> {
-  const wt = worktreePath(mindDir);
+export async function pagesStatus(
+  mindName: string,
+  mindDir: string,
+  isolation?: IsolationInfo,
+): Promise<string> {
+  const wt = await mindWorktree(mindName, mindDir, isolation);
 
   // Get files on main and files on the mind's branch (including uncommitted)
   const errors: Error[] = [];
   const [mainFiles, branchFiles, uncommitted] = await Promise.all([
-    gitExec(["ls-tree", "-r", "--name-only", "main"], { cwd: wt }, isolation)
+    gitExec(["ls-tree", "-r", "--name-only", "main"], wt, isolation)
       .then((s) => s.trim().split("\n").filter(Boolean))
       .catch((err) => {
         errors.push(err);
         return [] as string[];
       }),
-    gitExec(["ls-tree", "-r", "--name-only", "HEAD"], { cwd: wt }, isolation)
+    gitExec(["ls-tree", "-r", "--name-only", "HEAD"], wt, isolation)
       .then((s) => s.trim().split("\n").filter(Boolean))
       .catch((err) => {
         errors.push(err);
         return [] as string[];
       }),
-    gitExec(["status", "--porcelain"], { cwd: wt }, isolation)
+    gitExec(["status", "--porcelain"], wt, isolation)
       .then((s) => s.trim())
       .catch((err) => {
         errors.push(err);
@@ -779,13 +1065,12 @@ export async function pagesStatus(mindDir: string, isolation?: IsolationInfo): P
 
 /** Show recent commit history on main. */
 export async function pagesLog(
+  mindName: string,
   mindDir: string,
   limit = 20,
   isolation?: IsolationInfo,
 ): Promise<string> {
-  const wt = worktreePath(mindDir);
-  const output = (
-    await gitExec(["log", "--oneline", "main", `-${limit}`], { cwd: wt }, isolation)
-  ).trim();
+  const wt = await mindWorktree(mindName, mindDir, isolation);
+  const output = (await gitExec(["log", "--oneline", "main", `-${limit}`], wt, isolation)).trim();
   return output || "No history.";
 }

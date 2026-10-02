@@ -30,6 +30,7 @@ import {
   isIsolationEnabled,
   mindFileOwner,
   mindUserName,
+  wrapForIsolation,
 } from "./mind/isolation.js";
 import {
   findMind,
@@ -389,6 +390,7 @@ export async function buildExtensionContext(
       const ids = await mindFileOwner(await getBaseName(mindName));
       return ids ? containMindPath(path, (st) => st.uid === ids.uid) : resolve(path);
     },
+    wrapForIsolation,
     // Delegate to the daemon's single source of truth, which falls back to "volute"
     // on installs that predate spirit naming. Reading setup.spiritName directly
     // returned null on those systems, so extension spirit paths no-opped forever.

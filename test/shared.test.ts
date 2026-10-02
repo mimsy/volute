@@ -1,19 +1,24 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
 import { gitExec } from "../packages/daemon/src/lib/util/exec.js";
+import { resolveRealWithinBase } from "../packages/daemon/src/lib/util/paths.js";
 import {
   addPagesWorktree,
   ensurePagesRepo,
@@ -358,7 +363,7 @@ describe("pages collaborative repo", () => {
     const worktreePath = resolve(mindDir, "home", "pages", "_system");
 
     // No HTML files — should show no pages
-    let status = await pagesStatus(mindDir);
+    let status = await pagesStatus("test-pages-status", mindDir);
     assert.equal(status, "No shared pages found.");
 
     // Make a change and commit — should show as draft
@@ -368,13 +373,13 @@ describe("pages collaborative repo", () => {
       cwd: worktreePath,
     });
 
-    status = await pagesStatus(mindDir);
+    status = await pagesStatus("test-pages-status", mindDir);
     assert.ok(status.includes("new.html"));
     assert.ok(status.includes("draft"));
 
     // Merge to main — should show as published
     await pagesMerge("test-pages-status", mindDir, dataDir, "publish");
-    status = await pagesStatus(mindDir);
+    status = await pagesStatus("test-pages-status", mindDir);
     assert.ok(status.includes("new.html"));
     assert.ok(status.includes("published"));
 
@@ -389,14 +394,14 @@ describe("pages collaborative repo", () => {
     const worktreePath = resolve(mindDir, "home", "pages", "_system");
 
     // Initial log should have at least the init commit
-    let log = await pagesLog(mindDir, 10);
+    let log = await pagesLog("test-pages-log", mindDir, 10);
     assert.ok(log.includes("init pages repo"));
 
     // Merge a change and check log
     writeFileSync(resolve(worktreePath, "index.html"), "<h1>Hi</h1>");
     await pagesMerge("test-pages-log", mindDir, dataDir, "Add index page");
 
-    log = await pagesLog(mindDir, 10);
+    log = await pagesLog("test-pages-log", mindDir, 10);
     assert.ok(log.includes("Add index page"));
 
     await removePagesWorktree("test-pages-log", mindDir, dataDir);
@@ -601,9 +606,9 @@ describe("pages collaborative repo", () => {
     await removePagesWorktree("test-pam-dirty", mindDir, dataDir);
   });
 
-  // #1248: under isolation these chowns run as root on paths the mind controls —
-  // it owns home/ and home/pages and can swap either for a symlink into another
-  // mind's pages. Every root must go through containment before it is chowned.
+  // #1248/#1285: under isolation the daemon is root and the mind owns home/ and
+  // home/pages, so it can swap either for a symlink into another mind's pages. Every
+  // path root writes or runs git in must be contained first.
   function refusingIsolation() {
     const contained: string[] = [];
     const isolation: IsolationInfo = {
@@ -613,18 +618,61 @@ describe("pages collaborative repo", () => {
         contained.push(path);
         throw new Error("refused");
       },
+      wrapForIsolation: async (cmd, args) => [cmd, args],
     };
     return { contained, isolation };
   }
 
-  it("contains home/pages and the worktree before chowning them on add", async () => {
+  /**
+   * Isolation with real containment (each mind's dir is its base) and a recording
+   * stand-in for the uid switch: a test can't change uid, so `wrapForIsolation` notes
+   * which git calls would have run as the mind.
+   */
+  function containingIsolation(gitConfig: string[] = [], env: string[] = []) {
+    const asMind: { mind: string; args: string[] }[] = [];
+    const isolation: IsolationInfo = {
+      isIsolationEnabled: () => true,
+      getMindUser: (name) => `mind-${name}`,
+      containMindPath: async (name, path) => {
+        // Callers pass both the path they built and real paths containment returned.
+        const base = resolve(voluteHome(), "minds", name);
+        const realBase = realpathSync(base);
+        const from = path.startsWith(realBase + sep) ? realBase : base;
+        return resolveRealWithinBase(base, relative(from, path));
+      },
+      wrapForIsolation: async (cmd, args, mind) => {
+        asMind.push({ mind, args });
+        return ["env", [`PAGES_GIT_AS=${mind}`, ...env, cmd, ...gitConfig, ...args]];
+      },
+    };
+    return { asMind, isolation };
+  }
+
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, { cwd, env: cleanGitEnv(), encoding: "utf-8" }).trim();
+
+  it("contains home before root creates anything in it on add", async (t) => {
+    t.mock.method(console, "warn", () => {});
     await ensurePagesRepo(dataDir);
-    const mindDir = await createFakeMind("test-pages-contain-add");
+    const name = "test-pages-contain-add";
+    const mindDir = await createFakeMind(name);
     const { contained, isolation } = refusingIsolation();
-    await addPagesWorktree("test-pages-contain-add", mindDir, dataDir, isolation);
-    const pages = resolve(mindDir, "home", "pages");
-    assert.deepEqual(contained, [resolve(pages, "_system"), pages]);
-    await removePagesWorktree("test-pages-contain-add", mindDir, dataDir);
+    await addPagesWorktree(name, mindDir, dataDir, isolation);
+    assert.deepEqual(contained, [resolve(mindDir, "home")]);
+    assert.equal(existsSync(resolve(mindDir, "home", "pages")), false);
+  });
+
+  it("does not provision a worktree through a swapped home/pages", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const a = await createFakeMind("test-pages-swap-add-a");
+    const b = await createFakeMind("test-pages-swap-add-b");
+    // The live shape: A's home/pages points into B's tree, where no _system exists yet.
+    symlinkSync(resolve(b, "home"), resolve(a, "home", "pages"));
+    const { isolation } = containingIsolation();
+    await addPagesWorktree("test-pages-swap-add-a", a, dataDir, isolation);
+    assert.equal(existsSync(resolve(b, "home", "_system")), false);
+    assert.doesNotMatch(git(pagesRepoDir(dataDir), "worktree", "list"), /test-pages-swap-add-a/);
   });
 
   for (const [label, run] of [
@@ -638,7 +686,8 @@ describe("pages collaborative repo", () => {
       (n: string, m: string, iso: IsolationInfo) => pagesPullAndMerge(n, m, dataDir, "x", iso),
     ],
   ] as const) {
-    it(`${label} contains the worktree before chowning it`, async () => {
+    it(`${label} refuses a worktree containment refuses, and runs no git in it`, async (t) => {
+      t.mock.method(console, "warn", () => {});
       await ensurePagesRepo(dataDir);
       const name = `test-pages-contain-${label.toLowerCase()}`;
       const mindDir = await createFakeMind(name);
@@ -647,28 +696,303 @@ describe("pages collaborative repo", () => {
       writeFileSync(resolve(wt, "page.html"), "<p>hi</p>");
       const { contained, isolation } = refusingIsolation();
       const result = await run(name, mindDir, isolation);
-      assert.ok(result.ok, JSON.stringify(result));
+      assert.equal(result.ok, false);
+      assert.match(result.message ?? "", /pages\/_system can't be used/);
       assert.deepEqual(contained, [wt]);
+      assert.equal(git(wt, "status", "--porcelain"), "?? page.html");
       await removePagesWorktree(name, mindDir, dataDir);
+    });
+
+    it(`${label} does not act in another mind's worktree through a swapped home/pages`, async (t) => {
+      t.mock.method(console, "warn", () => {});
+      await ensurePagesRepo(dataDir);
+      const tag = label.toLowerCase();
+      const [nameA, nameB] = [`test-pages-swap-${tag}-a`, `test-pages-swap-${tag}-b`];
+      const a = await createFakeMind(nameA);
+      const b = await createFakeMind(nameB);
+      await addPagesWorktree(nameA, a, dataDir);
+      await addPagesWorktree(nameB, b, dataDir);
+      const wtB = resolve(b, "home", "pages", "_system");
+      writeFileSync(resolve(wtB, "draft.html"), "<p>B's draft</p>");
+      const repo = pagesRepoDir(dataDir);
+      const [tipB, tipMain] = [git(repo, "rev-parse", nameB), git(repo, "rev-parse", "main")];
+
+      rmSync(resolve(a, "home", "pages"), { recursive: true, force: true });
+      symlinkSync(resolve(b, "home", "pages"), resolve(a, "home", "pages"));
+      const { isolation } = containingIsolation();
+      const result = await run(nameA, a, isolation);
+
+      assert.equal(result.ok, false);
+      assert.equal(git(wtB, "status", "--porcelain"), "?? draft.html");
+      assert.equal(git(repo, "rev-parse", nameB), tipB);
+      assert.equal(git(repo, "rev-parse", "main"), tipMain);
     });
   }
 
-  it("chowns the path containment answered with, not the one it was asked about", async (t) => {
+  it("does not remove another mind's worktree through a swapped home/pages", async (t) => {
+    t.mock.method(console, "warn", () => {});
     await ensurePagesRepo(dataDir);
-    const name = "test-pages-contain-decoy";
+    const a = await createFakeMind("test-pages-swap-remove-a");
+    const b = await createFakeMind("test-pages-swap-remove-b");
+    await addPagesWorktree("test-pages-swap-remove-a", a, dataDir);
+    await addPagesWorktree("test-pages-swap-remove-b", b, dataDir);
+    rmSync(resolve(a, "home", "pages"), { recursive: true, force: true });
+    symlinkSync(resolve(b, "home", "pages"), resolve(a, "home", "pages"));
+    const { isolation } = containingIsolation();
+    await removePagesWorktree("test-pages-swap-remove-a", a, dataDir, isolation);
+    assert.ok(existsSync(resolve(b, "home", "pages", "_system", ".git")));
+  });
+
+  it("rebases as the mind onto a main that moved, with no identity of its own", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const [nameA, nameB] = ["test-pages-rebase-id-a", "test-pages-rebase-id-b"];
+    const a = await createFakeMind(nameA);
+    const b = await createFakeMind(nameB);
+    await addPagesWorktree(nameA, a, dataDir);
+    await addPagesWorktree(nameB, b, dataDir);
+    writeFileSync(resolve(b, "home", "pages", "_system", "b.md"), "# B\n");
+    assert.ok((await pagesPullAndMerge(nameB, b, dataDir, "b")).ok);
+
+    // A's work is committed on its branch, so the rebase has a commit to replay. A
+    // mind's HOME carries no git identity, and a container's hostname has no domain
+    // to guess an email from: no guessing at all stands in for both.
+    writeFileSync(resolve(a, "home", "pages", "_system", "a.md"), "# A\n");
+    const { isolation } = containingIsolation(
+      ["-c", "user.useConfigOnly=true"],
+      ["XDG_CONFIG_HOME=/nonexistent", "GIT_CONFIG_NOSYSTEM=1"],
+    );
+    const result = await pagesPullAndMerge(nameA, a, dataDir, "a", isolation);
+    assert.ok(result.ok, JSON.stringify(result));
+  });
+
+  it("runs a filter from a redirected commondir as the mind, never as the daemon", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    t.mock.method(console, "error", () => {});
+    await ensurePagesRepo(dataDir);
+    const name = "test-pages-commondir";
     const mindDir = await createFakeMind(name);
     await addPagesWorktree(name, mindDir, dataDir);
-    writeFileSync(resolve(mindDir, "home", "pages", "_system", "page.html"), "<p>hi</p>");
-    const decoy = resolve(voluteHome(), "nonexistent-contained-root");
-    const warn = t.mock.method(console, "warn", () => {});
-    const result = await pagesPull(name, mindDir, {
-      isIsolationEnabled: () => true,
-      getMindUser: (n) => `mind-${n}`,
-      containMindPath: async () => decoy,
+    const wt = resolve(mindDir, "home", "pages", "_system");
+    const gitDir = worktreeGitDir(pagesRepoDir(dataDir), wt)!;
+
+    // The mind owns its gitdir, so it can point `commondir` at a repo whose config
+    // defines a filter, and name that filter from its worktree.
+    const decoy = resolve(voluteHome(), "test-pages-commondir-decoy");
+    rmSync(decoy, { recursive: true, force: true });
+    mkdirSync(decoy, { recursive: true });
+    git(decoy, "init", "-q");
+    const marker = resolve(voluteHome(), "test-pages-commondir-ran");
+    rmSync(marker, { force: true });
+    const filter = resolve(decoy, "probe");
+    writeFileSync(filter, `#!/bin/sh\necho "as=[$PAGES_GIT_AS]" >> "${marker}"\ncat\n`, {
+      mode: 0o755,
     });
+    git(decoy, "config", "filter.probe.clean", filter);
+    writeFileSync(resolve(gitDir, "commondir"), resolve(decoy, ".git"));
+    writeFileSync(resolve(wt, ".gitattributes"), "*.md filter=probe\n");
+    writeFileSync(resolve(wt, "lore.md"), "# Lore\n");
+
+    const { isolation } = containingIsolation();
+    // The commit after the filter fails on the decoy's missing objects; only who ran
+    // the filter matters here.
+    await pagesPull(name, mindDir, isolation).catch(() => {});
+    assert.ok(existsSync(marker), "the filter never ran, so this proves nothing");
+    for (const line of readFileSync(marker, "utf-8").trim().split("\n")) {
+      assert.equal(line, `as=[${name}]`);
+    }
+  });
+
+  it("keeps the repo's config, hooks and info out of the minds' group", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const repo = pagesRepoDir(dataDir);
+    const gitDir = resolve(repo, ".git");
+    // A mind's worktree already in the repo, with work to publish after the repair.
+    const name = "test-pages-harden-live";
+    const mindDir = await createFakeMind(name);
+    await addPagesWorktree(name, mindDir, dataDir);
+    const head = git(repo, "rev-parse", "main");
+    // What `init --shared=group` leaves, plus what a mind could have planted.
+    chmodSync(repo, 0o2775);
+    chmodSync(gitDir, 0o2775);
+    chmodSync(resolve(gitDir, "config"), 0o664);
+    chmodSync(resolve(gitDir, "hooks"), 0o2775);
+    writeFileSync(resolve(gitDir, "info", "attributes"), "*.md filter=probe\n", { mode: 0o664 });
+    symlinkSync("/bin/sh", resolve(gitDir, "hooks", "post-merge"));
+    writeFileSync(resolve(gitDir, "hooks", "pre-commit"), "#!/bin/sh\n", { mode: 0o775 });
+
+    await ensurePagesRepo(dataDir);
+
+    // Permission bits only: setgid needs root wherever the group isn't the test user's.
+    const mode = (p: string) => statSync(p).mode & 0o777;
+    for (const d of [
+      repo,
+      gitDir,
+      ...["hooks", "info", "worktrees"].map((d) => resolve(gitDir, d)),
+    ]) {
+      assert.equal(mode(d), 0o755, d);
+    }
+    assert.equal(mode(resolve(gitDir, "config")), 0o644);
+    assert.equal(mode(resolve(gitDir, "HEAD")), 0o644);
+    assert.equal(mode(resolve(gitDir, "info", "exclude")), 0o644);
+    assert.equal(existsSync(resolve(gitDir, "info", "attributes")), false);
+    assert.deepEqual(readdirSync(resolve(gitDir, "hooks")), []);
+    assert.equal(git(repo, "rev-parse", "main"), head, "a repair, not a re-init");
+
+    writeFileSync(resolve(mindDir, "home", "pages", "_system", "after.md"), "# After\n");
+    const result = await pagesPullAndMerge(name, mindDir, dataDir, "after");
     assert.ok(result.ok, JSON.stringify(result));
-    const warned = warn.mock.calls.map((c) => String(c.arguments[0])).join("\n");
-    assert.match(warned, /Command failed: find .*nonexistent-contained-root/);
+  });
+
+  it("removes a hard-linked info/exclude rather than keeping it", async () => {
+    await ensurePagesRepo(dataDir);
+    const exclude = resolve(pagesRepoDir(dataDir), ".git", "info", "exclude");
+    const other = resolve(voluteHome(), "test-pages-exclude-other-name");
+    rmSync(other, { force: true });
+    linkSync(exclude, other);
+    await ensurePagesRepo(dataDir);
+    assert.equal(existsSync(exclude), false);
+  });
+
+  it("a filter one mind planted in the shared config doesn't run as another", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const repo = pagesRepoDir(dataDir);
+    // Mind A, while the config was still group-writable: a filter for every page.
+    const marker = resolve(voluteHome(), "test-pages-cross-mind-ran");
+    rmSync(marker, { force: true });
+    const filter = resolve(voluteHome(), "test-pages-cross-mind-filter");
+    writeFileSync(filter, `#!/bin/sh\necho "as=[$PAGES_GIT_AS]" >> "${marker}"\ncat\n`, {
+      mode: 0o755,
+    });
+    git(repo, "config", "filter.probe.clean", filter);
+    git(repo, "config", "include.path", resolve(voluteHome(), "test-pages-cross-mind-include"));
+    // Pointing at itself, so the repo stays valid and is repaired, not re-initialized.
+    writeFileSync(resolve(repo, ".git", "commondir"), ".");
+
+    await ensurePagesRepo(dataDir); // the next daemon start
+    assert.doesNotMatch(readFileSync(resolve(repo, ".git", "config"), "utf-8"), /filter|include/);
+    assert.equal(existsSync(resolve(repo, ".git", "commondir")), false);
+
+    const nameB = "test-pages-cross-mind-b";
+    const b = await createFakeMind(nameB);
+    const { isolation } = containingIsolation();
+    await addPagesWorktree(nameB, b, dataDir, isolation);
+    // A can name the filter in a .gitattributes it publishes; B pulls it in.
+    const wtB = resolve(b, "home", "pages", "_system");
+    writeFileSync(resolve(wtB, ".gitattributes"), "*.md filter=probe\n");
+    writeFileSync(resolve(wtB, "b.md"), "# B\n");
+    const result = await pagesPullAndMerge(nameB, b, dataDir, "b", isolation);
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.equal(existsSync(marker), false, "A's filter ran");
+  });
+
+  it("replaces a config swapped for a link, keeping history", async (t) => {
+    const warn = t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const repo = pagesRepoDir(dataDir);
+    // A mind's branch: what a re-init would drop (main alone could come back identical).
+    git(repo, "branch", "some-mind");
+    const head = git(repo, "rev-parse", "main");
+    const config = resolve(repo, ".git", "config");
+    const planted = resolve(voluteHome(), "test-pages-planted-config");
+    writeFileSync(planted, `${readFileSync(config, "utf-8")}[filter "probe"]\n\tclean = x\n`);
+    rmSync(config);
+    symlinkSync(planted, config);
+
+    await ensurePagesRepo(dataDir);
+
+    assert.ok(lstatSync(config).isFile());
+    assert.doesNotMatch(readFileSync(config, "utf-8"), /filter/);
+    assert.equal(git(repo, "rev-parse", "main"), head);
+    assert.equal(git(repo, "rev-parse", "some-mind"), head);
+    assert.match(warn.mock.calls.map((c) => String(c.arguments[0])).join("\n"), /replacing/);
+  });
+
+  it("replaces a hard-linked config without touching the file it is linked to", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const repo = pagesRepoDir(dataDir);
+    git(repo, "branch", "some-mind");
+    const config = resolve(repo, ".git", "config");
+    // A secret the daemon can read and a mind can't, with config made a second name for it.
+    const secret = resolve(voluteHome(), "test-pages-secret");
+    rmSync(secret, { force: true });
+    writeFileSync(secret, "[core]\n\tbare = false\n", { mode: 0o600 });
+    rmSync(config);
+    linkSync(secret, config);
+
+    await ensurePagesRepo(dataDir);
+
+    assert.equal(statSync(secret).mode & 0o777, 0o600);
+    assert.equal(statSync(secret).nlink, 1);
+    assert.ok(lstatSync(config).isFile());
+    assert.equal(git(repo, "rev-parse", "some-mind"), git(repo, "rev-parse", "main"));
+  });
+
+  it("refuses a repo directory that is a link, without wiping where it points", async () => {
+    const repo = pagesRepoDir(dataDir);
+    const elsewhere = resolve(voluteHome(), "test-pages-repo-elsewhere");
+    rmSync(elsewhere, { recursive: true, force: true });
+    mkdirSync(resolve(elsewhere, ".git"), { recursive: true });
+    writeFileSync(resolve(elsewhere, ".git", "keep"), "x");
+    mkdirSync(dataDir, { recursive: true });
+    symlinkSync(elsewhere, repo);
+
+    await assert.rejects(ensurePagesRepo(dataDir));
+    assert.equal(readFileSync(resolve(elsewhere, ".git", "keep"), "utf-8"), "x");
+    rmSync(repo);
+  });
+
+  it("relinks a worktree after a re-init, keeping the mind's files", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const name = "test-pages-relink";
+    const mindDir = await createFakeMind(name);
+    await addPagesWorktree(name, mindDir, dataDir);
+    const wt = resolve(mindDir, "home", "pages", "_system");
+    writeFileSync(resolve(wt, "kept.md"), "# Kept\n");
+
+    rmSync(resolve(pagesRepoDir(dataDir), ".git"), { recursive: true, force: true });
+    await ensurePagesRepo(dataDir); // a husk: re-initialized
+    await addPagesWorktree(name, mindDir, dataDir);
+
+    assert.ok(worktreeGitDir(pagesRepoDir(dataDir), wt), "the worktree is linked again");
+    assert.equal(readFileSync(resolve(wt, "kept.md"), "utf-8"), "# Kept\n");
+    assert.equal(git(wt, "status", "--porcelain"), "?? kept.md");
+    const result = await pagesPullAndMerge(name, mindDir, dataDir, "kept");
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.match(git(pagesRepoDir(dataDir), "ls-tree", "--name-only", "main"), /kept\.md/);
+  });
+
+  it("runs git in the mind's worktree as the mind, and no hook at all", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    // The repo is group-writable by every mind, hooks directory included.
+    const marker = resolve(voluteHome(), "test-pages-hook-ran");
+    const hooks = resolve(pagesRepoDir(dataDir), ".git", "hooks");
+    for (const hook of ["pre-commit", "post-checkout", "post-merge", "post-rewrite"]) {
+      writeFileSync(resolve(hooks, hook), `#!/bin/sh\necho ${hook} >> "${marker}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const name = "test-pages-as-mind";
+    const mindDir = await createFakeMind(name);
+    const { asMind, isolation } = containingIsolation();
+    await addPagesWorktree(name, mindDir, dataDir, isolation);
+    writeFileSync(resolve(mindDir, "home", "pages", "_system", "page.html"), "<p>hi</p>");
+    const result = await pagesPullAndMerge(name, mindDir, dataDir, "publish", isolation);
+
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.equal(existsSync(marker), false, "a hook ran");
+    const verbs = asMind.map(({ mind, args }) => {
+      assert.equal(mind, name);
+      return args.find((a) => !a.startsWith("-") && !a.includes("="));
+    });
+    for (const verb of ["add", "commit", "rebase", "reset"]) assert.ok(verbs.includes(verb), verb);
+    // Root keeps the repo's own work: the squash merge is not the mind's to run.
+    assert.equal(verbs.includes("merge"), false);
     await removePagesWorktree(name, mindDir, dataDir);
   });
 

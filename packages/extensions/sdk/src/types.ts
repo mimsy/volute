@@ -130,6 +130,13 @@ export type ExtensionContext = {
    */
   containMindPath: (mindName: string, path: string) => Promise<string>;
   /**
+   * Wrap a command to run as the mind's OS user under user isolation (`runuser` /
+   * `sudo -u`); unchanged otherwise. Use it for anything that runs in a tree the mind
+   * controls and could make execute mind-chosen code — git reads hooks and config
+   * from there — so that code runs with the mind's privilege, not the daemon's.
+   */
+  wrapForIsolation: (cmd: string, args: string[], mindName: string) => Promise<[string, string[]]>;
+  /**
    * Name of the system spirit. Under the daemon this mirrors its own
    * `getSpiritName()`, which falls back to "volute" on installs predating spirit
    * naming and so never returns null — an earlier implementation read
