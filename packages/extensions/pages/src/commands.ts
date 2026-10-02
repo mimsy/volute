@@ -918,7 +918,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
         try {
-          const result = await pagesPull(mindName, mindDir, isolationFrom(ctx));
+          const result = await pagesPull(mindName, mindDir, ctx.dataDir, isolationFrom(ctx));
           if (!result.ok) {
             return { error: result.message || "Pull failed." };
           }

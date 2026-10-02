@@ -64,7 +64,7 @@ describe("shared publish contributor tracking", () => {
     // beta pulls main first, then edits the now-existing page — two branches
     // independently *creating* the same new path (without pulling first) is a
     // real git add/add conflict, not something the implicit rebase can resolve.
-    await pagesPull("beta", mindB);
+    await pagesPull("beta", mindB, dataDir);
     const existing = readFileSync(join(mindB, "home/pages/_system/lore.md"), "utf-8");
     writeFileSync(join(mindB, "home/pages/_system/lore.md"), `${existing}more\n`);
     const r = await pagesPullAndMerge("beta", mindB, dataDir, "expand lore");
@@ -171,7 +171,7 @@ describe("shared publish command events", () => {
       makeCtx("alpha", mindA) as any,
     );
 
-    await pagesPull("beta", mindB);
+    await pagesPull("beta", mindB, dataDir);
     const existing = readFileSync(join(mindB, "home/pages/_system/lore.md"), "utf-8");
     writeFileSync(join(mindB, "home/pages/_system/lore.md"), `${existing}more\n`);
 

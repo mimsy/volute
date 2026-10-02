@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { log, warn } from "./logger.js";
 
@@ -13,6 +14,19 @@ function exec(cmd: string, args: string[], cwd: string): Promise<{ code: number;
       r({ code: _err ? 1 : 0, stdout: (stdout ?? "").trim() });
     });
   });
+}
+
+/**
+ * Whether a rebase of the pages worktree onto main is stopped on a conflict. Committing
+ * then would stage half-resolved files and leave the rebase unable to continue: the
+ * mind resolves, `git add`s, and the next publish finishes it.
+ */
+async function rebaseStopped(cwd: string): Promise<boolean> {
+  for (const dir of ["rebase-merge", "rebase-apply"]) {
+    const { code, stdout } = await exec("git", gitArgs(["rev-parse", "--git-path", dir]), cwd);
+    if (code === 0 && existsSync(resolve(cwd, stdout))) return true;
+  }
+  return false;
 }
 
 // Serialize git operations to prevent concurrent commits from conflicting
@@ -114,8 +128,10 @@ export function flushFileChanges(cwd?: string): Promise<void> {
 
     // Commit collaborative pages worktree files. Same rule as the mind's own
     // files above: only what actually staged gets named in the commit message.
-    if (sharedToCommit.length > 0) {
-      const sharedCwd = resolve(effectiveCwd, "pages", "_system");
+    const sharedCwd = resolve(effectiveCwd, "pages", "_system");
+    if (sharedToCommit.length > 0 && (await rebaseStopped(sharedCwd))) {
+      log("auto-commit", "[pages/_system] rebase in progress, not committing");
+    } else if (sharedToCommit.length > 0) {
       const sharedPrefix = "pages/_system/";
       const mindName = process.env.VOLUTE_MIND ?? "unknown";
 
