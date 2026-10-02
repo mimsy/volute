@@ -223,6 +223,7 @@ describe("auto-commit retries (#1206)", () => {
   let hang: string;
   let hookStarted: string;
   let hookRuns: string;
+  let killOn: string;
 
   const mod = () => import("../templates/_base/src/lib/auto-commit.js");
   const commits = (cwd = repoDir) => Number(git(["rev-list", "--count", "HEAD"], cwd).trim());
@@ -262,6 +263,7 @@ exit 0
     hang = join(scratch, "hang");
     hookStarted = join(scratch, "hook-started");
     hookRuns = join(scratch, "hook-runs");
+    killOn = join(scratch, "kill-on");
     initRepo(repoDir);
     writeFileSync(join(repoDir, "SOUL.md"), "soul");
     writeFileSync(join(repoDir, "MEMORY.md"), "memory");
@@ -276,7 +278,8 @@ exit 0
     mkdirSync(binDir, { recursive: true });
     writeFileSync(
       join(binDir, "git"),
-      `#!/bin/sh\necho "$*" >> "${gitLog}"\nexec "${realGit}" "$@"\n`,
+      // …and kills itself, as a stop's SIGTERM would, on the one call named in `killOn`.
+      `#!/bin/sh\necho "$*" >> "${gitLog}"\nif [ -f "${killOn}" ] && [ "$*" = "$(cat "${killOn}")" ]; then rm "${killOn}"; kill -TERM $$; fi\nexec "${realGit}" "$@"\n`,
     );
     chmodSync(join(binDir, "git"), 0o755);
   });
@@ -517,6 +520,64 @@ exit 0
 
     await flushFileChanges(home);
     assert.equal(git(["log", "-1", "--format=%s"], sharedDir).trim(), "Update note.md");
+  });
+
+  /** Run `fn` with the recording git on PATH, killing the call named `call` once. */
+  async function withKill(call: string, fn: () => Promise<void>): Promise<string[]> {
+    writeFileSync(killOn, call);
+    try {
+      return await recordingAdds(fn);
+    } finally {
+      rmSync(killOn, { force: true });
+    }
+  }
+
+  it("retries a killed add of a deleted tracked file — the deletion stages fine", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    rmSync(join(repoDir, "ab.md"));
+    trackFileChange("ab.md", repoDir);
+    try {
+      await withKill("--literal-pathspecs add -- ab.md", () => flushFileChanges(repoDir));
+      await flushFileChanges(repoDir);
+      assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update ab.md");
+      assert.equal(git(["ls-files", "--", "ab.md"], repoDir), "");
+    } finally {
+      writeFileSync(join(repoDir, "ab.md"), "ab");
+      git(["add", "--", "ab.md"], repoDir);
+      git(["commit", "-qm", "restore ab.md"], repoDir);
+    }
+  });
+
+  it("counts a kill against only the file whose git was killed", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    mkdirSync(join(repoDir, "real"), { recursive: true });
+    writeFileSync(join(repoDir, "real", "f.md"), "behind a symlink");
+    symlinkSync("real", join(repoDir, "link"));
+    try {
+      writeFileSync(join(repoDir, "MEMORY.md"), "memory, killed once");
+      trackFileChange("MEMORY.md", repoDir);
+      trackFileChange("link/f.md", repoDir); // fails on its own, not killed
+      await withKill("--literal-pathspecs add -- MEMORY.md", () => flushFileChanges(repoDir));
+      await flushFileChanges(repoDir); // link/f.md's one retry: given up
+      const adds = await recordingAdds(() => flushFileChanges(repoDir));
+      assert.deepEqual(adds, [], "a file was retried as if its own git had been killed");
+      assert.equal(git(["status", "--porcelain", "--", "MEMORY.md"], repoDir), "");
+    } finally {
+      rmSync(join(repoDir, "link"));
+      rmSync(join(repoDir, "real"), { recursive: true, force: true });
+    }
+  });
+
+  it("drains until nothing is pending, not until a round changes nothing", async () => {
+    const { trackFileChange, flushFileChanges, drainFileChanges } = await mod();
+    writeFileSync(join(repoDir, "SOUL.md"), "soul, killed then refused");
+    trackFileChange("SOUL.md", repoDir);
+    // A commit the stop killed: re-queued, no retry spent.
+    await withKill("commit -m Update SOUL.md", () => flushFileChanges(repoDir));
+    // The first shutdown attempt is refused (re-queued, unchanged), the second lands.
+    writeFileSync(refuseOnce, "");
+    await drainFileChanges(repoDir);
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update SOUL.md");
   });
 
   it("re-queues a failed pages/_system commit too", async () => {

@@ -43,7 +43,8 @@ type Staging = {
   ignored: string[];
   /** Failed for any other reason (killed, index.lock held, ...) — worth a retry. */
   failed: string[];
-  killed: boolean;
+  /** The failed ones whose git was killed by a signal. */
+  killed: Set<string>;
 };
 
 /**
@@ -63,24 +64,24 @@ async function stage(
   const add = (ps: string[]) => git(["--literal-pathspecs", "add", "--", ...ps]);
 
   const all = await add(paths);
-  if (all.code === 0) return { staged: paths, ignored: [], failed: [], killed: false };
-  if (all.killed) return { staged: [], ignored: [], failed: paths, killed: true };
+  if (all.code === 0) return { staged: paths, ignored: [], failed: [], killed: new Set() };
+  if (all.killed) return { staged: [], ignored: [], failed: paths, killed: new Set(paths) };
 
   const flagged = await ignoredAmong(paths, git);
   const ignored = paths.filter((p) => flagged.has(p));
   const rest = paths.filter((p) => !flagged.has(p));
   if (rest.length === 0 || (await add(rest)).code === 0) {
-    return { staged: rest, ignored, failed: [], killed: false };
+    return { staged: rest, ignored, failed: [], killed: new Set() };
   }
   const staged: string[] = [];
   const failed: string[] = [];
-  let killed = false;
+  const killed = new Set<string>();
   for (const p of rest) {
     const one = await add([p]);
     if (one.code === 0) staged.push(p);
     else {
       failed.push(p);
-      killed ||= one.killed;
+      if (one.killed) killed.add(p);
     }
   }
   return { staged, ignored, failed, killed };
@@ -133,17 +134,19 @@ const RETRIED_MAX = 1000;
  */
 function requeue(
   files: string[],
-  killed: boolean,
+  killed: (f: string) => boolean,
   into: Set<string>,
   retried: Set<string>,
   cwd?: string,
 ): string[] {
   const dropped: string[] = [];
   for (const f of files) {
-    // Given `cwd`, the files are ones whose add failed: one no longer on disk has nothing
-    // left to add (a deletion of a tracked file adds fine), so it would only fail again.
-    if (cwd && !existsSync(resolve(cwd, f))) dropped.push(f);
-    else if (killed) into.add(f);
+    // Killed first: a killed add of a tracked file's deletion must be retried, though
+    // the file is gone — the deletion stages fine.
+    if (killed(f)) into.add(f);
+    // Given `cwd`, the files are ones whose add failed: one no longer on disk (and not
+    // killed) has nothing left to add, so it would only fail again.
+    else if (cwd && !existsSync(resolve(cwd, f))) dropped.push(f);
     else if (retried.delete(f)) dropped.push(f);
     else {
       retried.add(f);
@@ -195,18 +198,20 @@ export function flushFileChanges(cwd?: string): Promise<void> {
 /**
  * Flush until nothing is pending and no flush is queued — for shutdown, so a commit the
  * stop killed is retried and a turn-end flush that starts meanwhile (the reap ending a
- * session) is waited for. Bounded: a git killed again and again can't hold shutdown.
+ * session) is waited for. Bounded in rounds (a git killed again and again, files held
+ * through a stopped pages rebase), but never returns with a flush still queued.
  */
 export async function drainFileChanges(cwd: string): Promise<void> {
-  const waiting = () => [...pendingFiles, "|", ...pendingSharedFiles].sort().join("\n");
   for (let round = 0; round < 5; round++) {
-    const before = waiting();
     const tail = flushFileChanges(cwd);
     await tail;
-    if (pending !== tail) continue; // another flush queued meanwhile
-    // Settled — or only files that will wait regardless (a stopped pages rebase) remain.
-    if (waiting() === "|" || waiting() === before) return;
+    if (pending === tail && pendingFiles.size === 0 && pendingSharedFiles.size === 0) return;
   }
+  let tail: Promise<void>;
+  do {
+    tail = pending;
+    await tail;
+  } while (pending !== tail);
 }
 
 async function commitPending(cwd: string): Promise<void> {
@@ -224,7 +229,7 @@ async function commitPending(cwd: string): Promise<void> {
     for (const f of staged) addRetried.delete(f);
     reportUnstaged(
       ignored,
-      requeue(failed, killed, pendingFiles, addRetried, cwd),
+      requeue(failed, (f) => killed.has(f), pendingFiles, addRetried, cwd),
       "or survive a variant join",
     );
     // staged.length check guards against committing under a blank "Update "
@@ -250,7 +255,7 @@ async function commitPending(cwd: string): Promise<void> {
           }
         }
       } else {
-        const dropped = requeue(staged, commit.killed, pendingFiles, commitRetried);
+        const dropped = requeue(staged, () => commit.killed, pendingFiles, commitRetried);
         if (dropped.length === 0) log("auto-commit", `commit failed for: ${names} — will retry`);
         else await giveUp(dropped, cwd, (a) => a, `commit failed twice for ${names}`);
       }
@@ -278,7 +283,13 @@ async function commitPending(cwd: string): Promise<void> {
     for (const f of sharedStaged) addRetried.delete(f);
     reportUnstaged(
       prefixed(shared.ignored),
-      requeue(prefixed(shared.failed), shared.killed, pendingSharedFiles, addRetried, cwd),
+      requeue(
+        prefixed(shared.failed),
+        (f) => shared.killed.has(f.slice(sharedPrefix.length)),
+        pendingSharedFiles,
+        addRetried,
+        cwd,
+      ),
     );
     const changed =
       sharedStaged.length > 0 &&
@@ -297,7 +308,12 @@ async function commitPending(cwd: string): Promise<void> {
         for (const f of sharedStaged) commitRetried.delete(f);
         log("auto-commit", `[pages/_system] ${message}`);
       } else {
-        const dropped = requeue(sharedStaged, commit.killed, pendingSharedFiles, commitRetried);
+        const dropped = requeue(
+          sharedStaged,
+          () => commit.killed,
+          pendingSharedFiles,
+          commitRetried,
+        );
         if (dropped.length === 0) log("auto-commit", `[pages/_system] commit failed — will retry`);
         else {
           await giveUp(
