@@ -101,7 +101,10 @@ export type TurnStamp = { turnId?: string; thread?: string; delivery?: string };
  *
  * A send with no turn is a `silent` mind's run that nothing opened, whose turn is recorded
  * only at its `done` (#1320): it is stamped with the delivery the sender is running there,
- * and that turn takes it (`linkRunToTurn`).
+ * and that turn takes it (`linkRunToTurn`). That is its oldest delivery no `done` has
+ * covered — read as the previous run's while that run's `done` has yet to be handled, when
+ * the send is left turnless rather than misfiled. A leftover the previous `done` failed to
+ * name is retired, and so taken, by the next `done`: the run that sent under it.
  */
 export function turnStamp(
   mind: string,

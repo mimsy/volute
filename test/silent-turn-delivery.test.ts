@@ -519,6 +519,75 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     invalidateMindUserCache(MIND);
   });
 
+  // #1319: one run can consume several deliveries; its `done` covers them all, and its turn
+  // takes what was sent under any of them.
+  it("a run that consumed two deliveries takes the sends stamped with either", async () => {
+    await setup();
+    const db = await getDb();
+    const outbound = async (content: string) =>
+      (await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, MIND), eq(mindHistory.content, content)))
+        .get())!;
+    (dm as any).addOutstanding(MIND, "main", "dA", MIND);
+    (dm as any).addOutstanding(MIND, "main", "dB", MIND);
+    await recordOutbound(MIND, "@tester", "first", turnStamp(MIND, "main"));
+    assert.equal(JSON.parse((await outbound("first")).metadata!).delivery, "dA");
+    await recordOutbound(MIND, "@tester", "second", { thread: "main", delivery: "dB" });
+    const { turnId } = await handleMindEvent(MIND, {
+      type: "done",
+      session: "main",
+      messageId: "dA",
+      covers: ["dA", "dB"],
+    });
+    assert.ok(turnId);
+    assert.equal((await outbound("first")).turn_id, turnId);
+    assert.equal((await outbound("second")).turn_id, turnId);
+    await waitFor(() => db.select().from(summaries).where(eq(summaries.period_key, turnId!)).get());
+    await db.delete(summaries).where(eq(summaries.period_key, turnId!));
+  });
+
+  // A run that consumed a delivery its `done` didn't name (an old template, #1319) leaves it
+  // outstanding, so the next run's send is stamped with it. The next `done` retires every
+  // delivery up to the one it names, the leftover with it, and its turn takes the send —
+  // never the finished run's.
+  it("a send stamped with a leftover delivery goes to the run that sent it", async () => {
+    await setup();
+    const db = await getDb();
+    const outbound = async (content: string) =>
+      (await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, MIND), eq(mindHistory.content, content)))
+        .get())!;
+    (dm as any).addOutstanding(MIND, "main", "d1", MIND);
+    (dm as any).addOutstanding(MIND, "main", "d2", MIND);
+    await recordOutbound(MIND, "@tester", "from one", turnStamp(MIND, "main"));
+    const { turnId: t1 } = await handleMindEvent(MIND, {
+      type: "done",
+      session: "main",
+      messageId: "d1",
+      covers: ["d1"],
+    });
+    (dm as any).addOutstanding(MIND, "main", "d3", MIND);
+    await recordOutbound(MIND, "@tester", "from three", turnStamp(MIND, "main"));
+    assert.equal(JSON.parse((await outbound("from three")).metadata!).delivery, "d2");
+    const { turnId: t3 } = await handleMindEvent(MIND, {
+      type: "done",
+      session: "main",
+      messageId: "d3",
+      covers: ["d3"],
+    });
+    assert.ok(t1 && t3 && t1 !== t3);
+    assert.equal((await outbound("from one")).turn_id, t1);
+    assert.equal((await outbound("from three")).turn_id, t3, "the run that sent it");
+    for (const t of [t1!, t3!]) {
+      await waitFor(() => db.select().from(summaries).where(eq(summaries.period_key, t)).get());
+      await db.delete(summaries).where(eq(summaries.period_key, t));
+    }
+  });
+
   it("a quiet turn whose usage lands after its done is held for it, then kept", async () => {
     await setup();
     const db = await getDb();
