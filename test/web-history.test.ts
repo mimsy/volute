@@ -798,10 +798,18 @@ describe("web history routes", () => {
   // ── Cross-mind isolation (non-admin callers) ──
   //
   // Minds are untrusted principals. A mind authenticates as a non-admin "user"
-  // whose username is its own name; the history routes must force scoping to the
-  // caller's own mind and ignore any `?mind=` / `?ids=` pointing at another mind.
+  // whose username is its own name. Its history reads are scoped to its own mind,
+  // and a `?mind=` naming another mind is refused outright — never answered with the
+  // caller's own history wearing the other mind's name (#1269).
 
-  it("GET /turns?mind=<other> — a mind cannot read another mind's turns", async () => {
+  /** Assert a refusal that names the mind asked for, so the reader knows what failed. */
+  async function assertRefused(res: Response, other: string) {
+    assert.equal(res.status, 403);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, new RegExp(other));
+  }
+
+  it("GET /turns?mind=<other> — refused, not answered with the caller's own turns", async () => {
     const cookie = await mindSession("test-history-alice");
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
@@ -813,20 +821,26 @@ describe("web history routes", () => {
       { id: bobTurn, mind: "test-history-bob", status: "complete" },
     ]);
 
-    // Alice tries to read bob's turns; the ?mind= param must be ignored.
-    const res = await app.request("/api/v1/history/turns?mind=test-history-bob", {
-      headers: { Cookie: `volute_session=${cookie}` },
-    });
-    assert.equal(res.status, 200);
-    const body = (await res.json()) as Array<{ id: string; mind: string }>;
-    assert.ok(
-      body.every((t) => t.mind === "test-history-alice"),
-      "only the caller's own turns are returned",
+    const headers = { Cookie: `volute_session=${cookie}` };
+    await assertRefused(
+      await app.request("/api/v1/history/turns?mind=test-history-bob", { headers }),
+      "test-history-bob",
     );
-    assert.ok(!body.some((t) => t.id === bobTurn), "another mind's turn must not leak");
+
+    // Unscoped, or scoped to itself, it reads only its own turns.
+    for (const qs of ["", "?mind=test-history-alice"]) {
+      const res = await app.request(`/api/v1/history/turns${qs}`, { headers });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as Array<{ id: string; mind: string }>;
+      assert.ok(
+        body.some((t) => t.id === aliceTurn),
+        "caller's own turn is returned",
+      );
+      assert.ok(!body.some((t) => t.id === bobTurn), "another mind's turn must not leak");
+    }
   });
 
-  it("GET /activity?mind=<other> — a mind cannot read another mind's activity", async () => {
+  it("GET /activity?mind=<other> — refused, not answered with the caller's own activity", async () => {
     const cookie = await mindSession("test-history-alice");
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
@@ -836,19 +850,23 @@ describe("web history routes", () => {
       { type: "note_created", mind: "test-history-bob", summary: "bob note" },
     ]);
 
-    const res = await app.request("/api/v1/history/activity?mind=test-history-bob", {
-      headers: { Cookie: `volute_session=${cookie}` },
-    });
+    const headers = { Cookie: `volute_session=${cookie}` };
+    await assertRefused(
+      await app.request("/api/v1/history/activity?mind=test-history-bob", { headers }),
+      "test-history-bob",
+    );
+
+    const res = await app.request("/api/v1/history/activity", { headers });
     assert.equal(res.status, 200);
     const body = (await res.json()) as Array<{ mind: string; summary: string }>;
     assert.ok(
-      body.every((a) => a.mind === "test-history-alice"),
-      "only the caller's own activity is returned",
+      body.some((a) => a.summary === "alice note"),
+      "caller's own activity is returned",
     );
     assert.ok(!body.some((a) => a.summary === "bob note"), "another mind's activity must not leak");
   });
 
-  it("GET /summaries?mind=<other> — a mind cannot read another mind's summaries", async () => {
+  it("GET /summaries?mind=<other> — refused, not answered with the caller's own summaries", async () => {
     const cookie = await mindSession("test-history-alice");
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
@@ -856,30 +874,57 @@ describe("web history routes", () => {
     await db.insert(summaries).values([
       {
         mind: "test-history-alice",
-        period: "hour",
-        period_key: "2026-03-22T14",
-        content: "alice hourly",
+        period: "day",
+        period_key: "2026-03-22",
+        content: "alice daily",
       },
       {
         mind: "test-history-bob",
-        period: "hour",
-        period_key: "2026-03-22T14",
-        content: "bob hourly",
+        period: "day",
+        period_key: "2026-03-22",
+        content: "bob daily",
       },
     ]);
 
-    const res = await app.request("/api/v1/history/summaries?period=hour&mind=test-history-bob", {
-      headers: { Cookie: `volute_session=${cookie}` },
+    // The #1269 shape: `volute mind history --mind <other> --period day`.
+    const headers = { Cookie: `volute_session=${cookie}` };
+    await assertRefused(
+      await app.request("/api/v1/history/summaries?period=day&mind=test-history-bob", {
+        headers,
+      }),
+      "test-history-bob",
+    );
+
+    const res = await app.request("/api/v1/history/summaries?period=day&mind=test-history-alice", {
+      headers,
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as Array<{ mind: string; content: string }>;
-    assert.ok(
-      body.every((s) => s.mind === "test-history-alice"),
-      "only the caller's own summaries are returned",
+    assert.deepEqual(
+      body.map((s) => s.content),
+      ["alice daily"],
     );
-    assert.ok(
-      !body.some((s) => s.content === "bob hourly"),
-      "another mind's summary must not leak",
+  });
+
+  it("GET /summaries?mind=<other> — an admin still reads the named mind", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+    await db.insert(summaries).values({
+      mind: "test-history-bob",
+      period: "day",
+      period_key: "2026-03-22",
+      content: "bob daily",
+    });
+
+    const res = await app.request("/api/v1/history/summaries?period=day&mind=test-history-bob", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{ content: string }>;
+    assert.deepEqual(
+      body.map((s) => s.content),
+      ["bob daily"],
     );
   });
 
@@ -925,9 +970,13 @@ describe("web history routes", () => {
     const cookie = await mindSession("test-history-alice");
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/v1/history/events?mind=test-history-bob", {
-      headers: { Cookie: `volute_session=${cookie}` },
-    });
+    const headers = { Cookie: `volute_session=${cookie}` };
+    await assertRefused(
+      await app.request("/api/v1/history/events?mind=test-history-bob", { headers }),
+      "test-history-bob",
+    );
+
+    const res = await app.request("/api/v1/history/events", { headers });
     assert.equal(res.status, 200);
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
