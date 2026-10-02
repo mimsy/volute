@@ -43,6 +43,7 @@ import {
   initDefaultSkills,
   isAutoUpdateSkillsEnabled,
   recordMissingSkillBases,
+  retireUnshippedMindSkills,
   syncBuiltinSkills,
 } from "./lib/skills.js";
 import { reportStaleApiPaths } from "./lib/template/stale-api-paths.js";
@@ -298,6 +299,15 @@ export async function startDaemon(opts: {
     await syncBuiltinSkills();
   } catch (err) {
     log.error("failed to sync built-in skills", log.errorData(err));
+  }
+
+  // Uninstall skills Volute or an extension stopped shipping from the minds that never
+  // edited them, and tell the ones that did (#971) — before auto-update reconciles shims
+  // on skills about to go.
+  try {
+    await retireUnshippedMindSkills();
+  } catch (err) {
+    log.error("failed to retire unshipped mind skills", log.errorData(err));
   }
 
   // Initialize default skills config if not set (after extensions load + builtin
