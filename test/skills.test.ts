@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -55,7 +56,7 @@ import {
 } from "../packages/daemon/src/lib/skills.js";
 import { exec } from "../packages/daemon/src/lib/util/exec.js";
 import { discoverHooks } from "../templates/_base/src/lib/hook-loader.js";
-import { createMindGitRepo } from "./helpers/git.js";
+import { createMindGitRepo, quietGitMaintenance } from "./helpers/git.js";
 
 async function cleanup() {
   const db = await getDb();
@@ -342,6 +343,8 @@ describe("mind skill operations", () => {
     await cleanup();
     const dir = join(voluteHome(), "minds", mindName);
     if (existsSync(dir)) rmSync(dir, { recursive: true });
+    // What installThenImport moved aside.
+    rmSync(`${dir}-exported`, { recursive: true, force: true });
     rmSync(stateDir(mindName), { recursive: true, force: true });
   }
 
@@ -1374,10 +1377,18 @@ describe("mind skill operations", () => {
         upstreamPath,
         `${JSON.stringify({ ...info, baseCommit: "82e564ee".padEnd(40, "0") }, null, 2)}\n`,
       );
-      rmSync(join(mindDir, ".git"), { recursive: true, force: true });
+      // An import is a fresh directory: move the source aside rather than wiping its .git
+      // in place, so nothing still working in the old repo can reach the new one.
+      const exported = `${mindDir}-exported`;
+      renameSync(mindDir, exported);
+      cpSync(exported, mindDir, {
+        recursive: true,
+        filter: (src) => src !== join(exported, ".git"),
+      });
       await exec("git", ["init", "-q"], { cwd: mindDir });
       await exec("git", ["config", "user.email", "t@t"], { cwd: mindDir });
       await exec("git", ["config", "user.name", "t"], { cwd: mindDir });
+      await quietGitMaintenance(mindDir);
       await exec("git", ["add", "-A"], { cwd: mindDir });
       await exec("git", ["commit", "-qm", "import from archive"], { cwd: mindDir });
       await addMind(mindName, 4197);
