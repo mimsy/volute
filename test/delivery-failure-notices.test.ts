@@ -28,8 +28,10 @@ const STOPPED = "dfn-stopped";
 const EXTERNAL = "dfn-external";
 const HUMAN = "dfn-human";
 const VARIANT = "dfn-sender-var";
+const STOPPED2 = "dfn-stopped-2";
+const RECIPIENT2 = "dfn-recipient-2";
 
-const MIND_NAMES = [SENDER, RECIPIENT, STOPPED, VARIANT, EXTERNAL];
+const MIND_NAMES = [SENDER, RECIPIENT, STOPPED, VARIANT, EXTERNAL, STOPPED2, RECIPIENT2];
 const CONVERSATION_ID = "dfn-conversation";
 
 type Participant = Parameters<typeof fanOutToMinds>[0]["participants"];
@@ -282,5 +284,126 @@ describe("fan-out surfaces lost deliveries to a mind sender (#723)", () => {
       notice.body.includes(`@${STOPPED}`),
       `channel must name the recipient, got: ${notice.body}`,
     );
+  });
+  it("records no notice when a channel post skips stopped members (#1345)", async () => {
+    await addMind(SENDER, 4735);
+    await addMind(STOPPED, 4736);
+    await addMind(STOPPED2, 4737);
+
+    const participants = [
+      participant(SENDER, "mind", 1),
+      participant(STOPPED, "mind", 2),
+      participant(STOPPED2, "mind", 3),
+    ] as unknown as Participant;
+
+    for (const isDM of [false, undefined]) {
+      await fanOutToMinds({
+        conversationId: CONVERSATION_ID,
+        contentBlocks: [{ type: "text", text: "hello, commons" }],
+        senderName: SENDER,
+        senderId: null,
+        participants,
+        isDM,
+        slugExtra: { convType: "channel", convName: "commons" },
+      });
+    }
+
+    assert.equal(
+      await waitFor(async () => (await failureNotices(SENDER)).length > 0, 500),
+      false,
+      "a stopped channel member is not a delivery failure of the sender's message",
+    );
+  });
+
+  it("counts a DM to a stopped mind once per message (#1345)", async () => {
+    await addMind(SENDER, 4738);
+    await addMind(STOPPED, 4739);
+
+    const participants = [
+      participant(SENDER, "mind", 1),
+      participant(STOPPED, "mind", 2),
+    ] as unknown as Participant;
+
+    for (const text of ["one", "two"]) {
+      await fanOutToMinds({
+        conversationId: CONVERSATION_ID,
+        contentBlocks: [{ type: "text", text }],
+        senderName: SENDER,
+        senderId: null,
+        participants,
+        isDM: true,
+      });
+    }
+
+    assert.ok(
+      await waitFor(
+        async () => parseMeta((await failureNotices(SENDER))[0]?.meta ?? "{}").count === 2,
+      ),
+      "two DMs to a stopped mind must coalesce to a count of 2",
+    );
+    const notices = await failureNotices(SENDER);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0].body, /^2 messages to @dfn-stopped /);
+    assert.match(notices[0].body, /dfn-stopped is not running/);
+  });
+
+  it("counts a group-DM message missing several stopped members as one message (#1345)", async () => {
+    await addMind(SENDER, 4740);
+    await addMind(STOPPED, 4741);
+    await addMind(STOPPED2, 4742);
+
+    const participants = [
+      participant(SENDER, "mind", 1),
+      participant(STOPPED, "mind", 2),
+      participant(STOPPED2, "mind", 3),
+    ] as unknown as Participant;
+
+    await fanOutToMinds({
+      conversationId: CONVERSATION_ID,
+      contentBlocks: [{ type: "text", text: "both asleep?" }],
+      senderName: SENDER,
+      senderId: null,
+      participants,
+      isDM: true,
+    });
+
+    assert.ok(await waitFor(async () => (await failureNotices(SENDER)).length > 0));
+    // Let any further (wrongly multiplied) reports land before asserting the count.
+    await new Promise((r) => setTimeout(r, 200));
+    const notices = await failureNotices(SENDER);
+    assert.equal(notices.length, 1);
+    assert.equal(parseMeta(notices[0].meta).count, 1);
+    assert.match(notices[0].body, /dfn-stopped, dfn-stopped-2 are not running/);
+  });
+
+  it("counts one channel message failing for several recipients as one message (#1345)", async () => {
+    // No DeliveryManager: each running recipient's delivery fails pre-queue.
+    await addMind(SENDER, 4743);
+    const a = await addMind(RECIPIENT, 4744);
+    const b = await addMind(RECIPIENT2, 4745);
+    markRunning(RECIPIENT, a?.port ?? 4744);
+    markRunning(RECIPIENT2, b?.port ?? 4745);
+
+    const participants = [
+      participant(SENDER, "mind", 1),
+      participant(RECIPIENT, "mind", 2),
+      participant(RECIPIENT2, "mind", 3),
+    ] as unknown as Participant;
+
+    await fanOutToMinds({
+      conversationId: CONVERSATION_ID,
+      contentBlocks: [{ type: "text", text: "anyone?" }],
+      senderName: SENDER,
+      senderId: null,
+      participants,
+      isDM: false,
+      slugExtra: { convType: "channel", convName: "commons" },
+    });
+
+    assert.ok(await waitFor(async () => (await failureNotices(SENDER)).length > 0));
+    await new Promise((r) => setTimeout(r, 200));
+    const notices = await failureNotices(SENDER);
+    assert.equal(notices.length, 1);
+    assert.equal(parseMeta(notices[0].meta).count, 1);
   });
 });
