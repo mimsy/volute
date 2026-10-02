@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git procps lsof
 WORKDIR /opt/volute
 COPY package*.json ./
 RUN npm ci --production --ignore-scripts
+COPY CHANGELOG.md ./
 COPY dist/ dist/
 COPY drizzle/ drizzle/
 COPY templates/ templates/

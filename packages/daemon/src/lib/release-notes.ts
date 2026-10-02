@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { voluteManifest } from "./util/volute-root.js";
 
 /**
  * Parse release notes for a specific version from CHANGELOG.md.
@@ -51,23 +52,11 @@ function stripGitHubLinks(text: string): string {
 }
 
 function findChangelog(): string | null {
-  // Walk up from this file to find CHANGELOG.md (same pattern as getCurrentVersion)
-  const thisDir = new URL(".", import.meta.url).pathname;
-  const candidates = [
-    resolve(thisDir, "../CHANGELOG.md"),
-    resolve(thisDir, "../../CHANGELOG.md"),
-    resolve(thisDir, "../../../CHANGELOG.md"),
-    resolve(thisDir, "../../../../CHANGELOG.md"),
-    resolve(thisDir, "../../../../../CHANGELOG.md"),
-  ];
-  for (const p of candidates) {
-    if (existsSync(p)) {
-      try {
-        return readFileSync(p, "utf-8");
-      } catch {
-        return null;
-      }
-    }
+  const manifest = voluteManifest();
+  if (!manifest) return null;
+  try {
+    return readFileSync(resolve(manifest.root, "CHANGELOG.md"), "utf-8");
+  } catch {
+    return null;
   }
-  return null;
 }
