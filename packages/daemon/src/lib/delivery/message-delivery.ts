@@ -357,7 +357,8 @@ export async function linkToolResultToTurn(
  * Claim the outbound rows `where` selects that have no turn yet for `turnId`, in one UPDATE
  * guarded by `turn_id IS NULL` — a row is never moved off a turn. Their sent messages follow,
  * so the two never name different turns, and each claimed send is published again, now with
- * its turn, so the live view can place it (it was published at send time without one).
+ * its turn, so the live view can place it (it was published at send time without one). The
+ * re-publish carries the row's id, as the first did, so consumers update rather than duplicate.
  * Returns how many it claimed.
  */
 async function claimOutbound(
@@ -372,6 +373,7 @@ async function claimOutbound(
     .set({ turn_id: turnId })
     .where(and(where, eq(mindHistory.type, "outbound"), isNull(mindHistory.turn_id)))
     .returning({
+      id: mindHistory.id,
       channel: mindHistory.channel,
       content: mindHistory.content,
       message_id: mindHistory.message_id,
@@ -389,6 +391,7 @@ async function claimOutbound(
   }
   for (const r of claimed) {
     publishMindEvent(mind, {
+      id: r.id,
       mind,
       type: "outbound",
       channel: r.channel ?? undefined,

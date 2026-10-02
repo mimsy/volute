@@ -135,6 +135,7 @@ export async function echoTextToChannel(
 
   if (outboundId != null) {
     publishMindEvent(mind, {
+      id: outboundId,
       mind,
       type: "outbound",
       channel,

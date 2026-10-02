@@ -246,10 +246,21 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
       });
       assert.ok(turnId);
       await completeTurn(MIND, "main"); // the done lands before the echo runs
-      await echoTextToChannel(MIND, `@${PEER}`, "echoed", { turnId, thread: "main" }, undefined);
+      const events: MindEvent[] = [];
+      const unsub = subscribeMind(MIND, (e) => events.push(e));
+      try {
+        await echoTextToChannel(MIND, `@${PEER}`, "echoed", { turnId, thread: "main" }, undefined);
+      } finally {
+        unsub();
+      }
       const row = await outboundRow("echoed");
       assert.equal(row.turn_id, turnId);
       assert.equal(row.thread, "main");
+      // Its event names its row, as claimOutbound's re-publish of a turnless echo would (#1179).
+      assert.deepEqual(
+        events.filter((e) => e.type === "outbound").map((e) => e.id),
+        [row.id],
+      );
     } finally {
       clearEchoTextCache(MIND);
       rmSync(mindDir(MIND), { recursive: true, force: true });
@@ -260,8 +271,9 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
     const token = await setup();
     const events: MindEvent[] = [];
     const unsub = subscribeMind(MIND, (e) => events.push(e));
+    let outboundId: number | undefined;
     try {
-      const { outboundId } = await send(token, "no turn yet", "main");
+      ({ outboundId } = await send(token, "no turn yet", "main"));
       await handleMindEvent(MIND, {
         type: "tool_result",
         session: "main",
@@ -275,6 +287,11 @@ describe("send attribution: exact thread and turn, or none (#1173)", () => {
     assert.deepEqual(
       outbound.map((e) => e.turnId),
       [undefined, turnMain],
+    );
+    // Both name the same row, so a consumer updates the entry rather than showing it twice (#1179).
+    assert.deepEqual(
+      outbound.map((e) => e.id),
+      [outboundId, outboundId],
     );
     assert.equal((await outboundRow("no turn yet")).turn_id, turnMain);
   });

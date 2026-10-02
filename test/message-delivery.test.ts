@@ -742,6 +742,7 @@ describe("linkToolResultToTurn", () => {
     assert.equal(events[0].type, "outbound");
     assert.equal(events[0].content, "hello from mind");
     assert.equal(events[0].turnId, LINK_TURN_ID);
+    assert.equal(events[0].id, outId, "the re-publish names the row the send-time event did");
   });
 
   it("claims an outbound once when two markers from the thread race for it", async () => {
