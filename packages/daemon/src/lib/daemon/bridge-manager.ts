@@ -90,17 +90,33 @@ export class BridgeManager {
     };
   }
 
-  startBridge(platform: string, daemonPort: number): Promise<void> {
+  /**
+   * `configure` runs first inside this platform's queue — the caller's config write, so
+   * config and process state change together and can't be interleaved with another
+   * caller's start or stop.
+   */
+  startBridge(platform: string, daemonPort: number, configure?: () => void): Promise<void> {
     if (!this.knownPlatform(platform)) return Promise.reject(unknownPlatform(platform));
-    return this.serialize(platform, () => this.doStartBridge(platform, daemonPort));
+    return this.serialize(platform, async () => {
+      if (this.shuttingDown) {
+        blog.info(`not starting bridge ${platform} — the daemon is shutting down`);
+        return;
+      }
+      configure?.();
+      await this.doStartBridge(platform, daemonPort);
+    });
   }
 
-  stopBridge(platform: string): Promise<void> {
+  /** `deconfigure` runs once the bridge is stopped, inside the same queue slot. */
+  stopBridge(platform: string, deconfigure?: () => void): Promise<void> {
     if (!this.knownPlatform(platform)) return Promise.reject(unknownPlatform(platform));
     // Cancelled now as well as when the stop runs: a restart timer firing while this
     // stop waits its turn would otherwise queue a start behind it (#1352).
     this.cancelPendingRestart(platform);
-    return this.serialize(platform, () => this.doStopBridge(platform));
+    return this.serialize(platform, async () => {
+      await this.doStopBridge(platform);
+      deconfigure?.();
+    });
   }
 
   private serialize(platform: string, op: () => Promise<void>): Promise<void> {
@@ -113,10 +129,6 @@ export class BridgeManager {
   }
 
   private async doStartBridge(platform: string, daemonPort: number): Promise<void> {
-    if (this.shuttingDown) {
-      blog.info(`not starting bridge ${platform} — the daemon is shutting down`);
-      return;
-    }
     // This start supersedes any pending crash restart, which would otherwise kill it.
     this.cancelPendingRestart(platform);
 
@@ -166,6 +178,11 @@ export class BridgeManager {
     };
 
     const child = spawn(process.execPath, [builtinBridge], spawnOpts);
+    child.on("error", (err) => blog.error(`bridge ${platform} process error`, log.errorData(err)));
+    if (!child.pid) {
+      // Failed outright (the runtime vanished, say): no process, and no 'exit' to come.
+      throw new Error(`failed to spawn bridge ${platform}`);
+    }
 
     let lastStderr = "";
     child.stdout?.pipe(logStream);
@@ -174,23 +191,9 @@ export class BridgeManager {
       lastStderr = chunk.toString().trim();
     });
 
-    if (child.pid) {
-      this.saveBridgePid(platform, child.pid);
-    }
-
+    this.saveBridgePid(platform, child.pid);
     this.live.set(child, platform);
     this.bridges.set(platform, { child, platform });
-    // A spawn that fails outright (the runtime vanished, say) gets no pid and never
-    // emits 'exit', so this is the only place it can be forgotten.
-    child.on("error", (err) => {
-      blog.error(`bridge ${platform} process error`, log.errorData(err));
-      if (child.pid) return; // a running child's 'exit' handler owns it
-      this.live.delete(child);
-      if (this.bridges.get(platform)?.child === child) {
-        this.restartTracker.cancelHealthyReset(platform);
-        this.bridges.delete(platform);
-      }
-    });
     // Clear the crash budget only once this spawn has proved it can stay up —
     // resetting here at spawn time let a bridge that dies immediately refresh its
     // own budget forever, so it never backed off and never gave up (#1033).

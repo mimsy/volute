@@ -4,6 +4,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
+import {
+  getBridgeConfig,
+  removeBridgeConfig,
+  setBridgeConfig,
+} from "../packages/daemon/src/lib/bridges/bridges.js";
 import { BridgeManager } from "../packages/daemon/src/lib/daemon/bridge-manager.js";
 import {
   DaemonShuttingDownError,
@@ -407,18 +412,40 @@ describe("crash recovery wiring", () => {
       }
     });
 
-    it("forgets a bridge whose spawn failed outright", async () => {
+    it("a spawn that fails outright is a failed start, never tracked", async () => {
       const mgr = newBridgeManager();
       mgr.resolveBuiltinBridge = () => writeFixture("nospawn", resolve(fixtureDir, "x.txt"), "");
       const realExecPath = process.execPath;
       try {
         process.execPath = resolve(fixtureDir, "no-such-runtime");
-        await mgr.startBridge("nospawn", 1618);
+        await assert.rejects(mgr.startBridge("nospawn", 1618), /failed to spawn bridge nospawn/);
       } finally {
         process.execPath = realExecPath;
       }
-      assert.ok(await waitFor(() => mgr.live.size === 0, 2000), "the failed spawn stayed live");
+      assert.equal(mgr.live.size, 0, "the failed spawn was tracked as live");
       assert.equal(mgr.isRunning("nospawn"), false);
+    });
+
+    it("config changes ride in the same queue slot as the start or stop they belong to", async () => {
+      const marker = resolve(fixtureDir, "config-spawns.txt");
+      const mgr = newBridgeManager();
+      mgr.resolveBuiltinBridge = () => slow("configured", marker);
+      const enable = () =>
+        setBridgeConfig("configured", { enabled: true, defaultMind: "x", channelMappings: {} });
+      try {
+        await mgr.startBridge("configured", 1618, enable);
+        assert.ok(await waitFor(() => spawnTimes(marker).length === 1, 5000));
+        await delay(100); // stopping it now takes ~300ms
+        // A disable, then a re-enable before it finishes: the later one must hold for both
+        // the process and its config.
+        const stop = mgr.stopBridge("configured", () => removeBridgeConfig("configured"));
+        await mgr.startBridge("configured", 1618, enable);
+        await stop;
+        assert.equal(mgr.isRunning("configured"), true);
+        assert.equal(getBridgeConfig("configured")?.enabled, true, "config and process disagree");
+      } finally {
+        await mgr.stopBridge("configured", () => removeBridgeConfig("configured"));
+      }
     });
 
     it("never arms a SIGKILL for a group its SIGTERM couldn't reach", async () => {

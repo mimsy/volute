@@ -198,19 +198,21 @@ const app = new Hono<AuthEnv>()
       );
     }
 
-    const existing = getBridgeConfig(platform);
-    setBridgeConfig(platform, {
-      enabled: true,
-      defaultMind: body.defaultMind,
-      channelMappings: existing?.channelMappings ?? {},
-    });
-
     try {
       const daemonPort = parseInt(process.env.VOLUTE_DAEMON_PORT ?? "", 10);
       if (Number.isNaN(daemonPort)) {
         return c.json({ error: "VOLUTE_DAEMON_PORT not available" }, 500);
       }
-      await manager.startBridge(platform, daemonPort);
+      // Written in the bridge's own queue slot, so a concurrent disable can't leave the
+      // config and the process disagreeing.
+      await manager.startBridge(platform, daemonPort, () => {
+        const existing = getBridgeConfig(platform);
+        setBridgeConfig(platform, {
+          enabled: true,
+          defaultMind: body.defaultMind,
+          channelMappings: existing?.channelMappings ?? {},
+        });
+      });
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start bridge" }, 500);
@@ -225,8 +227,7 @@ const app = new Hono<AuthEnv>()
     if (!getBridgeDef(platform))
       return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
     const manager = getBridgeManager();
-    await manager.stopBridge(platform);
-    removeBridgeConfig(platform);
+    await manager.stopBridge(platform, () => removeBridgeConfig(platform));
     return c.json({ ok: true });
   })
 
