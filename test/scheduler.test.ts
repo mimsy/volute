@@ -711,6 +711,7 @@ describe("scheduler state honesty (#867)", () => {
       dueAt: 998,
       cron: "0 3 * * *",
       fireAt: "2026-01-01T00:00:00.000Z",
+      disabled: true,
     });
     await scheduler.saveState();
     (scheduler as any).loadState();
@@ -721,6 +722,7 @@ describe("scheduler state honesty (#867)", () => {
       dueAt: 998,
       cron: "0 3 * * *",
       fireAt: "2026-01-01T00:00:00.000Z",
+      disabled: true,
     });
     scheduler.clearState();
   });
@@ -1381,6 +1383,107 @@ describe("scheduler schedule edits keep their history without false skips (#948)
     assert.equal(scheduler.invalidNotices.length, 1);
     assert.match(scheduler.invalidNotices[0].reason, /not a valid date/);
     assert.equal((scheduler as any).schedules.has(mind), false, "consumed");
+  });
+});
+
+describe("scheduler pause and resume keep their history without false skips (#1165)", () => {
+  const nowMin = () => Math.floor(Date.now() / 60000);
+
+  function writeConfig(dir: string, schedules: unknown[]) {
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    writeFileSync(resolve(dir, "home/.config/volute.json"), JSON.stringify({ schedules }));
+  }
+
+  function dailyCronAgo(minutesAgo: number): string {
+    const d = new Date(Date.now() - minutesAgo * 60000);
+    return `${d.getMinutes()} ${d.getHours()} * * *`;
+  }
+
+  function stateOf(scheduler: Scheduler, key: string) {
+    return ((scheduler as any).state as Map<string, any>).get(key);
+  }
+
+  /** Disable `dream`, let its cron minute pass `minutesAgo` minutes ago, re-enable it. */
+  function pauseThroughFire(scheduler: TestScheduler, mind: string, minutesAgo: number) {
+    const dir = resolve(voluteSystemDir(), mind);
+    const cron = dailyCronAgo(minutesAgo);
+    const dream = { id: "dream", cron, message: "dream", enabled: true };
+    const firedAt = nowMin() - 1440 - minutesAgo; // yesterday's fire, before the pause
+    (scheduler as any).state.set(`${mind}:dream`, { slot: firedAt, firedAt, cron });
+    writeConfig(dir, [{ ...dream, enabled: false }]);
+    scheduler.loadSchedules(mind, dir);
+    writeConfig(dir, [dream]);
+    scheduler.loadSchedules(mind, dir);
+    return { dream, firedAt };
+  }
+
+  it("a fire paused through is not reported as skipped, and history is kept", () => {
+    // The false alarm: the mind paused its schedule, and was told it "did not run".
+    const scheduler = new TestScheduler();
+    const mind = "pause-stale-mind";
+    const { dream, firedAt } = pauseThroughFire(scheduler, mind, 60);
+
+    assert.equal((scheduler as any).shouldFire(dream, nowMin(), mind, new Map()), false);
+    assert.deepEqual(scheduler.skipNotices, [], "a pause is not a skipped fire");
+    const state = stateOf(scheduler, `${mind}:dream`);
+    assert.equal(state.slot, nowMin());
+    assert.equal(state.firedAt, firedAt, "the schedule's history survives the pause");
+    assert.equal(state.disabled, undefined);
+  });
+
+  it("a fire paused through a few minutes ago does not fire late on resume", () => {
+    const scheduler = new TestScheduler();
+    const mind = "pause-late-mind";
+    const { dream } = pauseThroughFire(scheduler, mind, 5);
+
+    assert.equal((scheduler as any).shouldFire(dream, nowMin(), mind, new Map()), false);
+  });
+
+  it("the pause survives a daemon restart in between", async () => {
+    const scheduler = new TestScheduler();
+    const mind = "pause-restart-mind";
+    const dir = resolve(voluteSystemDir(), mind);
+    const cron = dailyCronAgo(60);
+    const dream = { id: "dream", cron, message: "dream", enabled: true };
+    (scheduler as any).state.set(`${mind}:dream`, { slot: nowMin() - 1500, cron });
+    writeConfig(dir, [{ ...dream, enabled: false }]);
+    scheduler.loadSchedules(mind, dir);
+    await scheduler.saveState();
+
+    (scheduler as any).loadState(); // restart
+    writeConfig(dir, [dream]);
+    scheduler.loadSchedules(mind, dir);
+
+    assert.equal((scheduler as any).shouldFire(dream, nowMin(), mind, new Map()), false);
+    assert.deepEqual(scheduler.skipNotices, []);
+  });
+
+  it("a schedule that stayed enabled keeps its cursor, so a real catch-up still fires", () => {
+    const scheduler = new TestScheduler();
+    const mind = "pause-never-mind";
+    const dir = resolve(voluteSystemDir(), mind);
+    const beat = { id: "beat", cron: "* * * * *", message: "hi", enabled: true };
+    (scheduler as any).state.set(`${mind}:beat`, { slot: nowMin() - 3, cron: "* * * * *" });
+    writeConfig(dir, [beat]);
+    scheduler.loadSchedules(mind, dir);
+    scheduler.loadSchedules(mind, dir);
+
+    assert.equal((scheduler as any).shouldFire(beat, nowMin(), mind, new Map()), true);
+  });
+
+  it("a resumed one-timer that came due while paused is still delivered", () => {
+    const scheduler = new TestScheduler();
+    const mind = "pause-once-mind";
+    const dir = resolve(voluteSystemDir(), mind);
+    const fireAt = new Date(Date.now() - 30 * 60000).toISOString();
+    const once = { id: "once", fireAt, message: "hi", enabled: true };
+    writeConfig(dir, [{ ...once, enabled: false }]);
+    scheduler.loadSchedules(mind, dir);
+    writeConfig(dir, [once]);
+    scheduler.loadSchedules(mind, dir);
+
+    // Next tick: the baseline written on first sight holds only the current minute.
+    assert.equal((scheduler as any).shouldFire(once, nowMin() + 1, mind, new Map()), true);
   });
 });
 
