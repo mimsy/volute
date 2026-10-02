@@ -24,6 +24,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { MIND_LEVEL_THREAD, recordNotice } from "./chat/system-events.js";
 import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
+import { withRecoveryHold } from "./daemon/mind-manager.js";
 import { getDb } from "./db.js";
 import { readInitLedgerFile, writeLedgerFile } from "./mind/init-ledger.js";
 import { chownMindDir, mindFileOwner, mindGitOpts, reclaimMindGit } from "./mind/isolation.js";
@@ -899,6 +900,56 @@ async function reclaimGitForSkills(dir: string, mindName: string): Promise<void>
   );
 }
 
+/**
+ * Run `fn` — a skill's npm install, or the cleanup that restores the tree after one —
+ * with `mindName`'s crash recovery held, when the skill declares npm dependencies: a
+ * recovery restart landing in that window would boot the mind on half-installed or
+ * half-restored dependencies (#1302). Nothing else a skill writes is on the boot path, so
+ * the git work around it stays outside. Released only once the tree is the mind's again:
+ * what the daemon wrote is chowned back first. Keyed on `mindName`, not its base name like
+ * the skills lock — the hold is for the process that boots from this tree, and a variant
+ * runs as its own.
+ */
+function withDepsHold<T>(
+  mindName: string,
+  dir: string,
+  npmDependencies: string[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (npmDependencies.length === 0) return fn();
+  return withRecoveryHold(mindName, async () => {
+    try {
+      return await fn();
+    } finally {
+      await chownMindDir(dir, mindName).catch((err) =>
+        log.warn(
+          `failed to hand ${mindName}'s tree back after a skill install`,
+          log.errorData(err),
+        ),
+      );
+    }
+  });
+}
+
+/** The package files as they stand now, and a way to put them back. */
+async function snapshotPackageFiles(
+  dir: string,
+  owner: MindFileOwner | null,
+): Promise<() => Promise<void>> {
+  const before = new Map<string, FileState>();
+  for (const rel of PACKAGE_FILES) {
+    const bytes = await readMindFileBytes(dir, rel, { owner, maxBytes: 64 * 1024 * 1024 });
+    before.set(rel, bytes && { bytes, mode: lstatSync(join(dir, rel)).mode & 0o777 });
+  }
+  return async () => {
+    for (const [rel, was] of before) {
+      if (was)
+        await writeMindFile(dir, rel, was.bytes, { owner, mode: was.mode, enforceMode: true });
+      else await removeMindFile(dir, rel, { owner });
+    }
+  };
+}
+
 export function installSkill(
   mindName: string,
   dir: string,
@@ -945,38 +996,46 @@ async function installSkillLocked(
   const npmInstalled: string[] = [];
   const skillMdPath = join(sourceDir, "SKILL.md");
   let declaredBin: string | null = null;
+  // What npm changed in the package files, put back by any failure after it.
+  let restorePackages = async () => {};
   // lexists, not existsSync: a dangling link in the pool must reach readPoolFile and refuse.
   if (lexists(skillMdPath)) {
     const { npmDependencies, hooks, bin } = parseSkillMd(readPoolFile(skillMdPath).toString());
-    if (npmDependencies.length > 0) {
+    if (npmDependencies.length > 0) restorePackages = await snapshotPackageFiles(dir, owner);
+    // The cleanups run inside the hold too: a recovery it deferred must not fire mid-restore.
+    await withDepsHold(mindName, dir, npmDependencies, async () => {
+      if (npmDependencies.length > 0) {
+        try {
+          await npmInstallAsMind(dir, mindName, npmDependencies);
+          npmInstalled.push(...npmDependencies);
+        } catch (e) {
+          // Clean up partial install so the skill can be retried
+          await removeSkillDir(dir, destDir, owner).catch(cleanupFailed);
+          await restorePackages().catch(cleanupFailed);
+          const msg = e instanceof Error ? e.message : String(e);
+          throw new Error(
+            `Failed to install npm dependencies (${npmDependencies.join(", ")}): ${msg}`,
+          );
+        }
+      }
       try {
-        await npmInstallAsMind(dir, mindName, npmDependencies);
-        npmInstalled.push(...npmDependencies);
+        // An explicit install gives every shim, even one a previous install of
+        // this skill gave and the mind then deleted.
+        reconcileSkillShims(mindName, dir, skillId, { hooks, bin }, { restoreDeleted: true });
       } catch (e) {
-        // Clean up partial install so the skill can be retried
+        // Clean up partial install (copied dir + any hook shims) so a failure
+        // here — e.g. a bin-shim collision with another skill — doesn't leave
+        // destDir behind and wedge every retry on the "already installed" guard.
+        try {
+          removeHookShims(dir, skillId);
+        } catch (err) {
+          cleanupFailed(err);
+        }
         await removeSkillDir(dir, destDir, owner).catch(cleanupFailed);
-        const msg = e instanceof Error ? e.message : String(e);
-        throw new Error(
-          `Failed to install npm dependencies (${npmDependencies.join(", ")}): ${msg}`,
-        );
+        await restorePackages().catch(cleanupFailed);
+        throw e;
       }
-    }
-    try {
-      // An explicit install gives every shim, even one a previous install of
-      // this skill gave and the mind then deleted.
-      reconcileSkillShims(mindName, dir, skillId, { hooks, bin }, { restoreDeleted: true });
-    } catch (e) {
-      // Clean up partial install (copied dir + any hook shims) so a failure
-      // here — e.g. a bin-shim collision with another skill — doesn't leave
-      // destDir behind and wedge every retry on the "already installed" guard.
-      try {
-        removeHookShims(dir, skillId);
-      } catch (err) {
-        cleanupFailed(err);
-      }
-      await removeSkillDir(dir, destDir, owner).catch(cleanupFailed);
-      throw e;
-    }
+    });
     declaredBin = bin;
   }
 
@@ -1029,6 +1088,7 @@ async function installSkillLocked(
       cleanupFailed(err);
     }
     await removeSkillDir(dir, destDir, owner).catch(cleanupFailed);
+    await withDepsHold(mindName, dir, npmInstalled, restorePackages).catch(cleanupFailed);
     // Unstage whatever the attempt staged: the paths' index entries go back to HEAD's.
     await git([
       "reset",
@@ -1037,6 +1097,7 @@ async function installSkillLocked(
       relSkillPath,
       join("home", ".local", "hooks"),
       join("home", ".local", "bin"),
+      ...(npmInstalled.length > 0 ? PACKAGE_FILES : []),
     ]).catch(cleanupFailed);
     throw e;
   }
@@ -1338,7 +1399,13 @@ async function updateSkillLocked(
     await writeUpstream(info);
     // The new version's deps and shims must not wait on the mind: from upstream's
     // SKILL.md, since the mind's may have markers in it.
-    const wiringFailure = await wireSkill(mindName, dir, skillId, readSkillMd(sourceDir)).then(
+    const upstreamDeclared = readSkillMd(sourceDir);
+    const wiringFailure = await withDepsHold(
+      mindName,
+      dir,
+      upstreamDeclared?.npmDependencies ?? [],
+      () => wireSkill(mindName, dir, skillId, upstreamDeclared),
+    ).then(
       () => "",
       (e) =>
         ` Setting up v${shared.version}'s dependencies or commands also failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -1357,14 +1424,30 @@ async function updateSkillLocked(
 
   // .upstream.json only moves to the new version once the merge is committed:
   // written first, a failed commit would leave the skill reading as up to date.
+  let merged: ReturnType<typeof parseSkillMd> | null;
   try {
-    let npmDependencies: string[];
+    merged = await readMindSkillMd();
+  } catch (err) {
+    await undo();
+    throw err;
+  }
+  // The undo runs inside the hold too: it puts back the package files npm changed, and a
+  // recovery the hold deferred must not fire mid-restore. The commit stays outside.
+  const declaredDeps = merged?.npmDependencies ?? [];
+  const npmDependencies = await withDepsHold(mindName, dir, declaredDeps, async () => {
     try {
-      npmDependencies = await wireSkill(mindName, dir, skillId, await readMindSkillMd());
-    } finally {
-      // As npm left them, whether its install finished or not.
-      await undoable.installed();
+      try {
+        return await wireSkill(mindName, dir, skillId, merged);
+      } finally {
+        // As npm left them, whether its install finished or not.
+        await undoable.installed();
+      }
+    } catch (err) {
+      await undo();
+      throw err;
     }
+  });
+  try {
     await git(["add", relSkillPath]);
     await git(["add", join("home", ".local", "hooks")]).catch(() => {});
     await git(["add", join("home", ".local", "bin")]).catch(() => {});
@@ -1375,7 +1458,7 @@ async function updateSkillLocked(
     // --allow-empty: a version bump need not change any file this mind tracks.
     await git(["commit", "--allow-empty", "-m", `Update skill: ${skillId} (v${shared.version})`]);
   } catch (err) {
-    await undo();
+    await withDepsHold(mindName, dir, declaredDeps, undo);
     throw err;
   }
   await writeUpstream(info);

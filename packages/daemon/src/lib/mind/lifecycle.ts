@@ -19,7 +19,7 @@ import {
 } from "../ai-service.js";
 import { announceToCommons } from "../chat/commons-channel.js";
 import { getSpiritName } from "../config/setup.js";
-import { getMindManager } from "../daemon/mind-manager.js";
+import { getMindManager, withRecoveryHold } from "../daemon/mind-manager.js";
 import { getDb } from "../db.js";
 import {
   ARCHIVE_INIT_LEDGER,
@@ -76,7 +76,7 @@ import {
 } from "./registry.js";
 import { spawnServer } from "./spawn-server.js";
 import { applyThinkingLevel } from "./thinking-config.js";
-import { configureGitIdentity, withRecoveryHold } from "./upgrade.js";
+import { configureGitIdentity } from "./upgrade.js";
 import { cleanupVariant } from "./variant-cleanup.js";
 import {
   findUnresolvedHomeFiles,
