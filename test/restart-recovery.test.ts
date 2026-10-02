@@ -512,6 +512,7 @@ describe("crash recovery wiring", () => {
         process.kill = realKill;
       });
 
+      let orphanPidKept = false;
       async function orphanLogs(kill: (pid: number) => void): Promise<string[]> {
         const mgr = new BridgeManager() as AnyMgr;
         const pidPath = mgr.bridgePidPath("orphan");
@@ -527,7 +528,8 @@ describe("crash recovery wiring", () => {
         } finally {
           process.kill = realKill;
         }
-        assert.equal(existsSync(pidPath), false);
+        orphanPidKept = existsSync(pidPath);
+        rmSync(pidPath, { force: true });
         return capturedLogs.slice(from).map((l) => JSON.parse(l).msg as string);
       }
 
@@ -558,6 +560,7 @@ describe("crash recovery wiring", () => {
           throw errno("ESRCH");
         });
         assert.deepEqual(logs, []);
+        assert.equal(orphanPidKept, false);
       });
 
       it("warns that an orphan may still be running when the kill is refused (EPERM)", async () => {
@@ -567,11 +570,13 @@ describe("crash recovery wiring", () => {
         assert.deepEqual(logs, [
           "could not kill orphan bridge orphan (pid 424242) — it may still be running",
         ]);
+        assert.equal(orphanPidKept, true, "dropped the only handle on a live orphan");
       });
 
       it("reports a kill that landed", async () => {
         const logs = await orphanLogs(() => {});
         assert.deepEqual(logs, ["killed orphan bridge orphan (pid 424242)"]);
+        assert.equal(orphanPidKept, false);
       });
     });
   });

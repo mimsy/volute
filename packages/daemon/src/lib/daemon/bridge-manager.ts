@@ -396,6 +396,7 @@ export class BridgeManager {
             `could not kill orphan bridge ${platform} (pid ${pid}) — it may still be running`,
             log.errorData(failure),
           );
+          return; // keep its PID file: the only handle a later attempt has on it
         }
       }
     } catch (err: unknown) {
