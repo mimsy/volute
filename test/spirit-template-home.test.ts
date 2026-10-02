@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { resolveTemplate } from "../packages/daemon/src/lib/ai-service.js";
 import { addSpirit, removeMind, stateDir } from "../packages/daemon/src/lib/mind/registry.js";
@@ -9,6 +20,7 @@ import {
   spiritDir,
   syncSpiritTemplate,
 } from "../packages/daemon/src/lib/mind/spirit.js";
+import { detectHomeTemplate } from "../packages/daemon/src/lib/skills.js";
 import {
   composeTemplate,
   findTemplatesRoot,
@@ -69,5 +81,44 @@ describe("the spirit's home after a template switch", () => {
     assert.ok(existsSync(resolve(home, want.skills, "tending/SKILL.md")));
     assert.equal(existsSync(resolve(home, stale.skills)), false);
     assert.equal(existsSync(resolve(home, ".claude/settings.json")), template === "claude");
+  });
+
+  // A link at the old doc's name kept the home reading as the old template, so the
+  // switch reran on every start and reset config.json to the template's defaults.
+  it("removes a link left at the old mechanics doc's name, so the switch happens once", async () => {
+    const { dir, template } = await seedSpiritProject();
+    const home = resolve(dir, "home");
+    const stale = LAYOUT[template === "codex" ? "claude" : "codex"];
+    writeFileSync(resolve(home, "notes.md"), "the spirit's own notes\n");
+    symlinkSync(resolve(home, "notes.md"), resolve(home, stale.doc));
+
+    await syncSpiritTemplate();
+
+    assert.equal(lstatSync(resolve(home, stale.doc), { throwIfNoEntry: false }), undefined);
+    assert.equal(readFileSync(resolve(home, "notes.md"), "utf-8"), "the spirit's own notes\n");
+    assert.equal(detectHomeTemplate(dir), template);
+  });
+
+  it("leaves the skills where they are when the home swap is refused, to retry next start", async () => {
+    const { dir, template } = await seedSpiritProject();
+    const home = resolve(dir, "home");
+    const stale = LAYOUT[template === "codex" ? "claude" : "codex"];
+    writeFileSync(resolve(home, stale.doc), "# another runtime's mechanics\n");
+    mkdirSync(resolve(home, stale.skills, "tending"), { recursive: true });
+    writeFileSync(resolve(home, stale.skills, "tending/SKILL.md"), "---\nname: tending\n---\n");
+    // .config linked out of the tree: config.json can't be written, so the swap refuses.
+    const outside = mkdtempSync(join(tmpdir(), "spirit-home-outside-"));
+    try {
+      rmSync(resolve(home, ".config"), { recursive: true });
+      symlinkSync(outside, resolve(home, ".config"));
+
+      await syncSpiritTemplate();
+
+      assert.ok(existsSync(resolve(home, stale.skills, "tending/SKILL.md")), "skills not moved");
+      assert.equal(existsSync(join(outside, "config.json")), false, "nothing written through");
+      assert.equal(detectHomeTemplate(dir), stale === LAYOUT.codex ? "codex" : "claude");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });

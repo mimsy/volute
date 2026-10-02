@@ -48,7 +48,7 @@ describe("last-known-good rollback", () => {
     // Mind edits its server source, breaking it (uncommitted, as auto-commit ignores src/)
     writeFileSync(join(repoDir, "src", "server.ts"), "this is broken !@#$\n");
 
-    const result = await rollbackSrcChanges(repoDir);
+    const result = await rollbackSrcChanges(repoDir, "test-mind");
 
     assert.equal(result.parked, true, "should report a parked change");
     assert.ok(
@@ -80,7 +80,7 @@ describe("last-known-good rollback", () => {
     writeFileSync(join(repoDir, "home", "SOUL.md"), "new identity\n");
     writeFileSync(join(repoDir, "src", "server.ts"), "broken\n");
 
-    const result = await rollbackSrcChanges(repoDir);
+    const result = await rollbackSrcChanges(repoDir, "test-mind");
     assert.equal(result.parked, true);
 
     assert.equal(
@@ -94,7 +94,7 @@ describe("last-known-good rollback", () => {
   it("drops a newly-added broken src/ file on rollback", async () => {
     writeFileSync(join(repoDir, "src", "extra.ts"), "syntax ??? error\n");
 
-    const result = await rollbackSrcChanges(repoDir);
+    const result = await rollbackSrcChanges(repoDir, "test-mind");
     assert.equal(result.parked, true);
 
     assert.equal(
@@ -107,7 +107,7 @@ describe("last-known-good rollback", () => {
   });
 
   it("is a no-op when src/ is clean", async () => {
-    const result = await rollbackSrcChanges(repoDir);
+    const result = await rollbackSrcChanges(repoDir, "test-mind");
     assert.equal(result.parked, false);
     assert.equal(result.branch, undefined);
     // No broken/* branches created
@@ -118,7 +118,7 @@ describe("last-known-good rollback", () => {
     // Mind makes a good src/ edit and restarts successfully — commit it as new baseline
     const NEW_GOOD = "console.log('v2');\n";
     writeFileSync(join(repoDir, "src", "server.ts"), NEW_GOOD);
-    await commitSrcChanges(repoDir);
+    await commitSrcChanges(repoDir, "test-mind");
     assert.equal(git(["show", "HEAD:src/server.ts"]), NEW_GOOD.trim());
     assert.equal(
       git(["status", "--porcelain", "--", "src"]),
@@ -128,20 +128,20 @@ describe("last-known-good rollback", () => {
 
     // Now a later bad edit rolls back to the v2 baseline, not the original
     writeFileSync(join(repoDir, "src", "server.ts"), "broken again\n");
-    const result = await rollbackSrcChanges(repoDir);
+    const result = await rollbackSrcChanges(repoDir, "test-mind");
     assert.equal(result.parked, true);
     assert.equal(readFileSync(join(repoDir, "src", "server.ts"), "utf-8"), NEW_GOOD);
   });
 
   it("commitSrcChanges is a no-op when src/ is clean", async () => {
     const before = git(["rev-parse", "HEAD"]);
-    await commitSrcChanges(repoDir);
+    await commitSrcChanges(repoDir, "test-mind");
     assert.equal(git(["rev-parse", "HEAD"]), before, "no commit should be created");
   });
 
   it("parks on a collision-proof branch name (timestamp + random suffix)", async () => {
     writeFileSync(join(repoDir, "src", "server.ts"), "broken\n");
-    const result = await rollbackSrcChanges(repoDir);
+    const result = await rollbackSrcChanges(repoDir, "test-mind");
     assert.equal(result.parked, true);
     // A second-resolution timestamp alone can collide across concurrent variants, so the
     // name must carry a random suffix (8 hex chars).
@@ -159,7 +159,7 @@ describe("last-known-good rollback", () => {
     const goodHead = git(["rev-parse", "HEAD"]);
     writeFileSync(join(repoDir, "src", "server.ts"), "broken change\n");
 
-    await assert.rejects(rollbackSrcChanges(repoDir), "branch creation should fail");
+    await assert.rejects(rollbackSrcChanges(repoDir, "test-mind"), "branch creation should fail");
 
     // HEAD must be rewound to the good state — NOT left advanced on the broken commit,
     // which would make hasSrcChanges() see a clean tree and skip rollback forever.
@@ -177,7 +177,7 @@ describe("last-known-good rollback", () => {
     const NEW_GOOD = "console.log('v2');\n";
     writeFileSync(join(repoDir, "src", "server.ts"), NEW_GOOD);
 
-    await commitSrcChanges(repoDir);
+    await commitSrcChanges(repoDir, "test-mind");
 
     // The baseline commit captures src/ ...
     assert.equal(git(["show", "HEAD:src/server.ts"]), NEW_GOOD.trim());
@@ -196,7 +196,7 @@ describe("last-known-good rollback", () => {
     git(["add", "--", "home/SOUL.md"]);
     writeFileSync(join(repoDir, "src", "server.ts"), "broken\n");
 
-    const result = await rollbackSrcChanges(repoDir);
+    const result = await rollbackSrcChanges(repoDir, "test-mind");
     assert.equal(result.parked, true);
 
     // The parked (broken) commit holds src/ but not the pre-staged home/ content

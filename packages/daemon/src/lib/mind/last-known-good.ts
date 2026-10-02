@@ -1,13 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
+import { mindGitOpts } from "./isolation.js";
 
 const glog = log.child("last-known-good");
 
 /** Are there uncommitted changes (tracked or untracked) under the repo's src/ dir? */
-async function hasSrcChanges(dir: string, mindName?: string): Promise<boolean> {
+async function hasSrcChanges(dir: string, mindName: string): Promise<boolean> {
   const status = (
-    await gitExec(["status", "--porcelain", "--", "src"], { cwd: dir, mindName })
+    await gitExec(["status", "--porcelain", "--", "src"], mindGitOpts(dir, mindName))
   ).trim();
   return status.length > 0;
 }
@@ -21,9 +22,9 @@ async function hasSrcChanges(dir: string, mindName?: string): Promise<boolean> {
  * server source and the edit breaks startup, this preserves the broken change for the
  * mind to inspect while restoring a bootable src/.
  *
- * Under user-isolation, `mindName` makes git run as the mind's OS user so it doesn't
- * leave root-owned objects/refs in the mind's `.git` (which would break the mind's own
- * auto-commit with EACCES).
+ * Git runs as the mind (`mindGitOpts`): the commit, reset and checkout fire the mind's own
+ * hooks, which must never run with the daemon's privilege, and root-owned objects/refs in
+ * its `.git` would break the mind's auto-commit with EACCES.
  *
  * Never uses `git stash` — the daemon shares one git object store across worktrees, so a
  * stash entry here could collide with concurrent work. We commit-then-rewind instead.
@@ -37,7 +38,7 @@ async function hasSrcChanges(dir: string, mindName?: string): Promise<boolean> {
  */
 export async function rollbackSrcChanges(
   dir: string,
-  mindName?: string,
+  mindName: string,
 ): Promise<{ parked: boolean; branch?: string }> {
   if (!(await hasSrcChanges(dir, mindName))) return { parked: false };
 
@@ -45,7 +46,7 @@ export async function rollbackSrcChanges(
   // the same second, so a second-resolution timestamp alone isn't unique.
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const branch = `broken/${ts}-${randomBytes(4).toString("hex")}`;
-  const opts = { cwd: dir, mindName };
+  const opts = mindGitOpts(dir, mindName);
 
   // Stage only src/ (home/ stays unstaged and untouched) and commit ONLY src/ — `--only`
   // ignores any pre-staged non-src content so it can't be swept into the parked commit.
@@ -76,12 +77,11 @@ export async function rollbackSrcChanges(
  * auto-commit hook only tracks `home/`, so without this src/ edits would never be
  * committed and every rollback would discard prior good work. No-op if src/ is clean.
  *
- * Under user-isolation, `mindName` makes git run as the mind's OS user (see
- * {@link rollbackSrcChanges}).
+ * Git runs as the mind (see {@link rollbackSrcChanges}).
  */
-export async function commitSrcChanges(dir: string, mindName?: string): Promise<void> {
+export async function commitSrcChanges(dir: string, mindName: string): Promise<void> {
   if (!(await hasSrcChanges(dir, mindName))) return;
-  const opts = { cwd: dir, mindName };
+  const opts = mindGitOpts(dir, mindName);
   // Commit ONLY src/ so pre-staged non-src content isn't swept into the baseline commit.
   await gitExec(["add", "--", "src"], opts);
   await gitExec(["commit", "--only", "-m", "Update src (self-edit)", "--", "src"], opts);

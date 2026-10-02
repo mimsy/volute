@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { deliverEvent } from "../packages/daemon/src/lib/chat/system-events.js";
@@ -28,7 +29,12 @@ import {
   sinceNoteFor,
   withSinceNote,
 } from "../packages/daemon/src/lib/delivery/since-last-here.js";
-import { addMind, mindDir, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import {
+  addMind,
+  addSpirit,
+  mindDir,
+  removeMind,
+} from "../packages/daemon/src/lib/mind/registry.js";
 import { conversations, messages, mindHistory, turns } from "../packages/daemon/src/lib/schema.js";
 
 // --- Helpers ---
@@ -438,6 +444,34 @@ describe("since-last-here: buildSinceNote (#939)", () => {
       });
       assert.match(note ?? "", /files changed: memory\/journal\.md —/);
       assert.doesNotMatch(note ?? "", /MEMORY\.md/);
+    });
+
+    it("reads the repo at the registered dir, for a mind outside the minds dir (the spirit)", async () => {
+      const mind = uniqueMind();
+      const dir = resolve(mkdtempSync(resolve(tmpdir(), "since-spirit-")), mind);
+      mkdirSync(resolve(dir, "home/memory"), { recursive: true });
+      git(dir, ["init", "-q"]);
+      git(dir, ["config", "user.email", "t@t"]);
+      git(dir, ["config", "user.name", "t"]);
+      await addSpirit(mind, 4998, "claude", dir);
+      try {
+        const now = Date.now();
+        const done = now - 20 * 60_000;
+        await ranTurn(mind, "#bardo", done);
+        await startedTurn(mind, "main", done + 5 * 60_000);
+        commit(dir, "memory/journal.md", done + 6 * 60_000);
+        const note = await buildSinceNote({
+          mind,
+          thread: "#bardo",
+          channels: [],
+          conversationIds: [],
+          now,
+        });
+        assert.match(note ?? "", /files changed: memory\/journal\.md —/);
+      } finally {
+        await removeMind(mind).catch(() => {});
+        rmSync(resolve(dir, ".."), { recursive: true, force: true });
+      }
     });
 
     it("does not ask git at all when no other thread has run", async () => {

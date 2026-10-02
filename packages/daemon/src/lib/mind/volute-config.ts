@@ -98,7 +98,7 @@ export function readVoluteConfig(mindDir: string): VoluteConfig | null {
   return readJson(path);
 }
 
-const VOLUTE_JSON = "home/.config/volute.json";
+export const VOLUTE_JSON = "home/.config/volute.json";
 
 /** volute.json is there but unparseable: refused rather than overwritten (it is the mind's). */
 export class UnparseableConfigError extends Error {}

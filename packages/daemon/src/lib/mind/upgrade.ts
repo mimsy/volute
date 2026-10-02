@@ -560,7 +560,7 @@ async function mergeUpgradeAndRestart(
   let switchWarning: string | undefined;
   if (templateChanged) {
     try {
-      applyTemplateHomeFiles(resolve(dir, "home"), template);
+      await applyTemplateHomeFiles(dir, template, await mindFileOwner(mindName));
       // Move installed skills into the new template's skills dir and regenerate
       // their shims, so they aren't stranded (invisible + shims pointing at the
       // old path) after the switch.
@@ -678,7 +678,7 @@ type RestartTarget = {
 
 /** Collaborators of {@link installDepsAndRestart}, defaulting to the real daemon singletons. */
 export type InstallAndRestartDeps = {
-  installNeeded: (dir: string, preMergeRef: string) => Promise<boolean>;
+  installNeeded: (dir: string, preMergeRef: string, mindName: string) => Promise<boolean>;
   install: (dir: string, mindName: string) => Promise<void>;
   /** Host-facing alert: a dashboard row, published the moment the failure happens. */
   publishHostError: (mindName: string, summary: string, kind: string) => Promise<void>;
@@ -725,7 +725,7 @@ export async function installDepsAndRestart(
 
   // Skip npm install when the merge didn't touch dependencies — even a no-op
   // install writes enough to freeze slow storage for a minute or more.
-  if (await deps.installNeeded(dir, preMergeHead)) {
+  if (await deps.installNeeded(dir, preMergeHead, mindName)) {
     try {
       await deps.install(dir, mindName);
     } catch (err) {
@@ -968,9 +968,8 @@ async function runUpgradeCore(
   // Every git command below runs as the mind, not as the daemon: commits, merges,
   // checkouts and ref updates run the mind's own hooks, and index reads its
   // configured fsmonitor — none of which may execute with the daemon's privilege
-  // (#961, #871). The one exception is sharesTemplateBase's rev-parse/merge-base,
-  // which read refs and objects only. All of it needs the repo — .variants/
-  // included, where the worktrees go — to be the mind's first.
+  // (#961, #871). All of it needs the repo — .variants/ included, where the
+  // worktrees go — to be the mind's first.
   const parentDir = resolve(dir, ".variants");
   if (!existsSync(parentDir)) {
     mkdirSync(parentDir, { recursive: true });
@@ -988,7 +987,7 @@ async function runUpgradeCore(
   // A mind whose history never joined volute/template (a full-archive import, or
   // a repo made by the git init above) would merge as unrelated histories and
   // conflict on every differing template file, every time (#1244).
-  if (!(await sharesTemplateBase(dir))) {
+  if (!(await sharesTemplateBase(asMind))) {
     log.info(`establishing a volute/template merge base for ${mindName}`);
     await establishTemplateBase(dir, oldTemplate, "head", mindName);
   }

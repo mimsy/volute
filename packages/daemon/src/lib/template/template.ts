@@ -16,7 +16,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { readInitLedger, writeInitLedger } from "../mind/init-ledger.js";
 import { mindFileOwner } from "../mind/isolation.js";
-import { readMindFileBytes, writeMindFile } from "../mind/mind-file-write.js";
+import {
+  type MindFileOwner,
+  readMindFileBytes,
+  removeMindFile,
+  replaceMindFile,
+  writeMindFile,
+} from "../mind/mind-file-write.js";
 import { getBaseName } from "../mind/registry.js";
 
 export type TemplateManifest = {
@@ -616,8 +622,17 @@ export function isKnownTemplate(template: string): boolean {
  * time and excluded from the template branch (updateTemplateBranch strips all of
  * home/ except VOLUTE.md), so the normal upgrade merge never updates them.
  * Leaves mind-authored files (SOUL.md, MEMORY.md, memory/, etc.) untouched.
+ *
+ * `dir` is the mind's directory, which the mind owns while the daemon may be root:
+ * every write and removal goes through the mind-file helpers, so a link the mind
+ * planted at one of these names is replaced rather than written through, and one at
+ * a directory on the way refuses (#1264).
  */
-export function applyTemplateHomeFiles(homeDir: string, template: string) {
+export async function applyTemplateHomeFiles(
+  dir: string,
+  template: string,
+  owner: MindFileOwner | null,
+): Promise<void> {
   const root = findTemplatesRoot();
 
   // Resolve (and verify) the new mechanics doc before deleting the old one, so a
@@ -628,19 +643,13 @@ export function applyTemplateHomeFiles(homeDir: string, template: string) {
     throw new Error(`No mechanics doc for template "${template}"`);
   }
 
-  // Mechanics doc: remove any existing one, then write the target's.
-  for (const doc of Object.values(MECHANICS_DOCS)) {
-    rmSync(resolve(homeDir, doc), { force: true });
-  }
-  cpSync(newDocSrc, resolve(homeDir, newDoc));
-
   // .claude/settings.json is claude-only.
-  const settingsDest = resolve(homeDir, ".claude", "settings.json");
+  const settings = join("home", ".claude", "settings.json");
   if (template === "claude") {
-    mkdirSync(dirname(settingsDest), { recursive: true });
-    cpSync(resolve(root, "claude", ".init", ".claude", "settings.json"), settingsDest);
+    const settingsSrc = resolve(root, "claude", ".init", ".claude", "settings.json");
+    await replaceMindFile(dir, settings, readFileSync(settingsSrc), { owner });
   } else {
-    rmSync(settingsDest, { force: true });
+    await removeMindFile(dir, settings, { owner });
   }
 
   // config.json: regenerate from the target's config (template-specific overrides _base).
@@ -648,9 +657,17 @@ export function applyTemplateHomeFiles(homeDir: string, template: string) {
   const configSrc = existsSync(templateConfig)
     ? templateConfig
     : resolve(root, "_base", "home", ".config", "config.json");
-  const configDest = resolve(homeDir, ".config", "config.json");
-  mkdirSync(dirname(configDest), { recursive: true });
-  writeFileSync(configDest, readFileSync(configSrc, "utf-8"));
+  await replaceMindFile(dir, join("home", ".config", "config.json"), readFileSync(configSrc), {
+    owner,
+  });
+
+  // The mechanics doc last, the new one before the old ones go: it is what
+  // detectHomeTemplate reads, so a swap that fails anywhere leaves the home still
+  // reading as the old template, and the caller's next attempt redoes all of it.
+  await replaceMindFile(dir, join("home", newDoc), readFileSync(newDocSrc), { owner });
+  for (const doc of Object.values(MECHANICS_DOCS)) {
+    if (doc !== newDoc) await removeMindFile(dir, join("home", doc), { owner });
+  }
 }
 
 /**

@@ -207,17 +207,17 @@ describe("sharesTemplateBase", () => {
     const name = `tb-shares-${process.pid}`;
     const dir = archivedMind(name);
     commitAsImport(dir);
-    assert.equal(await sharesTemplateBase(dir), false, "no volute/template");
+    assert.equal(await sharesTemplateBase({ cwd: dir }), false, "no volute/template");
     git(dir, "branch", TEMPLATE_BRANCH, git(dir, "commit-tree", "HEAD^{tree}", "-m", "x").trim());
-    assert.equal(await sharesTemplateBase(dir), false, "an orphan volute/template");
+    assert.equal(await sharesTemplateBase({ cwd: dir }), false, "an orphan volute/template");
     await establishTemplateBase(dir, "claude", "head", "test-mind");
-    assert.equal(await sharesTemplateBase(dir), true);
+    assert.equal(await sharesTemplateBase({ cwd: dir }), true);
 
     // A git failure is not an answer: reading it as "no base" would rebuild the
     // base from HEAD and hand the mind the template's copy of every file it edited.
     const notARepo = mkdtempSync(resolve(tmpdir(), "tb-not-a-repo-"));
     scratch.push(notARepo);
-    await assert.rejects(sharesTemplateBase(notARepo));
+    await assert.rejects(sharesTemplateBase({ cwd: notARepo }));
   });
 });
 

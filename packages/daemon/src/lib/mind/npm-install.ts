@@ -3,7 +3,12 @@ import { resolve } from "node:path";
 import { exec, gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { buildMindBaseEnv } from "../util/mind-env.js";
-import { isIsolationEnabled, reclaimNodeModules, wrapForIsolation } from "./isolation.js";
+import {
+  isIsolationEnabled,
+  mindGitOpts,
+  reclaimNodeModules,
+  wrapForIsolation,
+} from "./isolation.js";
 
 // Skip npm's audit/funding network round-trips.
 const NPM_INSTALL_ARGS = ["install", "--no-audit", "--no-fund", "--loglevel=error"];
@@ -143,11 +148,16 @@ export function isStaleCacheFailure(err: unknown): boolean {
  * True if package.json or package-lock.json changed between fromRef and HEAD.
  * Errs on the side of true (install) if the diff can't be computed.
  */
-export async function depsChangedSince(dir: string, fromRef: string): Promise<boolean> {
+export async function depsChangedSince(
+  dir: string,
+  fromRef: string,
+  mindName: string,
+): Promise<boolean> {
   try {
-    await gitExec(["diff", "--quiet", fromRef, "HEAD", "--", "package.json", "package-lock.json"], {
-      cwd: dir,
-    });
+    await gitExec(
+      ["diff", "--quiet", fromRef, "HEAD", "--", "package.json", "package-lock.json"],
+      mindGitOpts(dir, mindName),
+    );
     return false;
   } catch {
     return true;
@@ -159,7 +169,11 @@ export async function depsChangedSince(dir: string, fromRef: string): Promise<bo
  * no-op case matters: npm install rewrites enough of node_modules to saturate
  * slow storage for a minute even when nothing changed.
  */
-export async function npmInstallNeeded(dir: string, preMergeRef: string): Promise<boolean> {
+export async function npmInstallNeeded(
+  dir: string,
+  preMergeRef: string,
+  mindName: string,
+): Promise<boolean> {
   if (!existsSync(resolve(dir, "node_modules"))) return true;
-  return depsChangedSince(dir, preMergeRef);
+  return depsChangedSince(dir, preMergeRef, mindName);
 }

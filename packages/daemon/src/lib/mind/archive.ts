@@ -727,7 +727,9 @@ export async function trustedTemplateHash(
   templateHash: string | undefined,
 ): Promise<string | undefined> {
   if (!templateHash) return undefined;
-  return (await sharesTemplateBase(dir).catch(() => false)) ? templateHash : undefined;
+  // The host's own CLI, not the daemon: rev-parse and merge-base read refs and objects
+  // only — no index refresh, no hook — so the mind's config has nothing to run here.
+  return (await sharesTemplateBase({ cwd: dir }).catch(() => false)) ? templateHash : undefined;
 }
 
 /** Add history rows as JSONL to an existing zip. */

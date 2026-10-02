@@ -59,13 +59,7 @@ import { consolidateMemory } from "./consolidate.js";
 import { defaultHeartbeatSchedule, setupDefaultDreaming } from "./default-autonomy.js";
 import { generateIdentity, publishPublicKey } from "./identity.js";
 import { readInitLedgerFile, seedInitLedger } from "./init-ledger.js";
-import {
-  chownMindDir,
-  createMindUser,
-  ensureVoluteGroup,
-  isIsolationEnabled,
-  mindGitOpts,
-} from "./isolation.js";
+import { chownMindDir, createMindUser, ensureVoluteGroup, mindGitOpts } from "./isolation.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import {
   addMind,
@@ -116,12 +110,11 @@ export async function initTemplateBranch(
   projectRoot: string,
   composedDir: string,
   manifest: TemplateManifest,
-  mindName?: string,
-  env?: NodeJS.ProcessEnv,
+  mindName: string,
 ) {
   const templateFiles = templateBranchPaths(composedDir, manifest);
 
-  const opts = { cwd: projectRoot, mindName, env };
+  const opts = mindGitOpts(projectRoot, mindName);
 
   await gitExec(["checkout", "--orphan", TEMPLATE_BRANCH], opts);
   await gitExec(["add", "--", ...templateFiles], opts);
@@ -344,7 +337,7 @@ async function mergeVariantHeld(params: MergeVariantParams): Promise<VariantMerg
   // Reinstall dependencies only when the merge actually touched them — a no-op
   // install still writes enough to stall slow storage for a minute.
   let warning: string | undefined;
-  if (await npmInstallNeeded(projectRoot, preMergeHead)) {
+  if (await npmInstallNeeded(projectRoot, preMergeHead, parentName)) {
     try {
       await npmInstallAsMind(projectRoot, parentName);
     } catch (err) {
@@ -538,10 +531,10 @@ export async function createMind(
     // so that initTemplateBranch can git-add all template files)
     let gitWarning: string | undefined;
     try {
-      const env = isIsolationEnabled() ? { HOME: homeDir } : undefined;
-      await gitExec(["init"], { cwd: dest, mindName: name, env });
-      await configureGitIdentity(name, { cwd: dest, mindName: name, env });
-      await initTemplateBranch(dest, composedDir, manifest, name, env);
+      const git = mindGitOpts(dest, name);
+      await gitExec(["init"], git);
+      await configureGitIdentity(name, git);
+      await initTemplateBranch(dest, composedDir, manifest, name);
     } catch (err) {
       llog.error(`git setup failed for ${name}`, log.errorData(err));
       rmSync(resolve(dest, ".git"), { recursive: true, force: true });
@@ -826,11 +819,11 @@ async function importFromFullArchive(
     // git init if .git/ doesn't exist (non-fatal — mind works without git)
     if (!existsSync(resolve(dest, ".git"))) {
       try {
-        const env = isIsolationEnabled() ? { HOME: resolve(dest, "home") } : undefined;
-        await gitExec(["init"], { cwd: dest, mindName: name, env });
-        await configureGitIdentity(name, { cwd: dest, mindName: name, env });
-        await gitExec(["add", "-A"], { cwd: dest, mindName: name, env });
-        await gitExec(["commit", "-m", "import from archive"], { cwd: dest, mindName: name, env });
+        const git = mindGitOpts(dest, name);
+        await gitExec(["init"], git);
+        await configureGitIdentity(name, git);
+        await gitExec(["add", "-A"], git);
+        await gitExec(["commit", "-m", "import from archive"], git);
       } catch (err) {
         llog.error(`git setup failed for imported mind ${name}`, log.errorData(err));
         rmSync(resolve(dest, ".git"), { recursive: true, force: true });
@@ -990,10 +983,10 @@ async function importFromHomeOnlyArchive(
     // 10. Git init with template branch (enables upgrades)
     let gitWarning: string | undefined;
     try {
-      const env = isIsolationEnabled() ? { HOME: homeDir } : undefined;
-      await gitExec(["init"], { cwd: dest, mindName: name, env });
-      await configureGitIdentity(name, { cwd: dest, mindName: name, env });
-      await initTemplateBranch(dest, composedDir, templateManifest, name, env);
+      const git = mindGitOpts(dest, name);
+      await gitExec(["init"], git);
+      await configureGitIdentity(name, git);
+      await initTemplateBranch(dest, composedDir, templateManifest, name);
     } catch (err) {
       llog.error(`git setup failed for imported mind ${name}`, log.errorData(err));
       rmSync(resolve(dest, ".git"), { recursive: true, force: true });
@@ -1224,11 +1217,11 @@ export async function importOpenClawWorkspace(body: ImportOpenClawInput): Promis
     }
 
     // git init + initial commit
-    const env = isIsolationEnabled() ? { HOME: resolve(dest, "home") } : undefined;
-    await gitExec(["init"], { cwd: dest, mindName: name, env });
-    await configureGitIdentity(name, { cwd: dest, mindName: name, env });
-    await gitExec(["add", "-A"], { cwd: dest, mindName: name, env });
-    await gitExec(["commit", "-m", "import from OpenClaw"], { cwd: dest, mindName: name, env });
+    const git = mindGitOpts(dest, name);
+    await gitExec(["init"], git);
+    await configureGitIdentity(name, git);
+    await gitExec(["add", "-A"], git);
+    await gitExec(["commit", "-m", "import from OpenClaw"], git);
 
     // Import session
     const sessionFile = body.sessionPath ? resolve(body.sessionPath) : findOpenClawSession(wsDir);
