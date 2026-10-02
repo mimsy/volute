@@ -474,7 +474,7 @@ const app = new Hono<AuthEnv>()
           ...mindStatus,
           hasPages,
           templateStale,
-          upgradeBlocked: upgradeBlockedReason(entry, templateStale),
+          upgradeBlocked: upgradeBlockedReason(entry.name, templateStale),
           credentialDegraded: credentialDegradedField(entry.name),
           lastActiveAt,
         };
@@ -528,7 +528,7 @@ const app = new Hono<AuthEnv>()
       variants: variantStatuses,
       hasPages,
       templateStale,
-      upgradeBlocked: upgradeBlockedReason(entry, templateStale),
+      upgradeBlocked: upgradeBlockedReason(name, templateStale),
       credentialDegraded: credentialDegradedField(name),
       ...(notice && {
         lastNotice: {

@@ -18,12 +18,7 @@ const alog = log.child("auto-upgrade");
 /** Delay before the single retry attempt for a transient (thrown) upgrade error. */
 const RETRY_DELAY_MS = 5000;
 
-/**
- * `templateHash` is the mind's recorded template hash when the upgrade was blocked. A
- * successful upgrade by any path rewrites it, which is how the badge knows the record
- * is about an upgrade that has since happened.
- */
-export type AutoUpgradeBlocked = { reason: string; at: Date; templateHash?: string };
+export type AutoUpgradeBlocked = { reason: string; at: Date };
 
 /** The alert kind {@link alertHost} fans out when an auto-upgrade can't complete. */
 export const UPGRADE_ALERT_KIND = "upgrade_failed";
@@ -55,30 +50,16 @@ const failedThisRun = new Map<string, string>();
 const alertedReason = new Map<string, string>();
 
 /**
- * In-memory record of minds whose last auto-upgrade backed off (conflicts/errors). Raw:
- * the badge goes through {@link upgradeBlockedReason}, which drops a record the mind has
- * since been upgraded past.
+ * The "upgrade blocked" badge for a mind — the reason its last auto-upgrade backed off
+ * (conflicts/errors) — but only while its template is still stale. Once it is current,
+ * upgraded by any path, there is no upgrade left to be blocked, so a record that
+ * outlived it is never shown (#974). Staleness alone is enough: a successful upgrade
+ * records the current template hash, and isTemplateStale's fast path then reads the
+ * mind as current until the template itself changes — which takes a new release, and
+ * so a daemon restart that clears this in-memory record anyway.
  */
-export function getUpgradeBlocked(name: string): AutoUpgradeBlocked | undefined {
-  return blocked.get(name);
-}
-
-/**
- * The "upgrade blocked" badge for a mind: the recorded reason, but only while the
- * blocked upgrade still hasn't happened — the template is still stale, and no upgrade
- * has succeeded since (by any path, manual included: each rewrites the mind's template
- * hash). Otherwise the record has outlived the failure it describes (#974): the badge
- * would linger after a manual upgrade, or come back the moment a mind edits its own
- * `src/` after one.
- */
-export function upgradeBlockedReason(entry: MindEntry, templateStale: boolean): string | undefined {
-  const record = blocked.get(entry.name);
-  if (!record || !templateStale || record.templateHash !== entry.templateHash) return undefined;
-  return record.reason;
-}
-
-function block(entry: MindEntry, reason: string): void {
-  blocked.set(entry.name, { reason, at: new Date(), templateHash: entry.templateHash });
+export function upgradeBlockedReason(name: string, templateStale: boolean): string | undefined {
+  return templateStale ? blocked.get(name)?.reason : undefined;
 }
 
 /** Test seam: forget every in-memory auto-upgrade failure/alert record. */
@@ -203,13 +184,12 @@ export function pruneAutoUpgradeState(eligibleNames: Set<string>): void {
  * is what the mind reads.
  */
 async function recordFailure(
-  entry: MindEntry,
+  name: string,
   reason: string,
   detail: string,
   deps: AutoUpgradeOneDeps,
 ): Promise<void> {
-  const { name } = entry;
-  block(entry, reason);
+  blocked.set(name, { reason, at: new Date() });
   failedThisRun.set(name, reason);
   if (alertedReason.get(name) === reason) return;
   alertedReason.set(name, reason);
@@ -259,7 +239,10 @@ export async function autoUpgradeOne(
     if (err instanceof UpgradeInProgressError) {
       // Someone is mid-resolution by hand — not a failure, and not something to
       // alert about or gate on; the next pass should look again.
-      block(entry, "upgrade already in progress (mid conflict resolution)");
+      blocked.set(entry.name, {
+        reason: "upgrade already in progress (mid conflict resolution)",
+        at: new Date(),
+      });
       return;
     }
     // A variant join is merging into this mind right now (#988) — same as above: not a
@@ -267,7 +250,7 @@ export async function autoUpgradeOne(
     // can start during the retry delay.
     const blockedByJoin = (e: unknown) => {
       if (!(e instanceof UpgradeBlockedByJoinError)) return false;
-      block(entry, "variant join in progress");
+      blocked.set(entry.name, { reason: "variant join in progress", at: new Date() });
       return true;
     };
     if (blockedByJoin(err)) return;
@@ -279,7 +262,7 @@ export async function autoUpgradeOne(
       if (blockedByJoin(err2)) return;
       const message = err2 instanceof Error ? err2.message : String(err2);
       alog.error(`auto-upgrade failed for ${entry.name} after retry`, log.errorData(err2));
-      await recordFailure(entry, message, failureDetail(err2), deps);
+      await recordFailure(entry.name, message, failureDetail(err2), deps);
       return;
     }
   }
@@ -290,7 +273,7 @@ export async function autoUpgradeOne(
     });
     const fileList = outcome.files.join(", ");
     await recordFailure(
-      entry,
+      entry.name,
       `merge conflicts: ${fileList}`,
       `The template merge conflicted in: ${fileList}.` +
         (outcome.message ? ` ${outcome.message}` : ""),
@@ -353,7 +336,7 @@ export async function runAutoUpgrades(): Promise<void> {
       // never stop the walk.
       alog.error(`unexpected error auto-upgrading ${entry.name}`, log.errorData(err));
       await recordFailure(
-        entry,
+        entry.name,
         err instanceof Error ? err.message : String(err),
         failureDetail(err),
         defaultAutoUpgradeOneDeps,

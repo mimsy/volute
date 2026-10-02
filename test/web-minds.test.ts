@@ -629,10 +629,10 @@ describe("web minds routes", () => {
     }
   });
 
-  it("GET /:name — reports upgradeBlocked only while the blocked upgrade still hasn't happened (#974)", async () => {
-    const { mkdirSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
+  it("GET /:name — reports upgradeBlocked only while the template is still stale (#974)", async () => {
+    const { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const { addMind, findMind, mindDir, removeMind, setMindTemplateHash } = await import(
+    const { addMind, findMind, mindDir, removeMind } = await import(
       "../packages/daemon/src/lib/mind/registry.js"
     );
     const { composeTemplate, copyTemplateToDir, findTemplatesRoot } = await import(
@@ -687,18 +687,21 @@ describe("web minds routes", () => {
         return [one.upgradeBlocked, all.find((m) => m.name === name)?.upgradeBlocked];
       };
 
+      // Staleness is cached on the newest mtime, so give every write its own distinct
+      // one — a filesystem with coarse mtimes could otherwise hide the change.
+      let tick = Math.floor(Date.now() / 1000) + 10;
+      const write = (content: string) => {
+        writeFileSync(agent, content);
+        tick += 10;
+        utimesSync(agent, tick, tick);
+      };
+
       // Stale: the badge shows.
-      writeFileSync(agent, `${pristine}\n// drift\n`);
+      write(`${pristine}\n// drift\n`);
       assert.deepEqual(await get(), ["hook refused", "hook refused"]);
 
       // Current again (upgraded some other way): the badge is gone with it.
-      writeFileSync(agent, pristine);
-      assert.deepEqual(await get(), [undefined, undefined]);
-
-      // Upgraded (which rewrites the template hash), then stale again because the mind
-      // edited its own src/: the old failure doesn't come back.
-      await setMindTemplateHash(name, "hash-after-a-manual-upgrade");
-      writeFileSync(agent, `${pristine}\n// the mind's own edit\n`);
+      write(pristine);
       assert.deepEqual(await get(), [undefined, undefined]);
     } finally {
       resetAutoUpgradeState();
