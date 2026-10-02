@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.66.5](https://github.com/mimsy/volute/compare/volute-v0.66.4...volute-v0.66.5) (2026-10-02)
+
+
+### Bug Fixes
+
+* **claude:** cover every delivery the SDK folded into a run, including ones queued before it ([#1324](https://github.com/mimsy/volute/issues/1324)) ([4454fa3](https://github.com/mimsy/volute/commit/4454fa35db2a3b9f197df87f0b359d99a46eefd1))
+* link a silent run's sends to its turn, and make a failed skill update take back what it wrote ([#1322](https://github.com/mimsy/volute/issues/1322)) ([1368079](https://github.com/mimsy/volute/commit/13680798ddd3719b0562925dafc7195457981cd3))
+
 ## [0.66.4](https://github.com/mimsy/volute/compare/volute-v0.66.3...volute-v0.66.4) (2026-10-02)
 
 
