@@ -19,7 +19,7 @@ import { getChannelName, getChannelSettings, getParticipants } from "../events/c
 import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { mindFileOwner } from "../mind/isolation.js";
-import { readMindFile, replaceMindFile } from "../mind/mind-file-write.js";
+import { replaceMindFile } from "../mind/mind-file-write.js";
 import { findMind, getBaseName, voluteHome } from "../mind/registry.js";
 import { channelGates, channels, deliveryQueue, mindHistory } from "../schema.js";
 import { type AvatarBlock, readMindAvatar, renderAvatarBlock } from "../util/avatar-image.js";
@@ -1784,48 +1784,57 @@ export class DeliveryManager {
     const dir = routesMindDir(baseName);
     const owner = await mindFileOwner(baseName);
 
-    let config: RoutingConfig = {};
-    try {
-      // No routes.json yet (null) is fine — accept creates one.
-      const file = await readMindFile(dir, ROUTES_JSON, { owner });
-      if (file) {
-        const parsed: unknown = JSON.parse(file.text);
-        // Valid JSON that isn't an object (an array — a shape this codebase has seen on disk
-        // — or null, or a string) would let the rule silently
-        // vanish at stringify time while we reported success. And an array-form config is
-        // exactly a mind with no `rules`, i.e. one gating everything: the case this exists for.
-        if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
-          throw new Error(`routes.json for ${baseName} is malformed (not a JSON object)`);
-        }
-        config = parsed as RoutingConfig;
-      }
-    } catch {
-      // A routes.json that is there but malformed or unreadable (a link, a FIFO) must NOT be
-      // overwritten: it's a mind-owned file and clobbering it would lose routing the
-      // mind wrote by hand.
-      throw new Error(`routes.json for ${baseName} is unreadable or malformed — not modifying it`);
-    }
-
-    const rules = Array.isArray(config.rules) ? config.rules : [];
     const targetThread = thread ?? "${channel}";
-
-    // Is the channel already routed? Ask the router rather than pattern-matching the rules
-    // ourselves: a broader rule (`discord:*`) covers `discord:general` without being equal
-    // to it, and appending a redundant rule *after* it would sit somewhere it can never
-    // match — leaving `--thread` silently ineffective and the reported thread a lie.
-    const existing = resolveRoute({ ...config, rules }, { channel });
-    const ruleAdded = !existing.matched;
-
-    if (ruleAdded) {
-      // Append: nothing matches the channel today, so a rule at the end can't be shadowed,
-      // and the mind's own rule ordering is preserved.
-      rules.push({ channel, thread: targetThread });
-      config.rules = rules;
-      // Write-then-rename: truncating in place means a crash mid-write leaves an
+    let config: RoutingConfig = {};
+    let rules: NonNullable<RoutingConfig["rules"]> = [];
+    let ruleAdded = false;
+    let parsed = false;
+    try {
+      // One read-modify-write under replaceMindFile's per-file lock, so an upsertEventRule or
+      // migrateThreadBatchToDelivery landing between a separate read and replace isn't lost
+      // (#1261). Write-then-rename: truncating in place means a crash mid-write leaves an
       // unparseable routes.json, which getRoutingConfig degrades to `{}` — and with
       // gateUnmatched defaulting on, that is a total delivery blackout for the mind.
       // A routes.json this creates is handed to the mind, which must own its routing.
-      await replaceMindFile(dir, ROUTES_JSON, `${JSON.stringify(config, null, 2)}\n`, { owner });
+      await replaceMindFile(
+        dir,
+        ROUTES_JSON,
+        (text) => {
+          // No routes.json yet ("") is fine — accept creates one. So is an empty file:
+          // there is no routing in it to lose.
+          const value: unknown = text.trim() ? JSON.parse(text) : {};
+          // Valid JSON that isn't an object (an array — a shape this codebase has seen on
+          // disk — or null, or a string) would let the rule silently vanish at stringify
+          // time while we reported success. And an array-form config is exactly a mind with
+          // no `rules`, i.e. one gating everything: the case this exists for.
+          if (value == null || typeof value !== "object" || Array.isArray(value)) {
+            throw new Error(`routes.json for ${baseName} is malformed (not a JSON object)`);
+          }
+          parsed = true;
+          config = value as RoutingConfig;
+          rules = Array.isArray(config.rules) ? config.rules : [];
+
+          // Is the channel already routed? Ask the router rather than pattern-matching the
+          // rules ourselves: a broader rule (`discord:*`) covers `discord:general` without
+          // being equal to it, and appending a redundant rule *after* it would sit somewhere
+          // it can never match — leaving `--thread` silently ineffective and the reported
+          // thread a lie.
+          ruleAdded = !resolveRoute({ ...config, rules }, { channel }).matched;
+          if (!ruleAdded) return null;
+          // Append: nothing matches the channel today, so a rule at the end can't be
+          // shadowed, and the mind's own rule ordering is preserved.
+          rules.push({ channel, thread: targetThread });
+          config.rules = rules;
+          return `${JSON.stringify(config, null, 2)}\n`;
+        },
+        { owner },
+      );
+    } catch (err) {
+      // A routes.json that is there but malformed or unreadable (a link, a FIFO) must NOT be
+      // overwritten: it's a mind-owned file and clobbering it would lose routing the
+      // mind wrote by hand. A failure after a good parse (the write itself) is its own error.
+      if (parsed) throw err;
+      throw new Error(`routes.json for ${baseName} is unreadable or malformed — not modifying it`);
     }
 
     // Clear any decline so re-accepting after a decline actually works.
@@ -1875,7 +1884,7 @@ export class DeliveryManager {
     // Report where messages will actually land, resolved through the same router the
     // delivery path uses — so template expansion (`${channel}`) and any pre-existing
     // broader rule are both reflected, rather than echoing back what was asked for.
-    const finalRoute = ruleAdded ? resolveRoute({ ...config, rules }, { channel }) : existing;
+    const finalRoute = resolveRoute({ ...config, rules }, { channel });
     return {
       ruleAdded,
       thread: finalRoute.session,

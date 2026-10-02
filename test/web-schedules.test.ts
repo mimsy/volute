@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
@@ -227,5 +227,87 @@ describe("schedules API rotating messages", () => {
       200,
     );
     assert.equal(await ruleThread(), undefined);
+  });
+  // A routes.json the mind swapped for a symlink refuses the rule write (#1260). The
+  // request that asked for the thread must then change nothing, and say why (#1273).
+  describe("when the routes.json rule cannot be written", () => {
+    const dir = () => resolve(voluteHome(), "minds", mindName);
+    const routes = () => resolve(dir(), "home/.config/routes.json");
+    const outside = () => resolve(dir(), "outside-routes.json");
+    const plantLink = () => {
+      writeFileSync(outside(), '{"rules":[]}');
+      rmSync(routes(), { force: true });
+      symlinkSync(outside(), routes());
+    };
+    const del = async (id: string) =>
+      (await getApp()).request(`/api/v1/minds/${mindName}/schedules/${id}`, {
+        method: "DELETE",
+        headers: jsonHeaders(),
+      });
+
+    it("POST with a thread adds no schedule, says why, and a retry succeeds", async () => {
+      plantLink();
+      const body = { id: "dream", cron: "0 3 * * *", message: "dreaming", thread: "dreams" };
+      const res = await postSchedule(body);
+      assert.equal(res.status, 500);
+      assert.match(((await res.json()) as { error: string }).error, /not added.*routes\.json/);
+      assert.deepEqual(await fetchSchedules(), [], "the schedule was rolled back");
+      assert.equal(readFileSync(outside(), "utf-8"), '{"rules":[]}', "link target untouched");
+
+      unlinkSync(routes());
+      assert.equal((await postSchedule(body)).status, 201, "a retry isn't a duplicate");
+      const rules = (await readRoutesConfig(dir(), null)).rules ?? [];
+      assert.equal(rules.find((r) => r.event === "schedule:dream")?.thread, "dreams");
+    });
+
+    it("PUT with a thread leaves the schedule as it was", async () => {
+      assert.equal(
+        (
+          await postSchedule({
+            id: "dream",
+            cron: "0 3 * * *",
+            message: "old",
+            whileSleeping: "queue",
+          })
+        ).status,
+        201,
+      );
+      const [original] = await fetchSchedules();
+      plantLink();
+      const res = await putSchedule("dream", {
+        message: "new",
+        whileSleeping: "skip",
+        thread: "dreams",
+      });
+      assert.equal(res.status, 500);
+      assert.match(((await res.json()) as { error: string }).error, /not updated.*routes\.json/);
+      assert.deepEqual(await fetchSchedules(), [original], "the edit was rolled back");
+    });
+
+    it("PUT clearing a thread keeps the edit and says the rule stayed", async () => {
+      assert.equal(
+        (await postSchedule({ id: "dream", cron: "0 3 * * *", message: "old" })).status,
+        201,
+      );
+      plantLink();
+      const res = await putSchedule("dream", { message: "new", thread: "" });
+      assert.equal(res.status, 500);
+      assert.match(((await res.json()) as { error: string }).error, /updated, but.*routes\.json/);
+      assert.equal((await fetchSchedules())[0].message, "new");
+    });
+
+    // Deleting isn't held hostage by a routes.json the mind linked: the schedule goes, and
+    // the response says the rule stayed.
+    it("DELETE removes the schedule and says the rule stayed", async () => {
+      assert.equal(
+        (await postSchedule({ id: "dream", cron: "0 3 * * *", message: "m" })).status,
+        201,
+      );
+      plantLink();
+      const res = await del("dream");
+      assert.equal(res.status, 500);
+      assert.match(((await res.json()) as { error: string }).error, /deleted, but.*routes\.json/);
+      assert.deepEqual(await fetchSchedules(), []);
+    });
   });
 });

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { zValidator } from "@hono/zod-validator";
 import { CronExpressionParser } from "cron-parser";
 import { Hono } from "hono";
@@ -215,6 +216,43 @@ async function routesOwner(name: string) {
   return mindFileOwner(await getBaseName(name));
 }
 
+/**
+ * Write (or, with null, clear) a schedule's routes.json event rule. Returns null on
+ * success, or what went wrong — a routes.json the mind broke or swapped for a link refuses,
+ * and the caller has to tell it so rather than answer with a bare 500.
+ */
+async function applyThread(
+  name: string,
+  dir: string,
+  id: string,
+  thread: string | null,
+): Promise<string | null> {
+  try {
+    await upsertEventRule(dir, `schedule:${id}`, thread, { owner: await routesOwner(name), name });
+    return null;
+  } catch (err) {
+    slog.warn(
+      `could not write the routes.json rule for ${name}'s schedule ${id}`,
+      log.errorData(err),
+    );
+    return `its routing rule could not be updated in .config/routes.json (${err instanceof Error ? err.message : String(err)})`;
+  }
+}
+
+/**
+ * Undo a schedule change whose routing rule couldn't be written. Returns whether it was
+ * undone — not when the undo itself fails, or the schedule has changed since — so the
+ * caller says what actually stands.
+ */
+async function undo(name: string, id: string, revert: () => Promise<unknown>): Promise<boolean> {
+  try {
+    return (await revert()) != null;
+  } catch (err) {
+    slog.warn(`could not undo the change to ${name}'s schedule ${id}`, log.errorData(err));
+    return false;
+  }
+}
+
 const app = new Hono<AuthEnv>()
   // Clock status — combined sleep state + upcoming schedules
   .get("/:name/clock/status", requireSelfOrSpirit(), async (c) => {
@@ -341,12 +379,25 @@ const app = new Hono<AuthEnv>()
     );
     if (!added) return c.json({ error: `Schedule "${id}" already exists` }, 409);
     // `--thread` is sugar for a routes.json event rule (#736) — schedule-fire routing
-    // lives in routes.json, not on the schedule itself.
+    // lives in routes.json, not on the schedule itself. Written after the schedule, since
+    // an id collision must not touch the existing schedule's rule; if it fails, the add is
+    // undone so a 500 means nothing changed and a retry isn't refused as a duplicate (#1273).
     if (body.thread) {
-      await upsertEventRule(dir, `schedule:${id}`, body.thread, {
-        owner: await routesOwner(name),
-        name,
-      });
+      const err = await applyThread(name, dir, id, body.thread);
+      if (err) {
+        const undone = await undo(name, id, () =>
+          writeSchedules(name, dir, (schedules) => {
+            const filtered = schedules.filter(
+              (s) => !(s.id === id && isDeepStrictEqual(s, schedule)),
+            );
+            return filtered.length === schedules.length ? null : filtered;
+          }),
+        );
+        return c.json(
+          { error: undone ? `Schedule not added: ${err}` : `Schedule added, but ${err}` },
+          500,
+        );
+      }
     }
     return c.json({ ok: true, id }, 201);
   })
@@ -376,12 +427,15 @@ const app = new Hono<AuthEnv>()
     }
 
     let refusal: { error: string; status: 400 | 404 } | null = null;
+    let before: Schedule | undefined;
+    let after: Schedule | undefined;
     const written = await writeSchedules(name, dir, (schedules) => {
       const idx = schedules.findIndex((s) => s.id === id);
       if (idx === -1) {
         refusal = { error: "Schedule not found", status: 404 };
         return null;
       }
+      before = schedules[idx];
       const result = { ...schedules[idx] };
       if (body.cron !== undefined) {
         result.cron = body.cron;
@@ -421,6 +475,7 @@ const app = new Hono<AuthEnv>()
         refusal = { error: "schedule must keep a message, messages, or script", status: 400 };
         return null;
       }
+      after = JSON.parse(JSON.stringify(result)); // as it reads back: undefined keys gone
       return schedules.map((s, i) => (i === idx ? result : s));
     });
     if (!written) {
@@ -428,11 +483,25 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: r?.error ?? "Schedule not found" }, r?.status ?? 404);
     }
     // `--thread` writes/updates a routes.json event rule (#736); an empty value clears it.
+    // As with POST, a failed write undoes the schedule edit (unless something has changed
+    // it since), so the schedule never runs on a thread it wasn't given. A failed clear
+    // keeps the edit, as DELETE does: a leftover rule misroutes nothing the mind didn't ask
+    // for, and a broken routes.json must not block editing a schedule.
     if (body.thread !== undefined) {
-      await upsertEventRule(dir, `schedule:${id}`, body.thread || null, {
-        owner: await routesOwner(name),
-        name,
-      });
+      const err = await applyThread(name, dir, id, body.thread || null);
+      if (err && !body.thread) return c.json({ error: `Schedule updated, but ${err}` }, 500);
+      if (err) {
+        const undone = await undo(name, id, () =>
+          writeSchedules(name, dir, (schedules) => {
+            const idx = schedules.findIndex((s) => s.id === id && isDeepStrictEqual(s, after));
+            return idx === -1 ? null : schedules.map((s, i) => (i === idx ? before! : s));
+          }),
+        );
+        return c.json(
+          { error: undone ? `Schedule not updated: ${err}` : `Schedule updated, but ${err}` },
+          500,
+        );
+      }
     }
     return c.json({ ok: true });
   })
@@ -450,7 +519,10 @@ const app = new Hono<AuthEnv>()
     });
     if (!removed) return c.json({ error: "Schedule not found" }, 404);
     // Drop the schedule's routing rule too, so a deleted schedule leaves nothing behind.
-    await upsertEventRule(dir, `schedule:${id}`, null, { owner: await routesOwner(name), name });
+    // Not undone on failure: a routes.json the mind linked or broke must not stop it
+    // deleting a schedule — it's told the rule stayed instead (#1273).
+    const err = await applyThread(name, dir, id, null);
+    if (err) return c.json({ error: `Schedule deleted, but ${err}` }, 500);
     return c.json({ ok: true });
   })
   // Webhook endpoint
