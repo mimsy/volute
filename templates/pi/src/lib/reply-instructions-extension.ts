@@ -6,6 +6,8 @@ import { type TurnContextState, type TurnEntry, turnContextFor } from "./turn-co
 
 export function createReplyInstructionsExtension(
   messageChannels: Map<string, TurnEntry>,
+  /** Owned by the session, which clears it when it rotates or starts over (newModelContext). */
+  state: TurnContextState,
   emitContext?: (
     session: EventSession,
     event: { type: "context"; content: string; metadata: Record<string, unknown> },
@@ -14,7 +16,6 @@ export function createReplyInstructionsExtension(
 ): ExtensionFactory {
   const prompts = loadPrompts();
   return (pi) => {
-    const state: TurnContextState = { eventNoteFired: false, replyInstructionsFired: false };
     pi.on("before_agent_start", () => {
       try {
         // Derived from the pending messages themselves, as claude's hook does — see there.

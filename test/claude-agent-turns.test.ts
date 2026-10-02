@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -28,6 +36,8 @@ type Turn = {
   throws?: boolean;
   /** Run just before that throw. */
   beforeThrow?: () => void;
+  /** The SDK tries to auto-compact twice in this turn: blocked once, then let through. */
+  compacts?: boolean;
 };
 
 const FAKE_SDK = `
@@ -40,27 +50,52 @@ export function query({ prompt, options }) {
     err.name = "AbortError";
     return err;
   };
+  const sid = control().sessionIds.get(options.env?.VOLUTE_SESSION) ?? "sess-1";
   async function* stream() {
-    yield { type: "system", subtype: "init", model: "fake-model", session_id: "sess-1" };
+    yield { type: "system", subtype: "init", model: "fake-model", session_id: sid };
     for (;;) {
       const turn = control().turns.get(options.env?.VOLUTE_SESSION)?.shift() ?? {};
       if (turn.end) return;
-      const next = await input.next();
+      // The real SDK stops waiting for input once aborted; a rotation aborts an idle stream.
+      if (signal?.aborted) throw aborted();
+      const next = await Promise.race([
+        input.next(),
+        new Promise((_, reject) =>
+          signal?.addEventListener("abort", () => reject(aborted()), { once: true }),
+        ),
+      ]);
       if (next.done) return;
       const text = next.value.message.content
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join("\\n");
+      const byPrompt = control().byPrompt.find((t) => text.includes(t.match));
+      if (byPrompt) Object.assign(turn, byPrompt.turn);
       for (const matcher of options.hooks?.UserPromptSubmit ?? []) {
         for (const hook of matcher.hooks) {
           await hook(
-            { hook_event_name: "UserPromptSubmit", prompt: text, session_id: "sess-1" },
+            { hook_event_name: "UserPromptSubmit", prompt: text, session_id: sid },
             undefined,
             { signal: new AbortController().signal },
           );
         }
       }
+      for (let pass = 0; turn.compacts && pass < 2; pass++) {
+        for (const matcher of options.hooks?.PreCompact ?? []) {
+          for (const hook of matcher.hooks) {
+            await hook({ hook_event_name: "PreCompact", trigger: "auto" }, undefined, {
+              signal: new AbortController().signal,
+            });
+          }
+        }
+      }
       if (signal?.aborted) throw aborted();
+      const gate = control().gates.findIndex((g) => text.includes(g.match));
+      if (gate !== -1) {
+        const [held] = control().gates.splice(gate, 1);
+        held.onTaken();
+        await held.release;
+      }
       if (turn.throws) {
         turn.beforeThrow?.();
         throw new Error("stream died");
@@ -68,18 +103,20 @@ export function query({ prompt, options }) {
       control().prompts.push({ session: options.env?.VOLUTE_SESSION, text });
       yield {
         type: "assistant",
-        session_id: "sess-1",
+        session_id: sid,
         message: {
           usage: { input_tokens: turn.inputTokens ?? 10, output_tokens: 1 },
           content: [{ type: "text", text: "ok" }],
         },
       };
-      yield { type: "result", subtype: "success", session_id: "sess-1", usage: { input_tokens: 10, output_tokens: 1 } };
+      yield { type: "result", subtype: "success", session_id: sid, usage: { input_tokens: 10, output_tokens: 1 } };
       if (signal?.aborted) throw aborted();
     }
   }
   const s = stream();
-  s.interrupt = async () => {};
+  s.interrupt = async () => {
+    if (control().rejectInterrupt) throw new Error("interrupt refused");
+  };
   return s;
 }
 `;
@@ -90,10 +127,40 @@ let captureDir: string;
 let server: Server;
 const posted: { path: string; body: any }[] = [];
 /** Scripted turns, by the session whose stream runs them. */
-const control: { turns: Map<string, Turn[]>; prompts: { session: string; text: string }[] } = {
+const control: {
+  turns: Map<string, Turn[]>;
+  prompts: { session: string; text: string }[];
+  /** The SDK session id a session's streams report, by session; "sess-1" if unset. */
+  sessionIds: Map<string, string>;
+  /** Hold the answer to the first prompt containing `match` until `release` settles. */
+  gates: { match: string; onTaken: () => void; release: Promise<void> }[];
+  /** Make the query's `interrupt()` reject, as the SDK's can. */
+  rejectInterrupt: boolean;
+  /**
+   * Turns keyed by the prompt they answer, laid over the session's scripted turn. Unlike
+   * `turns`, these don't depend on how many turns an aborted stream took off the list.
+   */
+  byPrompt: { match: string; turn: Turn }[];
+} = {
   turns: new Map(),
   prompts: [],
+  sessionIds: new Map(),
+  gates: [],
+  rejectInterrupt: false,
+  byPrompt: [],
 };
+
+/** Hold the answer to the prompt containing `match`: resolves once it is taken. */
+function hold(match: string) {
+  let release!: () => void;
+  const released = new Promise<void>((r) => {
+    release = r;
+  });
+  const taken = new Promise<void>((onTaken) => {
+    control.gates.push({ match, onTaken, release: released });
+  });
+  return { taken, release };
+}
 
 type Mind = {
   resolve: (name: string) => {
@@ -335,5 +402,208 @@ describe("claude: reply instructions follow routes.json (#1205)", () => {
       events.every((p) => p.body.channel === undefined),
       `no event names a channel: ${JSON.stringify(events.map((p) => p.body.channel))}`,
     );
+  });
+});
+
+describe("claude: the event note and `once` reply instructions are once per model context (#1226)", () => {
+  const replyNotes = (session: string) =>
+    posted.filter(
+      (p) =>
+        p.path.endsWith("/events") &&
+        p.body.session === session &&
+        p.body.type === "context" &&
+        p.body.metadata?.source === "reply-instructions",
+    );
+  const alice = { channel: "@alice", sender: "alice" };
+
+  function sendAlice(mind: Mind, session: string, messageId: string) {
+    mind
+      .resolve(session)
+      .handle([{ type: "text", text: `hello ${messageId}` }], { ...alice, messageId });
+  }
+
+  /** A transcript `rotateSession` can seed a rotation from: a few plain exchanges. */
+  function plantTranscript(sessionId: string) {
+    const dir = resolve(process.env.HOME!, ".claude/projects/rotation-test");
+    mkdirSync(dir, { recursive: true });
+    const lines: string[] = [];
+    let parent: string | null = null;
+    for (let i = 0; i < 3; i++) {
+      const u = `${sessionId}-u${i}`;
+      const a = `${sessionId}-a${i}`;
+      lines.push(
+        JSON.stringify({
+          type: "user",
+          uuid: u,
+          parentUuid: parent,
+          sessionId,
+          timestamp: "2026-09-30T12:00:00.000Z",
+          message: { role: "user", content: `earlier ${i}` },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          uuid: a,
+          parentUuid: u,
+          sessionId,
+          message: { role: "assistant", content: [{ type: "text", text: `reply ${i}` }] },
+        }),
+      );
+      parent = a;
+    }
+    writeFileSync(resolve(dir, `${sessionId}.jsonl`), `${lines.join("\n")}\n`);
+  }
+
+  it("a rotation gives the rotated context the instructions again", async () => {
+    const session = "ri-rotate";
+    control.sessionIds.set(session, "sess-ri-rotate");
+    plantTranscript("sess-ri-rotate");
+    const mind = newMind({ maxContextTokens: 100 });
+    control.turns.set(session, [{ inputTokens: 1000 }]);
+    sendAlice(mind, session, "r1");
+    await waitFor(() => dones(session).length === 1, "r1's done");
+    const archive = resolve(mindDir, ".mind/sessions/archive");
+    await waitFor(
+      () => existsSync(archive) && readdirSync(archive).some((f) => f.startsWith(`${session}-`)),
+      "the rotation to land",
+    );
+    sendAlice(mind, session, "r2");
+    await waitFor(() => dones(session).length === 2, "r2's done");
+    assert.equal(replyNotes(session).length, 2, "reminded on each side of the rotation");
+  });
+
+  it("a native compaction gives the compacted context the instructions again", async () => {
+    // Native compaction is the backstop past the rotation cap: three rotations that each
+    // leave the context over the threshold spend it, and the fourth turn's auto-compaction
+    // is let through rather than turned into another rotation.
+    const session = "ri-compact";
+    control.sessionIds.set(session, "sess-ri-compact");
+    plantTranscript("sess-ri-compact");
+    const mind = newMind({ maxContextTokens: 100 });
+    for (const id of ["k1", "k2", "k3"]) {
+      control.byPrompt.push({ match: `hello ${id}`, turn: { inputTokens: 1000 } });
+    }
+    control.byPrompt.push({ match: "hello k4", turn: { compacts: true } });
+    const rotations = () =>
+      posted.filter(
+        (p) =>
+          p.body.type === "log" &&
+          String(p.body.content).startsWith(`session "${session}": rotated `),
+      );
+    for (const [i, id] of ["k1", "k2", "k3", "k4", "k5"].entries()) {
+      sendAlice(mind, session, id);
+      await waitFor(() => dones(session).length === i + 1, `${id}'s done`);
+      if (i < 3) await waitFor(() => rotations().length === i + 1, `rotation ${i + 1}`);
+    }
+    assert.equal(rotations().length, 3, "no rotation after the cap");
+    // One reminder per context: the first, one after each rotation, one after compaction.
+    assert.equal(replyNotes(session).length, 5);
+  });
+
+  it("the event note is given again after a rotation", async () => {
+    const session = "ev-rotate";
+    control.sessionIds.set(session, "sess-ev-rotate");
+    plantTranscript("sess-ev-rotate");
+    const mind = newMind({ maxContextTokens: 100 });
+    control.turns.set(session, [{ inputTokens: 1000 }]);
+    const event = (messageId: string) =>
+      mind.resolve(session).handle([{ type: "text", text: `event ${messageId}` }], {
+        channel: `event:schedule:${messageId}`,
+        isEvent: true,
+        messageId,
+      });
+    event("e1");
+    await waitFor(() => dones(session).length === 1, "e1's done");
+    const archive = resolve(mindDir, ".mind/sessions/archive");
+    await waitFor(
+      () => existsSync(archive) && readdirSync(archive).some((f) => f.startsWith(`${session}-`)),
+      "the rotation to land",
+    );
+    event("e2");
+    await waitFor(() => dones(session).length === 2, "e2's done");
+    const notes = posted.filter(
+      (p) =>
+        p.path.endsWith("/events") &&
+        p.body.session === session &&
+        p.body.type === "context" &&
+        // claude reports both notes under the hook's name; the event note names no channel.
+        p.body.metadata?.source === "reply-instructions" &&
+        !/volute chat send/.test(p.body.content),
+    );
+    assert.equal(notes.length, 2);
+  });
+
+  it("a session that starts over after a failed resume is reminded again", async () => {
+    const session = "ri-restart";
+    const mind = newMind();
+    control.turns.set(session, [{}, { throws: true }]);
+    sendAlice(mind, session, "s1");
+    await waitFor(() => dones(session).length === 1, "s1's done");
+    sendAlice(mind, session, "s2");
+    await waitFor(() => dones(session).length === 2, "s2's done");
+    assert.equal(replyNotes(session).length, 2);
+  });
+});
+
+describe("claude: an interrupt the SDK refuses folds into the running turn (#1220)", () => {
+  it("the refused interrupter is covered by the turn it joined", async () => {
+    const session = "intr-refused";
+    const mind = newMind();
+    const d1 = hold("hello i1");
+    send(mind, session, "i1");
+    await d1.taken;
+    control.rejectInterrupt = true;
+    try {
+      mind
+        .resolve(session)
+        .handle([{ type: "text", text: "hello i2" }], { messageId: "i2", interrupt: true });
+      // Let the rejection land before the turn ends.
+      await new Promise((r) => setImmediate(r));
+    } finally {
+      control.rejectInterrupt = false;
+    }
+    d1.release();
+    await waitFor(() => dones(session).length >= 1, "i1's done");
+    assert.deepEqual(dones(session)[0].body.covers, ["i1", "i2"]);
+  });
+});
+
+describe("claude: a failed rotation carries only what is still pending (#1220)", () => {
+  it("a carried listener can still be unsubscribed", async () => {
+    // d1's turn ends over the threshold and its rotation fails (no transcript), so d2 —
+    // queued behind it, with a listener — is handed to a fresh session.
+    const session = "carry";
+    const mind = newMind({ maxContextTokens: 100 });
+    control.turns.set(session, [{ inputTokens: 1000 }]);
+    const fresh = hold("hello c2");
+    send(mind, session, "c1");
+    const heard: string[] = [];
+    const unsubscribe = mind
+      .resolve(session)
+      .handle([{ type: "text", text: "hello c2" }], { messageId: "c2" }, (e) => heard.push(e.type));
+    await fresh.taken;
+    unsubscribe();
+    fresh.release();
+    await waitFor(() => dones(session).length === 2, "both dones");
+    assert.deepEqual(heard, [], "the listener heard nothing once unsubscribed");
+  });
+
+  it("carryOver hands over only the given deliveries' channels and listeners", async () => {
+    const { carryOver } = await import(resolve(composedDir, "src/lib/recover.ts"));
+    const listen = () => () => {};
+    const [l1, l2] = [listen(), listen()];
+    const from = {
+      messageChannels: new Map([
+        ["done-1", { channel: "@alice" }],
+        ["pending-2", { channel: "@bob" }],
+      ]),
+      listeners: new Map([
+        [l1, "done-1"],
+        [l2, "pending-2"],
+      ]),
+    };
+    const to = { messageChannels: new Map(), listeners: new Map() };
+    carryOver(from, to, new Set(["pending-2"]));
+    assert.deepEqual([...to.messageChannels.keys()], ["pending-2"]);
+    assert.deepEqual([...to.listeners.values()], ["pending-2"]);
   });
 });

@@ -9,7 +9,7 @@
  *  - reply instructions must never name an event channel. Telling a mind to
  *    `volute chat send event:orientation:1 "..."` sends it to reply to its own environment;
  *    the send is rejected and the mind is left confused about what it did wrong.
- *  - an event turn gets the event note instead — once per session, since it states a
+ *  - an event turn gets the event note instead — once per model context, since it states a
  *    standing fact (also documented in VOLUTE.md) rather than anything about this event.
  */
 

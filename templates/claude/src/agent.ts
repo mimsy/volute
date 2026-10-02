@@ -22,7 +22,7 @@ import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
-import { relockstepMessageIds } from "./lib/recover.js";
+import { carryOver, relockstepMessageIds } from "./lib/recover.js";
 import { awaitPriorExit, readRestoredTotals } from "./lib/restored-totals.js";
 import { crossSeam } from "./lib/seam.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
@@ -54,6 +54,7 @@ import {
 import { createBuiltinSubagentModelHook, defaultSubagentModel } from "./lib/subagent-model.js";
 import { createSystemPromptSource } from "./lib/system-prompt.js";
 import { threadRef } from "./lib/thread-ref.js";
+import { newModelContext } from "./lib/turn-context.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -68,14 +69,15 @@ import type { ContextInfo, ContextMessages, SessionContextInfo } from "./lib/vol
 type Session = {
   name: string;
   channel: ReturnType<typeof createMessageChannel>;
-  listeners: Set<Listener>;
+  /** Each listener, with the delivery it was registered for — see carryOver. */
+  listeners: Map<Listener, string>;
   messageIds: MessageIdEntry[];
   currentMessageId?: string;
   currentSeq?: number;
   currentQuery?: ReturnType<typeof query>;
   messageChannels: Map<string, MessageChannelEntry>;
   replyInstructionsFired: boolean;
-  /** The event note is a standing fact about events, so it fires once per session. */
+  /** The event note is a standing fact about events, so it fires once per model context. */
   eventNoteFired: boolean;
   contextTokens: number;
   /** Last inbound message or completed turn — drives idle reaping. */
@@ -260,7 +262,7 @@ export function createMind(options: {
   function broadcastToSession(session: Session, event: VoluteEvent) {
     const tagged =
       session.currentMessageId != null ? { ...event, messageId: session.currentMessageId } : event;
-    for (const listener of session.listeners) {
+    for (const listener of session.listeners.keys()) {
       try {
         listener(tagged);
       } catch (err) {
@@ -481,12 +483,6 @@ export function createMind(options: {
       : session.messageIds;
   }
 
-  /** What a fresh session needs of the one it takes redelivered messages over from. */
-  function carryOver(from: Session, to: Session) {
-    for (const [id, ch] of from.messageChannels) to.messageChannels.set(id, ch);
-    for (const listener of from.listeners) to.listeners.add(listener);
-  }
-
   function startSession(
     session: Session,
     savedSessionId?: string,
@@ -527,12 +523,19 @@ export function createMind(options: {
       // pending, or the rotation cap is hit) and blocks; second fire allows the SDK's
       // native compaction — the emergency backstop when rotation never intervened
       // (a hung turn, or a system prompt too large for rotation to relieve).
-      const preCompact = createPreCompactHook(() => {
-        if (!session.rotationPending && session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS) {
-          log("mind", `session "${session.name}": native compaction — scheduling rotation`);
-          scheduleRotation();
-        }
-      });
+      const preCompact = createPreCompactHook(
+        () => {
+          if (
+            !session.rotationPending &&
+            session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS
+          ) {
+            log("mind", `session "${session.name}": native compaction — scheduling rotation`);
+            scheduleRotation();
+          }
+        },
+        // The compacted context no longer holds the event note or reply instructions.
+        () => newModelContext(session),
+      );
 
       const callbacks = {
         onSessionId: (id: string) => {
@@ -783,8 +786,8 @@ export function createMind(options: {
                   session.closed = true;
                   if (sessions.get(session.name) === session) sessions.delete(session.name);
                   const fresh = getOrCreateSession(session.name);
-                  carryOver(session, fresh);
                   relockstepMessageIds(pending, old, fresh.channel.push, fresh.messageIds);
+                  carryOver(session, fresh, new Set(fresh.messageIds.map((e) => e.id)));
                 }
                 session.currentMessageId = undefined;
                 session.messageIds = [];
@@ -802,6 +805,8 @@ export function createMind(options: {
               session.seededCause = "rotation";
               session.seededArchivedAt = null;
               session.seededRecollection = (rotated?.recallEntries ?? 0) > 0;
+              // The rotated context no longer holds the event note or reply instructions (#1226).
+              newModelContext(session);
               // Count this rotation; a healthy turn resets it. If back-to-back rotations
               // don't reduce context (system prompt too large to fit the tail under the
               // threshold), the cap stops the loop and defers to native compaction.
@@ -854,6 +859,7 @@ export function createMind(options: {
           // and don't let a half-entered rotation leak into the fresh session.
           session.seeded = false;
           session.rotationPending = false;
+          newModelContext(session);
           streamAbort = new AbortController();
           // Torn down (reaped, or the mind shutting down) meanwhile: the reaper redelivers
           // what the channel holds, so recovering it here too would deliver it twice.
@@ -902,7 +908,7 @@ export function createMind(options: {
     const session: Session = {
       name,
       channel: createMessageChannel(),
-      listeners: new Set(),
+      listeners: new Map(),
       messageIds: [],
       messageChannels: new Map(),
       replyInstructionsFired: false,
@@ -1069,17 +1075,22 @@ export function createMind(options: {
         // make broadcastToSession O(messages-ever-received). The live dispatch path
         // passes no listener, so this is usually a no-op.
         let filteredListener: Listener | undefined;
+        // A failed rotation carries a pending delivery's listener into a fresh session under
+        // the same name, so removal reaches that one too, not only the session it began in.
+        const removeListener = () => {
+          if (!filteredListener) return;
+          session.listeners.delete(filteredListener);
+          sessions.get(sessionName)?.listeners.delete(filteredListener);
+        };
         if (listener) {
           // Filter to only this messageId, and self-remove on the matching done so a
           // caller that forgets to unsubscribe can't reintroduce the leak.
           filteredListener = (event) => {
             if (event.messageId !== meta.messageId) return;
             listener(event);
-            if (event.type === "done" && filteredListener) {
-              session.listeners.delete(filteredListener);
-            }
+            if (event.type === "done") removeListener();
           };
-          session.listeners.add(filteredListener);
+          session.listeners.set(filteredListener, meta.messageId);
         }
 
         // Track channel/sender, and the thread's reply-instructions mode, for reply instructions
@@ -1092,13 +1103,20 @@ export function createMind(options: {
           });
         }
 
-        // Interrupt if requested and session is mid-turn
+        // Interrupt if requested and session is mid-turn. `interrupting` marks the entry to
+        // run as a turn of its own (see stream-consumer.ts) — but the interrupt is only
+        // called here, not known to have split the turn. If it rejects, the SDK folds this
+        // message into the running turn, so the mark comes off: left on, every later turn
+        // would be tagged one message late (#1220).
+        const entry: MessageIdEntry = { id: meta.messageId, seq: 0 };
         const interrupting =
           meta.interrupt === true &&
-          interruptCurrentTurn(session, (err) =>
-            log("mind", `session "${sessionName}": interrupt failed:`, err),
-          );
+          interruptCurrentTurn(session, (err) => {
+            delete entry.interrupting;
+            log("mind", `session "${sessionName}": interrupt failed:`, err);
+          });
         if (interrupting) {
+          entry.interrupting = true;
           log("mind", `session "${sessionName}": interrupting current turn`);
         }
 
@@ -1110,15 +1128,10 @@ export function createMind(options: {
           message: { role: "user", content: toSDKContent(content) },
           parent_tool_use_id: null,
         });
-        session.messageIds.push({
-          id: meta.messageId,
-          seq,
-          ...(interrupting ? { interrupting: true } : {}),
-        });
+        entry.seq = seq;
+        session.messageIds.push(entry);
 
-        return () => {
-          if (filteredListener) session.listeners.delete(filteredListener);
-        };
+        return removeListener;
       },
     };
   }

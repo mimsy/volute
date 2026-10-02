@@ -611,6 +611,101 @@ describe("pi rotation failure", () => {
   });
 });
 
+describe("pi the event note and `once` reply instructions are once per model context (#1226)", () => {
+  const alice = { channel: "@alice", sender: "alice" };
+  const replyNotes = () =>
+    events("context", "main").filter((e) => e.metadata?.source === "reply-instructions");
+
+  it("a rotation gives the rotated context the instructions again", async () => {
+    const layout = makeMindDir();
+    const mind = await newMind(layout, { maxContextTokens: 50 });
+    faux.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+    const one = send(mind, "main", "one", undefined, alice);
+    await waitFor(() => doneFor(one), "first done");
+    await waitFor(() => existsSync(join(layout.sessionsDir, "archive")), "the rotation");
+    const two = send(mind, "main", "two", undefined, alice);
+    await waitFor(() => doneFor(two), "second done");
+    assert.equal(replyNotes().length, 2, "reminded on each side of the rotation");
+  });
+
+  it("a native compaction gives the compacted context the instructions again", async () => {
+    const layout = makeMindDir();
+    const mind = await newMind(layout);
+    // The live AgentSession, caught as the mind prompts it, so the test can raise the
+    // compaction event pi raises — through the extension the mind registered.
+    let live: any;
+    const prompt = pca.AgentSession.prototype.prompt;
+    pca.AgentSession.prototype.prompt = function (this: unknown, ...args: unknown[]) {
+      live = this;
+      return prompt.apply(this, args);
+    };
+    try {
+      faux.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+      const one = send(mind, "main", "one", undefined, alice);
+      await waitFor(() => doneFor(one), "first done");
+      const compaction = { type: "session_before_compact", reason: "threshold", willRetry: false };
+      // Blocked once (a rotation is scheduled instead), then let through as the backstop.
+      assert.deepEqual(await live._extensionRunner.emit(compaction), { cancel: true });
+      assert.equal(await live._extensionRunner.emit(compaction), undefined);
+      const two = send(mind, "main", "two", undefined, alice);
+      await waitFor(() => doneFor(two), "second done");
+      assert.equal(replyNotes().length, 2, "reminded again after the compaction");
+      // The blocked pass scheduled a rotation for when that run settled; let it land.
+      await waitFor(() => existsSync(join(layout.sessionsDir, "archive")), "the rotation");
+    } finally {
+      pca.AgentSession.prototype.prompt = prompt;
+    }
+  });
+
+  it("the event note is given again after a rotation", async () => {
+    const layout = makeMindDir();
+    const mind = await newMind(layout, { maxContextTokens: 50 });
+    faux.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+    const event = (n: number) =>
+      send(mind, "main", `event ${n}`, undefined, {
+        channel: `event:schedule:${n}`,
+        isEvent: true,
+      });
+    const one = event(1);
+    await waitFor(() => doneFor(one), "first done");
+    await waitFor(() => existsSync(join(layout.sessionsDir, "archive")), "the rotation");
+    const two = event(2);
+    await waitFor(() => doneFor(two), "second done");
+    const notes = events("context", "main").filter(
+      (e) => e.metadata?.source === "event-instructions",
+    );
+    assert.equal(notes.length, 2);
+  });
+
+  it("a session that starts over when rotation fails is reminded again", {
+    skip: asRoot && "chmod can't block root's read",
+  }, async () => {
+    const layout = makeMindDir();
+    const dir = join(layout.sessionsDir, "main");
+    const mind = await newMind(layout, { maxContextTokens: 50 });
+    faux.setResponses([fauxAssistantMessage("over the limit"), fauxAssistantMessage("fresh")]);
+    let blocked = false;
+    const one = send(
+      mind,
+      "main",
+      "one",
+      (e) => {
+        // As in "pi rotation failure": the rotated tail can't be built, so it starts fresh.
+        if (e.type === "done" && !blocked) {
+          blocked = true;
+          for (const f of readdirSync(dir))
+            if (f.endsWith(".jsonl")) chmodSync(join(dir, f), 0o200);
+        }
+      },
+      alice,
+    );
+    await waitFor(() => doneFor(one) && notices().length > 0, "the fresh start");
+    const two = send(mind, "main", "two", undefined, alice);
+    await waitFor(() => doneFor(two), "second done");
+    assert.equal(replyNotes().length, 2);
+  });
+});
+
 describe("pi seeded note", () => {
   it("is offered on the first turn after a seed and cleared once that turn settles", async () => {
     const layout = makeMindDir();

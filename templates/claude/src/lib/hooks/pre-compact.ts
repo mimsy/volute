@@ -12,7 +12,8 @@ import { log } from "../logger.js";
  *     at turn end) and BLOCK the SDK's native compaction, so the session rotates
  *     instead of being natively compacted.
  *   - Second fire: allow the SDK's native compaction as an emergency backstop —
- *     only reachable if rotation never happened (a hung turn, or rotation failed).
+ *     only reachable if rotation never happened (a hung turn, or rotation failed) —
+ *     and run `onNativeCompact`, since the compacted context is a new one.
  *
  * `reset()` re-arms the first-fire behavior; the agent calls it after a successful
  * rotation so a later auto-compact blocks + rotates again instead of falling
@@ -20,7 +21,7 @@ import { log } from "../logger.js";
  *
  * Manual `/compact` with custom instructions is always allowed through untouched.
  */
-export function createPreCompactHook(onCompact: () => void) {
+export function createPreCompactHook(onCompact: () => void, onNativeCompact: () => void) {
   let compactBlocked = false;
 
   const hook: HookCallback = async (input) => {
@@ -47,6 +48,7 @@ export function createPreCompactHook(onCompact: () => void) {
     }
     compactBlocked = false;
     log("mind", "allowing native compaction (rotation did not intervene)");
+    onNativeCompact();
     return {};
   };
 

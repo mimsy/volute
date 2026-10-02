@@ -63,7 +63,7 @@ import {
 } from "./lib/subagent-server.js";
 import { threadRef } from "./lib/thread-ref.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
-import { turnContextFor } from "./lib/turn-context.js";
+import { newModelContext, turnContextFor } from "./lib/turn-context.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -101,9 +101,9 @@ type CodexSession = {
   processing: boolean;
   abortController?: AbortController;
   messageChannels: Map<string, string>;
-  /** Reply instructions have been given in this session (see turn-context.ts). */
+  /** Reply instructions have been given in this thread's context (see turn-context.ts). */
   replyInstructionsFired: boolean;
-  /** The event note is a standing fact about events, so it fires once per session. */
+  /** The event note is a standing fact about events, so it fires once per model context. */
   eventNoteFired: boolean;
   /**
    * Why the current thread started, until its first turn has been oriented — the source
@@ -792,6 +792,7 @@ export function createMind(options: {
     session.seeded = false;
     session.lastUsage = ZERO_USAGE;
     session.contextTokens = 0;
+    newModelContext(session);
     try {
       session.thread = codexFor(session).startThread(threadOptions());
       log("mind", `session "${session.name}": new thread started`);
@@ -1069,6 +1070,18 @@ export function createMind(options: {
           `session "${session.name}": thread ${lostThreadId} has no rollout codex can resume — starting fresh`,
         );
         if (persistent) sessionStore.delete(session.name);
+        // Either way the retry runs on a thread with a new context, re-sending this turn's
+        // prompt — event note or reply instructions and all, if it had them — so once it has
+        // run, that context has been given them (#1226).
+        const retry = async (prefix: string) => {
+          const failed = await streamTurn(session, prependText(input, prefix));
+          if (!failed && turnContext?.source === "reply-instructions") {
+            session.replyInstructionsFired = true;
+          } else if (!failed && turnContext?.source === "event-instructions") {
+            session.eventNoteFired = true;
+          }
+          return failed;
+        };
         const carried =
           lostContext && persistent && findCodexSessionFile(lostThreadId, options.mindDir)
             ? await rotateCodexSession({
@@ -1088,6 +1101,7 @@ export function createMind(options: {
           session.contextTokens = 0;
           session.lastUsage = ZERO_USAGE;
           armSeeded(session, carried.threadId, null, carried.recallEntries);
+          newModelContext(session);
           // This turn's boundary note has been taken already, so the retry carries it.
           session.seeded = false;
           const note = buildSeededNote({
@@ -1096,7 +1110,7 @@ export function createMind(options: {
             recollection: session.seededRecollection,
           });
           emit(session, { type: "context", content: note, metadata: { source: "seeded-session" } });
-          failure = await streamTurn(session, prependText(input, note));
+          failure = await retry(note);
         } else {
           startFreshThread(session);
         }
@@ -1110,7 +1124,7 @@ export function createMind(options: {
             if (carriesStartupContext) session.startupSource = null;
             const retryContext = await takeStartupContext(session);
             const retryText = retryContext ? `${retryContext}\n\n${lost}` : lost;
-            failure = await streamTurn(session, prependText(input, retryText));
+            failure = await retry(retryText);
           }
           // The retry carried the news itself; a notice is only needed when the mind hasn't
           // heard it — no retry, or one that failed too.
@@ -1481,6 +1495,7 @@ export function createMind(options: {
     session.seededArchivedAt = null;
     session.seededRecollection = (rotated?.recallEntries ?? 0) > 0;
     session.startupSource = "compact";
+    newModelContext(session);
     // Spend a slot. Recorded only here, after the rotation actually landed — a failed
     // attempt must not count against the streak.
     recordRotation(session.rotationGuard);
