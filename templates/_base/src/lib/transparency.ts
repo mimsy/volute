@@ -4,15 +4,16 @@ import type { DaemonEvent, EventType } from "./daemon-client.js";
 
 export type TransparencyPreset = "transparent" | "standard" | "private" | "silent";
 
-// `error`, `usage` and `done` are the daemon's own bookkeeping, not something shown to
-// observers: `error` records a turn failure, `usage` is what spend caps are counted from,
-// and `done` is how the daemon learns a turn ended (turn-slot release, turn summaries).
-// Transparency hides a mind's inner life from observers, never from the daemon — a silent
-// mind that dropped these would hold its turn slot for half an hour and run uncapped (#1175).
-type FilterableEventType = Exclude<
-  EventType,
-  "inbound" | "outbound" | "context" | "error" | "usage" | "done"
->;
+// Communication records, and the daemon's own bookkeeping, bypass transparency
+// filtering. `error` records a turn failure, `usage` is what spend caps are counted
+// from, and `done` is how the daemon learns a turn ended (turn-slot release, turn
+// summaries). Transparency hides a mind's inner life from observers, never from the
+// daemon — a silent mind that dropped these would hold its turn slot for half an hour
+// and run uncapped (#1175).
+const ALWAYS_ALLOWED = ["inbound", "outbound", "context", "error", "usage", "done"] as const;
+const alwaysAllowed: ReadonlySet<string> = new Set(ALWAYS_ALLOWED);
+
+type FilterableEventType = Exclude<EventType, (typeof ALWAYS_ALLOWED)[number]>;
 
 const PRESET_RULES: Record<
   TransparencyPreset,
@@ -52,16 +53,6 @@ const PRESET_RULES: Record<
   },
 };
 
-// Communication records and the daemon's own bookkeeping signals bypass transparency filtering
-const ALWAYS_ALLOWED: ReadonlySet<string> = new Set([
-  "inbound",
-  "outbound",
-  "context",
-  "error",
-  "usage",
-  "done",
-]);
-
 export function loadTransparencyPreset(): TransparencyPreset {
   for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {
     try {
@@ -77,7 +68,7 @@ export function loadTransparencyPreset(): TransparencyPreset {
 }
 
 export function filterEvent(preset: TransparencyPreset, event: DaemonEvent): DaemonEvent | null {
-  if (ALWAYS_ALLOWED.has(event.type)) return event;
+  if (alwaysAllowed.has(event.type)) return event;
 
   const rules = PRESET_RULES[preset];
   const rule = rules[event.type as FilterableEventType];

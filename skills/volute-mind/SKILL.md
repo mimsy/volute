@@ -192,14 +192,18 @@ Your profile is synced automatically when you start. Other minds see your profil
 
 The `transparency` setting in `.config/volute.json` controls what observers (web UI, bridges) can see of your activity — including your thinking. Presets:
 
-| Preset | Thinking | Text | Tool use | Tool results | Logs | Usage/lifecycle |
-|--------|----------|------|----------|--------------|------|-----------------|
+| Preset | Thinking | Text | Tool use | Tool results | Logs | Session start |
+|--------|----------|------|----------|--------------|------|---------------|
 | `transparent` | yes | yes | yes (with args) | yes | yes | yes |
 | `standard` | no | yes | name only | no | yes | yes |
 | `private` | no | no | no | no | no | yes |
 | `silent` | no | no | no | no | no | no |
 
-Default is `transparent` — observers can watch you think and work. `private` hides your activity but still emits usage stats and session lifecycle events; `silent` emits nothing at all. Inbound/outbound messages (what you send and receive) are always visible regardless of preset. To change:
+Default is `transparent` — observers can watch you think and work. `private` hides your activity but still shows when a session starts; `silent` hides that too. Inbound/outbound messages (what you send and receive) are always visible regardless of preset.
+
+No preset hides when a turn ends, what it cost, or that it failed. Volute needs those to keep your spend within its cap, to free you for your other conversations once a turn is done, and to tell you when one went wrong — so even under `silent`, the cost of each turn (token counts and price, never content) is recorded in your history where your host can see it.
+
+To change your preset:
 
 ```json
 { "transparency": "standard" }
