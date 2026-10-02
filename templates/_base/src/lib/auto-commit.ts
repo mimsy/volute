@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { log, warn } from "./logger.js";
 
@@ -10,7 +10,8 @@ export function gitArgs(args: string[]): string[] {
 
 type Run = {
   code: number;
-  stdout: string /** Ended by a signal (a stop's SIGTERM, say). */;
+  stdout: string;
+  /** Ended by a signal (a stop's SIGTERM, say). */
   killed: boolean;
 };
 
@@ -20,6 +21,9 @@ function exec(cmd: string, args: string[], cwd: string, input?: string): Promise
       const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
       r({ code, stdout: (stdout ?? "").trim(), killed: Boolean(err?.signal) });
     });
+    // A git that dies before reading its input must not take the mind down with an
+    // unhandled EPIPE; its own exit already reports the failure.
+    child.stdin?.on("error", () => {});
     if (input !== undefined) child.stdin?.end(input);
   });
 }
@@ -99,7 +103,7 @@ async function ignoredAmong(
 ): Promise<Set<string>> {
   const all = await git(["check-ignore", "-z", "--stdin"], `${paths.join("\0")}\0`);
   if (all.code === 0) return new Set(all.stdout.split("\0").filter(Boolean));
-  if (all.code === 1) return new Set();
+  if (all.code === 1 && !all.killed) return new Set();
   const flagged = new Set<string>();
   for (const p of paths) {
     if ((await git(["check-ignore", "-q", "--", p])).code === 0) flagged.add(p);
@@ -126,6 +130,32 @@ const commitRetried = new Set<string>();
 const RETRIED_MAX = 1000;
 
 /**
+ * Files given up on, with the state they were in. Skipped until they change — codex
+ * re-tracks every changed path from `git status` each turn, and without this a file
+ * that can't be committed would go round fail, retry, give up every other turn.
+ * Bounded like the retry marks.
+ */
+const givenUp = new Map<string, string>();
+
+function stamp(cwd: string, f: string): string {
+  try {
+    const st = statSync(resolve(cwd, f));
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return "gone";
+  }
+}
+
+/** Whether a tracked file is worth trying: not given up on, or changed since. */
+function fresh(cwd: string, f: string): boolean {
+  const at = givenUp.get(f);
+  if (at === undefined) return true;
+  if (at === stamp(cwd, f)) return false;
+  givenUp.delete(f);
+  return true;
+}
+
+/**
  * Put files whose add or commit failed back in `into`, for the next flush. A git killed
  * mid-flight — a stop's group SIGTERM landing on a turn-end commit still running after
  * `done` — is always retried (#1206); any other failure gets one retry, so one that
@@ -137,22 +167,27 @@ function requeue(
   killed: (f: string) => boolean,
   into: Set<string>,
   retried: Set<string>,
-  cwd?: string,
+  cwd: string,
+  addFailed = false,
 ): string[] {
   const dropped: string[] = [];
   for (const f of files) {
     // Killed first: a killed add of a tracked file's deletion must be retried, though
     // the file is gone — the deletion stages fine.
     if (killed(f)) into.add(f);
-    // Given `cwd`, the files are ones whose add failed: one no longer on disk (and not
-    // killed) has nothing left to add, so it would only fail again.
-    else if (cwd && !existsSync(resolve(cwd, f))) dropped.push(f);
+    // A failed add of a file no longer on disk (and not killed) has nothing left to
+    // add, so it would only fail again.
+    else if (addFailed && !existsSync(resolve(cwd, f))) dropped.push(f);
     else if (retried.delete(f)) dropped.push(f);
     else {
       retried.add(f);
       if (retried.size > RETRIED_MAX) retried.delete(retried.values().next().value as string);
       into.add(f);
     }
+  }
+  for (const f of dropped) {
+    givenUp.set(f, stamp(cwd, f));
+    if (givenUp.size > RETRIED_MAX) givenUp.delete(givenUp.keys().next().value as string);
   }
   return dropped;
 }
@@ -191,7 +226,10 @@ export function trackFileChange(filePath: string, cwd: string): void {
  */
 export function flushFileChanges(cwd?: string): Promise<void> {
   const effectiveCwd = cwd ?? process.cwd();
-  pending = pending.then(() => commitPending(effectiveCwd));
+  // Never left rejected: one failed flush must not fail every flush after it.
+  pending = pending
+    .then(() => commitPending(effectiveCwd))
+    .catch((err) => warn("auto-commit", "flush failed:", err));
   return pending;
 }
 
@@ -215,8 +253,8 @@ export async function drainFileChanges(cwd: string): Promise<void> {
 }
 
 async function commitPending(cwd: string): Promise<void> {
-  const filesToCommit = [...pendingFiles];
-  const sharedToCommit = [...pendingSharedFiles];
+  const filesToCommit = [...pendingFiles].filter((f) => fresh(cwd, f));
+  const sharedToCommit = [...pendingSharedFiles].filter((f) => fresh(cwd, f));
   pendingFiles.clear();
   pendingSharedFiles.clear();
 
@@ -229,7 +267,7 @@ async function commitPending(cwd: string): Promise<void> {
     for (const f of staged) addRetried.delete(f);
     reportUnstaged(
       ignored,
-      requeue(failed, (f) => killed.has(f), pendingFiles, addRetried, cwd),
+      requeue(failed, (f) => killed.has(f), pendingFiles, addRetried, cwd, true),
       "or survive a variant join",
     );
     // staged.length check guards against committing under a blank "Update "
@@ -255,7 +293,7 @@ async function commitPending(cwd: string): Promise<void> {
           }
         }
       } else {
-        const dropped = requeue(staged, () => commit.killed, pendingFiles, commitRetried);
+        const dropped = requeue(staged, () => commit.killed, pendingFiles, commitRetried, cwd);
         if (dropped.length === 0) log("auto-commit", `commit failed for: ${names} — will retry`);
         else await giveUp(dropped, cwd, (a) => a, `commit failed twice for ${names}`);
       }
@@ -289,6 +327,7 @@ async function commitPending(cwd: string): Promise<void> {
         pendingSharedFiles,
         addRetried,
         cwd,
+        true,
       ),
     );
     const changed =
@@ -313,6 +352,7 @@ async function commitPending(cwd: string): Promise<void> {
           () => commit.killed,
           pendingSharedFiles,
           commitRetried,
+          cwd,
         );
         if (dropped.length === 0) log("auto-commit", `[pages/_system] commit failed — will retry`);
         else {

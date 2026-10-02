@@ -580,6 +580,52 @@ exit 0
     assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update SOUL.md");
   });
 
+  it("survives a git that dies before reading its input", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    // More input than a pipe buffers (~100 KB of long, failing paths), so the write is
+    // still under way when the ignore check dies without reading: an EPIPE on its stdin,
+    // which unhandled would take this whole process down.
+    const deep = `${"d".repeat(200)}/`.repeat(4);
+    for (let i = 0; i < 100; i++) trackFileChange(`${deep}missing-${i}.md`, repoDir);
+    await withKill("check-ignore -z --stdin", () => flushFileChanges(repoDir));
+    await flushFileChanges(repoDir);
+  });
+
+  it("one failed flush doesn't fail every flush after it", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    trackFileChange("bad\0name", repoDir); // git can't even be spawned with this argument
+    await flushFileChanges(repoDir).catch(() => {});
+    writeFileSync(join(repoDir, "SOUL.md"), "soul, after a failed flush");
+    trackFileChange("SOUL.md", repoDir);
+    await flushFileChanges(repoDir);
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update SOUL.md");
+  });
+
+  it("leaves a given-up file alone until it changes", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    writeFileSync(refuse, "");
+    writeFileSync(hookRuns, "");
+    try {
+      writeFileSync(join(repoDir, "SOUL.md"), "soul, refused for good");
+      trackFileChange("SOUL.md", repoDir);
+      await flushFileChanges(repoDir);
+      await flushFileChanges(repoDir); // given up
+      assert.equal(runs(), 2);
+      // codex re-tracks every changed path each turn
+      trackFileChange("SOUL.md", repoDir);
+      await flushFileChanges(repoDir);
+      assert.equal(runs(), 2, "a given-up file went round again unchanged");
+
+      rmSync(refuse);
+      writeFileSync(join(repoDir, "SOUL.md"), "soul, rewritten — a change worth trying");
+      trackFileChange("SOUL.md", repoDir);
+      await flushFileChanges(repoDir);
+      assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update SOUL.md");
+    } finally {
+      rmSync(refuse, { force: true });
+    }
+  });
+
   it("re-queues a failed pages/_system commit too", async () => {
     const { trackFileChange, flushFileChanges } = await mod();
     const sharedDir = join(repoDir, "pages", "_system");
