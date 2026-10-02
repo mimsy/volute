@@ -11,6 +11,7 @@ import {
   constants,
   existsSync,
   fchmodSync,
+  fchownSync,
   fstatSync,
   lstatSync,
   mkdirSync,
@@ -419,6 +420,70 @@ export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo
   await hardenPagesRepo(dir, isolation);
 }
 
+/**
+ * Give the mind back what root's git left in its gitdir (#1326). Before #1307 root ran
+ * git in every worktree, and a root-owned 0644 `COMMIT_EDITMSG` there fails every
+ * commit the mind now runs as itself. Only the gitdir and the regular files directly
+ * in it are looked at: those are what a commit rewrites, and what git writes deeper
+ * (`logs/`) it makes group-writable under `--shared=group`.
+ *
+ * Each is opened without following a link and re-owned through that handle, and only
+ * if `from` owns it and it has no second name, so no link steers the chown elsewhere,
+ * and a gitdir with nothing of `from`'s in it costs one readdir and no chown. A mind
+ * can still rename a daemon-owned file it could already replace (a loose object, say)
+ * into its gitdir to be handed it; nothing trusts a file the daemon doesn't own, so
+ * that gains it nothing. Returns what it re-owned.
+ */
+export function reclaimGitDir(
+  gitDir: string,
+  from: number,
+  to: { uid: number; gid: number },
+): string[] {
+  const reowned: string[] = [];
+  for (const path of [gitDir, ...readdirSync(gitDir).map((name) => resolve(gitDir, name))]) {
+    let fd: number;
+    try {
+      fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    } catch {
+      continue; // a symlink, a socket, or gone
+    }
+    try {
+      const st = fstatSync(fd);
+      const kind = path === gitDir ? st.isDirectory() : st.isFile() && !isMultiplyLinkedFile(st);
+      if (st.uid !== from || !kind) continue;
+      fchownSync(fd, to.uid, to.gid);
+      reowned.push(path);
+    } finally {
+      closeSync(fd);
+    }
+  }
+  return reowned;
+}
+
+/**
+ * `reclaimGitDir` for a mind's linked worktree, at every start. The ids are its
+ * worktree's, which provisioning gave to the mind; one the daemon still owns names
+ * no one to give anything to.
+ */
+async function reclaimWorktreeGitDir(
+  dir: string,
+  wt: string,
+  mindName: string,
+  isolation: IsolationInfo,
+): Promise<void> {
+  try {
+    const contained = await isolation.containMindPath(mindName, wt);
+    const gitDir = worktreeGitDir(dir, contained);
+    const owner = lstatSync(contained);
+    const daemon = process.getuid?.();
+    if (!gitDir || daemon === undefined || owner.uid === daemon) return;
+    const reowned = reclaimGitDir(gitDir, daemon, { uid: owner.uid, gid: owner.gid });
+    if (reowned.length > 0) console.warn(`[pages] gave ${mindName} back ${reowned.join(", ")}`);
+  } catch (err) {
+    console.warn(`[pages] failed to reclaim ${mindName}'s gitdir: ${(err as Error).message}`);
+  }
+}
+
 /** Add a git worktree at <mindDir>/home/pages/_system/ on a per-mind branch. */
 export async function addPagesWorktree(
   mindName: string,
@@ -464,7 +529,11 @@ export async function addPagesWorktree(
       );
       return;
     }
-    if (!isDanglingWorktree(wt)) return;
+    if (!isDanglingWorktree(wt)) {
+      if (isolation?.isIsolationEnabled())
+        await reclaimWorktreeGitDir(dir, wt, mindName, isolation);
+      return;
+    }
     // The repo was re-initialized under it: relink it, keeping the mind's files.
     if (isolation?.isIsolationEnabled()) {
       try {
