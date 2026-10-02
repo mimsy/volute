@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.66.7](https://github.com/mimsy/volute/compare/volute-v0.66.6...volute-v0.66.7) (2026-10-02)
+
+
+### Bug Fixes
+
+* **pages:** leave a mind's conflicted rebase resolvable, and clear what rebases leave behind ([#1334](https://github.com/mimsy/volute/issues/1334)) ([83db0bb](https://github.com/mimsy/volute/commit/83db0bb710a058e856482369bfc988f266280dba))
+* take back the turn a refused delivery opened, and skip stopped minds for commons announcements ([#1331](https://github.com/mimsy/volute/issues/1331)) ([801105d](https://github.com/mimsy/volute/commit/801105d6c655731c5a412bf9a0bdcff9b2b5f8d0))
+
 ## [0.66.6](https://github.com/mimsy/volute/compare/volute-v0.66.5...volute-v0.66.6) (2026-10-02)
 
 
