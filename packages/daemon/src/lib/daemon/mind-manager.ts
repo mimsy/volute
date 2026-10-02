@@ -9,7 +9,6 @@ import { getSystemName, readGlobalConfig } from "../config/setup.js";
 import {
   chownMindDir,
   isIsolationEnabled,
-  isolationSupervises,
   lockPrivateSubtrees,
   mindFileOwner,
   wrapForIsolation,
@@ -110,10 +109,10 @@ export async function wrapMindServer(
   cmd: string,
   args: string[],
   opts: { name: string; template?: string; dir: string; allowWrite: string[] },
-): Promise<{ cmd: string; args: string[]; isolationMode: IsolationMode }> {
+): Promise<{ cmd: string; args: string[]; isolationMode: IsolationMode; supervised: boolean }> {
   if (isIsolationEnabled()) {
-    const [wrappedCmd, wrappedArgs] = await wrapForIsolation(cmd, args, opts.name);
-    return { cmd: wrappedCmd, args: wrappedArgs, isolationMode: "user" };
+    const [wrappedCmd, wrappedArgs, supervised] = await wrapForIsolation(cmd, args, opts.name);
+    return { cmd: wrappedCmd, args: wrappedArgs, isolationMode: "user", supervised };
   }
   if (isSandboxEnabled() && opts.template !== "codex") {
     // Codex minds can't use @anthropic-ai/sandbox-runtime — it blocks Mach IPC
@@ -129,9 +128,9 @@ export async function wrapMindServer(
     );
     // wrapForSandbox hands the command back unwrapped when it degrades.
     const isolationMode = wrappedCmd === cmd ? "none" : "sandbox";
-    return { cmd: wrappedCmd, args: wrappedArgs, isolationMode };
+    return { cmd: wrappedCmd, args: wrappedArgs, isolationMode, supervised: false };
   }
-  return { cmd, args, isolationMode: "none" };
+  return { cmd, args, isolationMode: "none", supervised: false };
 }
 
 /**
@@ -188,14 +187,8 @@ export function composeMindEnv(opts: {
   };
 }
 
-/**
- * Whether a mind spawned under `isolationMode` has a supervisor leading its process
- * group that a stop must signal past (`terminateGroup`, #1364). Read off the mode
- * the wrap reported, like the mode the mind is told.
- */
-export function stopSparesLeader(isolationMode: IsolationMode): boolean {
-  return isolationMode === "user" && isolationSupervises();
-}
+/** How long a stopping mind gets between SIGTERM and SIGKILL. */
+const STOP_GRACE_MS = 5000;
 
 type TrackedMind = {
   child: ChildProcess;
@@ -313,8 +306,6 @@ export async function buildPendingContextMessage(
 
 export class MindManager {
   private minds = new Map<string, TrackedMind>();
-  /** Where a stop lists a supervised mind's processes; a test points it at a fake. */
-  private procDir = "/proc";
   private stopping = new Set<string>();
   private shuttingDown = false;
   private restartTracker = new RestartTracker();
@@ -404,8 +395,10 @@ export class MindManager {
             const { stdout } = await execFileAsync("ps", ["-p", String(stalePid), "-o", "args="]);
             if (stdout.includes("server.ts")) {
               mlog.warn(`killing stale mind process ${stalePid} for ${name}`);
-              process.kill(-stalePid, "SIGTERM");
-              await new Promise((r) => setTimeout(r, 500));
+              await stopGroup(stalePid, {
+                spareLeader: await wrapSupervises(name),
+                graceMs: STOP_GRACE_MS,
+              });
             } else {
               mlog.debug(`stale PID ${stalePid} for ${name} is not a mind process, skipping`);
             }
@@ -427,8 +420,7 @@ export class MindManager {
       });
       if (res.ok) {
         mlog.warn(`killing orphan process on port ${port}`);
-        await killProcessOnPort(port);
-        await new Promise((r) => setTimeout(r, 500));
+        await killProcessOnPort(port, await wrapSupervises(name));
       }
     } catch {
       // Port not in use — good
@@ -492,6 +484,7 @@ export class MindManager {
       cmd: spawnCmd,
       args: spawnArgs,
       isolationMode,
+      supervised,
     } = await wrapMindServer(baseBin, baseArgs, {
       name,
       template: target.template,
@@ -673,7 +666,7 @@ export class MindManager {
     this.minds.set(name, {
       child,
       port,
-      supervised: stopSparesLeader(isolationMode),
+      supervised,
     });
 
     // Pipe output to log file and check for listening
@@ -761,9 +754,7 @@ export class MindManager {
       });
     } catch (err) {
       this.minds.delete(name);
-      try {
-        child.kill();
-      } catch {}
+      await stopGroup(child, { spareLeader: supervised, graceMs: STOP_GRACE_MS });
       throw err;
     }
 
@@ -1097,11 +1088,7 @@ export class MindManager {
 
       // SIGTERM the group (past runuser, whose own SIGTERM handling would SIGKILL
       // the mind 2s in — #1364), give it 5s, then SIGKILL whatever is left.
-      await stopGroup(child, {
-        spareLeader: tracked.supervised,
-        graceMs: 5000,
-        procDir: this.procDir,
-      });
+      await stopGroup(child, { spareLeader: tracked.supervised, graceMs: STOP_GRACE_MS });
 
       this.stopping.delete(name);
     }
@@ -1209,31 +1196,40 @@ export class MindManager {
   }
 }
 
-async function killProcessOnPort(port: number): Promise<void> {
+async function killProcessOnPort(port: number, spareLeader: boolean): Promise<void> {
   try {
     const { stdout } = await execFileAsync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
-    const pids = new Set<number>();
+    const groups = new Set<number>();
     for (const line of stdout.trim().split("\n").filter(Boolean)) {
       const pid = parseInt(line, 10);
-      pids.add(pid);
-      // Find the process group to kill supervisors/wrappers too
+      // Find the process group to stop supervisors/wrappers too
       try {
         const { stdout: psOut } = await execFileAsync("ps", ["-p", String(pid), "-o", "pgid="]);
         const pgid = parseInt(psOut.trim(), 10);
-        if (pgid > 1) pids.add(pgid);
-      } catch {}
-    }
-    for (const pid of pids) {
-      try {
-        process.kill(-pid, "SIGTERM");
+        if (pgid > 1) {
+          groups.add(pgid);
+          continue;
+        }
       } catch {}
       try {
         process.kill(pid, "SIGTERM");
       } catch {}
     }
+    await Promise.all(
+      [...groups].map((pgid) => stopGroup(pgid, { spareLeader, graceMs: STOP_GRACE_MS })),
+    );
   } catch {
     // lsof may fail if no process on port — expected
   }
+}
+
+/**
+ * Whether the isolation wrap this daemon uses for `name` is supervised — the best
+ * answer for an orphan a previous daemon started, which the same wrap launched
+ * unless the isolation config changed in between.
+ */
+async function wrapSupervises(name: string): Promise<boolean> {
+  return (await wrapForIsolation("true", [], name))[2];
 }
 
 let instance: MindManager | null = null;

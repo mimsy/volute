@@ -31,16 +31,6 @@ export function isIsolationEnabled(): boolean {
   return process.env.VOLUTE_ISOLATION === "user";
 }
 
-/**
- * Whether the isolation wrap leaves a supervisor leading the process group it
- * spawns: Linux's `runuser`, which SIGKILLs its child 2s after it is SIGTERMed
- * itself — so a graceful stop must signal past it (`terminateGroup`, #1364).
- * macOS's `sudo` relays a SIGTERM to its command and waits, with no timed kill.
- */
-export function isolationSupervises(): boolean {
-  return isIsolationEnabled() && process.platform !== "darwin";
-}
-
 /** Username for a mind. Prefix configurable via VOLUTE_USER_PREFIX (default: "mind-"). */
 export function mindUserName(mindName: string): string {
   const err = validateMindName(mindName);
@@ -648,20 +638,26 @@ export function mindGitOpts(
  * then reports "Volute is not set up". runuser keeps the environment on its own.
  * Root's `ALL` sudoers entry implies SETENV, so `-E` is permitted.
  * Resolves the base mind name from a potentially composite "name@variant" key.
+ *
+ * The third element says whether the wrap leaves a supervisor leading the process
+ * group: `runuser` stays behind as the command's parent and SIGKILLs it 2s after a
+ * SIGTERM reaches runuser itself, so a graceful stop must signal past it
+ * (`terminateGroup`, #1364). `sudo` relays a SIGTERM to its command and waits,
+ * with no timed kill.
  */
 export async function wrapForIsolation(
   cmd: string,
   args: string[],
   mindName: string,
-): Promise<[string, string[]]> {
-  if (!isIsolationEnabled()) return [cmd, args];
+): Promise<[cmd: string, args: string[], supervised: boolean]> {
+  if (!isIsolationEnabled()) return [cmd, args, false];
   const baseName = await getBaseName(mindName);
   await ensureUserForBaseMind(baseName);
   const user = mindUserName(baseName);
   if (process.platform === "darwin") {
-    return ["sudo", ["-E", "-u", user, "--", cmd, ...args]];
+    return ["sudo", ["-E", "-u", user, "--", cmd, ...args], false];
   }
-  return ["runuser", ["-u", user, "--", cmd, ...args]];
+  return ["runuser", ["-u", user, "--", cmd, ...args], true];
 }
 
 /** Resolve a user's numeric uid via `id -u`, or null if the lookup fails. */

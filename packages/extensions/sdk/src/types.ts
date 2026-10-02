@@ -135,7 +135,11 @@ export type ExtensionContext = {
    * controls and could make execute mind-chosen code — git reads hooks and config
    * from there — so that code runs with the mind's privilege, not the daemon's.
    */
-  wrapForIsolation: (cmd: string, args: string[], mindName: string) => Promise<[string, string[]]>;
+  wrapForIsolation: (
+    cmd: string,
+    args: string[],
+    mindName: string,
+  ) => Promise<[cmd: string, args: string[], supervised?: boolean]>;
   /**
    * Name of the system spirit. Under the daemon this mirrors its own
    * `getSpiritName()`, which falls back to "volute" on installs predating spirit

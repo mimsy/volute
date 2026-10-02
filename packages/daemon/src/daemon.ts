@@ -46,6 +46,7 @@ import {
   syncBuiltinSkills,
 } from "./lib/skills.js";
 import { reportStaleApiPaths } from "./lib/template/stale-api-paths.js";
+import { stopExecChildren } from "./lib/util/exec.js";
 import { cleanExpiredLogs } from "./lib/util/history-cleanup.js";
 import log from "./lib/util/logger.js";
 import { RotatingLog } from "./lib/util/rotating-log.js";
@@ -688,7 +689,13 @@ export async function startDaemon(opts: {
       safe("maintenanceInterval", () => clearInterval(maintenanceInterval));
       safe("delivery.dispose", () => delivery.dispose());
       await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());
-      await safe("manager.stopAll", () => manager.stopAll());
+      // In-flight scripts, hooks and git/npm get the same grace as the minds, in
+      // parallel: under the system unit's KillMode=mixed, anything still running
+      // when the daemon exits is SIGKILLed (#1364).
+      await Promise.all([
+        safe("manager.stopAll", () => manager.stopAll()),
+        safe("stopExecChildren", () => stopExecChildren(5000)),
+      ]);
       safe("clearCrashAttempts", () => manager.clearCrashAttempts());
       // The listener goes last, after every mind has been reaped. It cannot go
       // first: since Node 19 `close()` also destroys idle keep-alive connections,

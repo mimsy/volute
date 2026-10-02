@@ -73,9 +73,23 @@ describe("isolation", () => {
 
   it("wrapForIsolation returns original cmd when isolation disabled", async () => {
     delete process.env.VOLUTE_ISOLATION;
-    const [cmd, args] = await wrapForIsolation("/usr/bin/tsx", ["src/server.ts"], "alice");
+    const [cmd, args, supervised] = await wrapForIsolation(
+      "/usr/bin/tsx",
+      ["src/server.ts"],
+      "alice",
+    );
     assert.equal(cmd, "/usr/bin/tsx");
     assert.deepEqual(args, ["src/server.ts"]);
+    assert.equal(supervised, false);
+  });
+
+  // runuser stays behind as the command's parent and SIGKILLs it 2s after it is
+  // SIGTERMed itself, so a stop must know to signal past it; sudo has no timed kill.
+  it("wrapForIsolation says when it leaves runuser supervising (#1364)", async () => {
+    process.env.VOLUTE_ISOLATION = "user";
+    const [cmd, , supervised] = await wrapForIsolation("node", ["index.js"], "alice");
+    assert.equal(supervised, cmd === "runuser");
+    assert.equal(supervised, process.platform !== "darwin");
   });
 
   it("wrapForIsolation wraps with runuser/sudo when isolation enabled", async () => {

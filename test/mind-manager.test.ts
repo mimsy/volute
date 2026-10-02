@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { resolve } from "node:path";
 import { describe, it } from "node:test";
-import { MindManager, stopSparesLeader } from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import { MindManager } from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import log from "../packages/daemon/src/lib/util/logger.js";
 
@@ -106,101 +104,61 @@ describe("MindManager crash-recovery exit guard", () => {
 });
 
 describe("MindManager.stopMind signals", () => {
-  /** Stop a fake tracked mind with process.kill stubbed; returns what was sent. */
-  async function stopFake(
-    entry: { supervised: boolean },
-    opts: { procDir?: string } = {},
-  ): Promise<[number, string][]> {
+  /**
+   * Stop a tracked mind whose process is a real detached `sh` with a `sleep`
+   * below it, with process.kill stubbed so nothing is actually signalled; returns
+   * what was sent and logged.
+   */
+  async function stopTracked(
+    supervised: boolean,
+  ): Promise<{ sent: [number, string][]; logs: string[]; pgid: number }> {
     const name = `stopper-${Math.random().toString(36).slice(2, 8)}`;
     await addMind(name, 4993);
+    const child = spawn("sh", ["-c", "sleep 30 & wait"], { detached: true, stdio: "ignore" });
+    const pgid = child.pid!;
+    await delay(100); // let sh fork the sleep
     const sent: [number, string][] = [];
+    const logs: string[] = [];
     const origKill = process.kill.bind(process);
-    // Stub process.kill so the fake pid never touches a real process group.
     (process as AnyMgr).kill = (pid: number, sig?: string | number) => {
       if (typeof sig === "string") sent.push([pid, sig]);
       return true;
     };
+    log.setOutput((line) => logs.push(line));
     try {
       const mgr = new MindManager() as AnyMgr;
-      if (opts.procDir) mgr.procDir = opts.procDir;
-      const child = new EventEmitter() as AnyMgr;
-      Object.assign(child, { pid: 999999, exitCode: null, signalCode: null });
-      mgr.minds.set(name, { child, port: 4993, ...entry });
+      mgr.minds.set(name, { child, port: 4993, supervised });
       const p = mgr.stopMind(name);
-      // Let withLock and the group scan run so the SIGTERM is out.
-      await delay(20);
-      child.emit("exit", 0);
+      await delay(50); // withLock + the group walk
+      (process as AnyMgr).kill = origKill;
+      process.kill(-pgid, "SIGKILL"); // end it for real, as the stub didn't
       await p;
-      await delay(20);
-      return sent;
+      return { sent, logs, pgid };
     } finally {
       (process as AnyMgr).kill = origKill;
+      log.setOutput((line) => process.stderr.write(`${line}\n`));
       await removeMind(name);
     }
   }
 
-  it("SIGTERMs an unsupervised mind's group, and sweeps it once on a clean exit", async () => {
-    // The sweep goes out at once, never from a timer: a clean exit disarms the
-    // deadline, so no stray group-SIGKILL can later fire against a reused pgid.
-    assert.deepEqual(await stopFake({ supervised: false }), [
-      [-999999, "SIGTERM"],
-      [-999999, "SIGKILL"],
-    ]);
+  it("SIGTERMs an unsupervised mind's group, and no SIGKILL follows its exit", async () => {
+    const { sent, logs, pgid } = await stopTracked(false);
+    assert.deepEqual(sent, [[-pgid, "SIGTERM"]]);
+    assert.ok(!logs.some((l) => l.includes("could not walk")), "no walk for an unsupervised stop");
   });
 
-  it("signals a runuser-supervised mind's processes past runuser (#1364)", async () => {
-    const proc = mkdtempSync(resolve(tmpdir(), "fake-proc-"));
-    try {
-      for (const [pid, comm] of [
-        [999999, "runuser"],
-        [1000000, "node"],
-      ] as const) {
-        mkdirSync(resolve(proc, String(pid)));
-        writeFileSync(
-          resolve(proc, String(pid), "stat"),
-          `${pid} (${comm}) S 1 999999 999999 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 ${pid} 0 0\n`,
-        );
-      }
-      assert.deepEqual(await stopFake({ supervised: true }, { procDir: proc }), [
-        [1000000, "SIGTERM"],
-        [-999999, "SIGKILL"],
-      ]);
-    } finally {
-      rmSync(proc, { recursive: true, force: true });
-    }
-  });
-
-  it("falls back to the group, and logs it, when a supervised mind can't be listed", async () => {
-    const lines: string[] = [];
-    log.setOutput((line) => lines.push(line));
-    try {
-      const sent = await stopFake({ supervised: true }, { procDir: "/nonexistent-proc" });
-      assert.deepEqual(sent[0], [-999999, "SIGTERM"]);
-      assert.ok(lines.some((l) => l.includes("could not list process group 999999")));
-    } finally {
-      log.setOutput((line) => process.stderr.write(`${line}\n`));
-    }
-  });
-});
-
-describe("stopSparesLeader", () => {
-  const platform = process.platform;
-  const isolation = process.env.VOLUTE_ISOLATION;
-  const on = (p: string) => Object.defineProperty(process, "platform", { value: p });
-
-  it("is true only for user isolation on Linux, where runuser leads the group", () => {
-    try {
-      process.env.VOLUTE_ISOLATION = "user";
-      on("linux");
-      assert.equal(stopSparesLeader("user"), true);
-      assert.equal(stopSparesLeader("sandbox"), false);
-      assert.equal(stopSparesLeader("none"), false);
-      on("darwin"); // sudo relays the SIGTERM and has no timed kill
-      assert.equal(stopSparesLeader("user"), false);
-    } finally {
-      on(platform);
-      if (isolation === undefined) delete process.env.VOLUTE_ISOLATION;
-      else process.env.VOLUTE_ISOLATION = isolation;
+  it("signals a runuser-supervised mind past its leader (#1364)", async () => {
+    const { sent, logs, pgid } = await stopTracked(true);
+    assert.equal(sent.length, 1);
+    if (process.platform === "linux") {
+      // The sleep below the leader, never the leader or its group.
+      assert.notEqual(sent[0][0], pgid);
+      assert.ok(sent[0][0] > 0);
+      assert.equal(sent[0][1], "SIGTERM");
+    } else {
+      // No /proc to walk: the group fallback, and the log saying so.
+      assert.deepEqual(sent, [[-pgid, "SIGTERM"]]);
+      assert.ok(logs.some((l) => l.includes(`could not walk process group ${pgid}`)));
     }
   });
 });

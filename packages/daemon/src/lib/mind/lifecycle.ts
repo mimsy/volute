@@ -60,13 +60,7 @@ import { consolidateMemory } from "./consolidate.js";
 import { defaultHeartbeatSchedule, setupDefaultDreaming } from "./default-autonomy.js";
 import { generateIdentity, publishPublicKey } from "./identity.js";
 import { readInitLedgerFile, seedInitLedger } from "./init-ledger.js";
-import {
-  chownMindDir,
-  createMindUser,
-  ensureVoluteGroup,
-  isolationSupervises,
-  mindGitOpts,
-} from "./isolation.js";
+import { chownMindDir, createMindUser, ensureVoluteGroup, mindGitOpts } from "./isolation.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import {
   addMind,
@@ -259,7 +253,7 @@ async function mergeVariantHeld(params: MergeVariantParams): Promise<VariantMerg
     }
     const verified = await verify(result.actualPort);
     // Awaited, so the verify server's own shutdown is over before the merge starts.
-    await stopGroup(result.child, { spareLeader: isolationSupervises(), graceMs: 5000 });
+    await stopGroup(result.child, { spareLeader: result.supervised, graceMs: 5000 });
     if (!verified) {
       return {
         status: "verify_failed",

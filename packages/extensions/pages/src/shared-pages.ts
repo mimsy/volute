@@ -39,7 +39,11 @@ export type IsolationInfo = {
   isIsolationEnabled: () => boolean;
   getMindUser: (name: string) => string;
   containMindPath: (name: string, path: string) => Promise<string>;
-  wrapForIsolation: (cmd: string, args: string[], name: string) => Promise<[string, string[]]>;
+  wrapForIsolation: (
+    cmd: string,
+    args: string[],
+    name: string,
+  ) => Promise<[cmd: string, args: string[], supervised?: boolean]>;
 };
 
 /** Extract IsolationInfo from an ExtensionContext-shaped object. */
