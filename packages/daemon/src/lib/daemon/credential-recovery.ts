@@ -286,9 +286,9 @@ export class CredentialRecovery {
       }
 
       if (!running) {
-        // Asleep or deliberately stopped. Starting it here would override a choice
-        // nobody asked us to override; its next start picks the credentials up, and
-        // the queued notice is waiting when it does.
+        // Asleep, deliberately stopped, or waiting out a crash backoff. Starting it here
+        // would override a choice (or a backoff) nobody asked us to override; its next
+        // start picks the credentials up, and the queued notice is waiting when it does.
         rlog.info(`${mind} is not running — leaving it stopped; the notice is queued`);
         this.degraded.delete(mind);
         this.outageStart.delete(mind);

@@ -104,7 +104,7 @@ async function sleep(ms: number): Promise<void> {
 
 /** Collaborators of {@link autoUpgradeOne}, injectable so its branches are unit-testable. */
 export type AutoUpgradeOneDeps = {
-  isRunning: (name: string) => boolean;
+  isUpOrRecovering: (name: string) => boolean;
   runUpgrade: (name: string, opts: { restart: boolean }) => Promise<UpgradeOutcome>;
   abortUpgrade: (name: string) => Promise<void>;
   alertHost: (name: string, kind: string, text: string) => Promise<void>;
@@ -112,7 +112,7 @@ export type AutoUpgradeOneDeps = {
 };
 
 const defaultAutoUpgradeOneDeps: AutoUpgradeOneDeps = {
-  isRunning: (name) => getMindManager().isRunning(name),
+  isUpOrRecovering: (name) => getMindManager().isUpOrRecovering(name),
   runUpgrade,
   abortUpgrade,
   alertHost,
@@ -214,7 +214,9 @@ export async function autoUpgradeOne(
   // so a skipped mind keeps the reason its badge and alert dedupe are built on.
   blocked.delete(entry.name);
 
-  const wasRunning = deps.isRunning(entry.name);
+  // A mind waiting out a crash backoff counts as running (#1114): its restart may
+  // fire mid-upgrade, and only the upgrade's own stop/start leaves it on the new code.
+  const wasRunning = deps.isUpOrRecovering(entry.name);
   // Never restart a sleeping mind (it's supposed to stay stopped), and never
   // skip restarting a mind that was actually running — that would leave it
   // executing the old code.

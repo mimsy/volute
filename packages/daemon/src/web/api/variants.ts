@@ -313,7 +313,9 @@ const app = new Hono<AuthEnv>()
       let restartWarning = merge.warning;
       const manager = getMindManager();
       try {
-        if (manager.isRunning(mindName)) {
+        // A parent waiting out a crash backoff is stopped too: that cancels its pending
+        // restart, which would otherwise race the start below (#1114).
+        if (manager.isUpOrRecovering(mindName)) {
           await manager.stopMind(mindName);
         }
         manager.setPendingContext(mindName, merge.context);

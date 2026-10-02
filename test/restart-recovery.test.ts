@@ -372,15 +372,47 @@ describe("crash recovery wiring", () => {
         "the crash never scheduled a restart",
       );
 
+      assert.equal(mgr.isRunning("halted"), false);
+      assert.equal(mgr.isUpOrRecovering("halted"), true, "a mind in backoff is coming back");
+
       await mgr.stopMind("halted");
 
       assert.equal(mgr.hasPendingRecovery("halted"), false);
+      assert.equal(mgr.isUpOrRecovering("halted"), false, "a stopped mind is not coming back");
       assert.equal(mgr.restartTracker.getAttempts("halted"), 0, "a stop clears the budget");
       assert.equal((await findMind("halted"))?.running, false, "a stop clears `running`");
 
       // Past the backoff, so a surviving timer would have fired.
       await delay(baseDelay * 2);
       assert.equal(starts, 0, "the stop must win over the pending restart");
+
+      mgr.shuttingDown = true;
+    });
+
+    it("resumeRecovery puts a mind stopped mid-backoff back into recovery (#1114)", async () => {
+      await runningMind("resumed", 4985);
+      const mgr = new MindManager() as AnyMgr;
+      const baseDelay = 300;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay, maxDelay: 2000 });
+      let starts = 0;
+      mgr.startMind = async () => {
+        starts++;
+      };
+
+      const child = fakeChild();
+      mgr.minds.set("resumed", { child, port: 4996 });
+      mgr.setupCrashRecovery("resumed", child);
+      child.emit("exit", 1);
+      assert.ok(await waitFor(() => mgr.hasPendingRecovery("resumed"), 5000));
+
+      // A caller (an upgrade) stops it, which cancels the recovery, then fails its start.
+      await mgr.stopMind("resumed");
+      assert.equal((await findMind("resumed"))?.running, false);
+
+      await mgr.resumeRecovery("resumed");
+      assert.equal(mgr.hasPendingRecovery("resumed"), true, "back in recovery");
+      assert.equal((await findMind("resumed"))?.running, true);
+      assert.ok(await waitFor(() => starts === 1, 5000), "the resumed recovery restarts it");
 
       mgr.shuttingDown = true;
     });

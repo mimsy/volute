@@ -36,7 +36,11 @@ function fakeManager() {
   return {
     calls,
     contexts,
-    isRunning: () => true,
+    isUpOrRecovering: () => true,
+    hasPendingRecovery: () => false,
+    resumeRecovery: async () => {
+      calls.push("resume");
+    },
     stopMind: async () => {
       calls.push("stop");
     },
@@ -99,6 +103,15 @@ describe("installDepsAndRestart", () => {
     assert.deepEqual(h.hostErrors, []);
     assert.deepEqual(h.manager.calls, ["stop", "context", "start"]);
     assert.deepEqual(h.manager.contexts, [{ type: "upgraded" }]);
+  });
+
+  it("stops a mind waiting out a crash backoff before starting it (#1114)", async () => {
+    // Down, with a recovery restart pending: the stop is what cancels that restart,
+    // which would otherwise race the upgrade's own start.
+    const h = harness();
+    const manager = { ...h.manager, isRunning: () => false, isUpOrRecovering: () => true };
+    await installDepsAndRestart(MIND, DIR, REF, true, { ...h.deps, getManager: () => manager });
+    assert.deepEqual(h.manager.calls, ["stop", "context", "start"]);
   });
 
   it("skips the install when the merge left dependencies untouched", async () => {
@@ -174,6 +187,20 @@ describe("installDepsAndRestart restart failures", () => {
     assert.match(h.hostErrors[0].summary, /the mind is down/);
     assert.match(String(warning), /restart failed: port 4100 already in use/);
     assert.doesNotMatch(String(warning), /npm install failed/);
+  });
+
+  it("puts a mind it took out of crash recovery back into it when the start fails (#1114)", async () => {
+    const manager = { ...fakeManager(), isRunning: () => false, hasPendingRecovery: () => true };
+    const h = harness({ getManager: () => brokenStart(manager) });
+    await installDepsAndRestart(MIND, DIR, REF, true, h.deps);
+    assert.deepEqual(manager.calls, ["stop", "context", "resume"]);
+  });
+
+  it("does not invent a recovery for a running mind whose restart fails", async () => {
+    const manager = fakeManager();
+    const h = harness({ getManager: () => brokenStart(manager) });
+    await installDepsAndRestart(MIND, DIR, REF, true, h.deps);
+    assert.ok(!manager.calls.includes("resume"));
   });
 
   it("reports both failures when the install and the restart each fail", async () => {

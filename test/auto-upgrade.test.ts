@@ -178,7 +178,7 @@ function makeUpgradeDeps(
   overrides: Partial<AutoUpgradeOneDeps> = {},
 ): AutoUpgradeOneDeps {
   return {
-    isRunning: () => false,
+    isUpOrRecovering: () => false,
     runUpgrade: async () => ({ status: "upgraded" }),
     abortUpgrade: async () => {},
     alertHost: async (name, kind, text) => {
@@ -199,7 +199,7 @@ describe("autoUpgradeOne", () => {
     const alerts: Alert[] = [];
     let abortedName: string | undefined;
     const deps = makeUpgradeDeps(alerts, {
-      isRunning: () => true,
+      isUpOrRecovering: () => true,
       runUpgrade: async () => ({
         status: "conflicts",
         worktreeDir: "/tmp/x",
@@ -389,7 +389,7 @@ describe("autoUpgradeOne", () => {
     const alerts: Alert[] = [];
     let restartArg: boolean | undefined;
     const deps = makeUpgradeDeps(alerts, {
-      isRunning: () => true, // wasRunning
+      isUpOrRecovering: () => true, // wasRunning
       runUpgrade: async (_name, opts) => {
         restartArg = opts.restart;
         return { status: "upgraded" };

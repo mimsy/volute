@@ -345,8 +345,29 @@ export class SleepManager {
     try {
       const manager = getMindManager();
       if (!manager.isRunning(name)) {
-        // Mind not running — just mark as sleeping
+        // Mind not running — just mark as sleeping.
+        if (!manager.isUpOrRecovering(name)) {
+          this.markSleeping(name, opts);
+          return;
+        }
+        // Waiting out a crash backoff: there is no process to wind down, but its restart
+        // may already be in flight (#1114). Marked asleep *before* the stop, so a start
+        // that lands first queues inbound and skips its backlog flush rather than handing
+        // the mind messages the stop then kills it in the middle of.
+        const prev = this.states.get(name);
         this.markSleeping(name, opts);
+        try {
+          await sleepMind(name);
+        } catch (err) {
+          // Still up means the stop failed and the mind is awake: it must not read as
+          // asleep (queuing its inbound) when it isn't.
+          if (manager.isRunning(name)) {
+            if (prev) this.states.set(name, prev);
+            else this.states.delete(name);
+            this.saveState();
+          }
+          throw err;
+        }
         return;
       }
 

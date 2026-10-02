@@ -155,6 +155,43 @@ describe("fan-out with an external (registry-row-less) mind participant", () => 
     );
   });
 
+  it("delivers to a mind waiting out a crash backoff instead of skipping it (#1114)", async () => {
+    await addMind(DOWN_NATIVE, 4712);
+    await getOrCreateMindUser(DOWN_NATIVE);
+    // What the crash handler leaves behind: no process, a restart pending.
+    const recoveries = (
+      tryGetMindManager() as unknown as { recoveries: Map<string, { timer?: NodeJS.Timeout }> }
+    ).recoveries;
+    recoveries.set(DOWN_NATIVE, { timer: setTimeout(() => {}, 60_000) });
+
+    try {
+      const participants = [
+        { userId: 1, username: HUMAN, userType: "human", role: "member" },
+        { userId: 4, username: DOWN_NATIVE, userType: "mind", role: "member" },
+      ] as unknown as Participant;
+
+      const warnings = await captureWarnings(async () => {
+        await fanOutToMinds({
+          conversationId: CONVERSATION_ID,
+          contentBlocks: [{ type: "text", text: "are you back?" }],
+          senderName: HUMAN,
+          senderId: null,
+          participants,
+        });
+      });
+
+      assert.ok(
+        !warnings.some((w) => w.includes(DOWN_NATIVE) && w.includes("not running")),
+        `a recovering mind is coming back, not stopped — got: ${JSON.stringify(warnings)}`,
+      );
+      // Queued for the restart rather than dropped.
+      assert.ok(await waitForQueued(DOWN_NATIVE), "a recovering mind must be delivered to");
+    } finally {
+      clearTimeout(recoveries.get(DOWN_NATIVE)?.timer);
+      recoveries.delete(DOWN_NATIVE);
+    }
+  });
+
   it("does not throw when every mind participant is external", async () => {
     const externalUser = await getOrCreateMindUser(EXTERNAL);
     const participants = [

@@ -217,8 +217,10 @@ async function getMindStatus(
     log.warn(`failed to check sleep state for ${name}`, log.errorData(err));
   }
 
-  if (status !== "sleeping" && registryRunning !== false && manager.isRunning(name)) {
-    const health = await checkHealth(port);
+  if (status !== "sleeping" && registryRunning !== false && manager.isUpOrRecovering(name)) {
+    // Down but coming back from a crash: `starting`, not `stopped` — a dashboard that
+    // offered Start here would start a copy the recovery restart then collides with (#1114).
+    const health = manager.isRunning(name) ? await checkHealth(port) : { ok: false };
     // A waking mind that answers is still waking — up, with its backlog draining. One
     // that doesn't answer is starting, not waking.
     if (!health.ok) status = "starting";
@@ -506,8 +508,8 @@ const app = new Hono<AuthEnv>()
     const variantStatuses = await Promise.all(
       variants.map(async (s) => {
         let variantStatus: "running" | "stopped" | "starting" = "stopped";
-        if (manager.isRunning(s.name)) {
-          const health = await checkHealth(s.port);
+        if (manager.isUpOrRecovering(s.name)) {
+          const health = manager.isRunning(s.name) ? await checkHealth(s.port) : { ok: false };
           variantStatus = health.ok ? "running" : "starting";
         }
         return { name: s.name, port: s.port, status: variantStatus };
@@ -663,8 +665,9 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      // Stop running mind
-      if (manager.isRunning(name)) {
+      // Stop running mind — or one waiting out a crash backoff, whose restart would
+      // otherwise race the start below (#1114).
+      if (manager.isUpOrRecovering(name)) {
         await stopMindFullService(name);
       }
 
@@ -823,7 +826,7 @@ const app = new Hono<AuthEnv>()
     const manager = getMindManager();
     // A mind waiting out a crash-recovery backoff is down but coming back; stopping
     // it is what cancels that (#1070).
-    if (!manager.isRunning(name) && !manager.hasPendingRecovery(name)) {
+    if (!manager.isUpOrRecovering(name)) {
       return c.json({ error: "Mind is not running" }, 409);
     }
 
@@ -1323,7 +1326,7 @@ const app = new Hono<AuthEnv>()
       const parentEntry = await findMind(entry.parent);
       if (!parentEntry) return c.json({ error: `Parent mind ${entry.parent} not found` }, 404);
 
-      if (manager.isRunning(name) || manager.hasPendingRecovery(name)) {
+      if (manager.isUpOrRecovering(name)) {
         await stopMindFullService(name);
       }
       await cleanupVariant(name, entry.parent, parentEntry.dir ?? mindDir(entry.parent), entry.dir);
@@ -1342,7 +1345,7 @@ const app = new Hono<AuthEnv>()
     const force = c.req.query("force") === "true";
 
     // Stop mind if running, or if a crash recovery would bring it back
-    if (manager.isRunning(name) || manager.hasPendingRecovery(name)) {
+    if (manager.isUpOrRecovering(name)) {
       await stopMindFullService(name);
     }
 

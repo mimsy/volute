@@ -95,12 +95,13 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
   };
 
   // Include running minds AND sleeping-or-waking minds (they route through the sleep
-  // queue). A mind whose process stops or crashes mid-wake stops waking with it (#1097),
+  // queue), and minds waiting out a crash backoff — their delivery waits in the queue
+  // for the restart rather than being dropped as "not running" (#1114). A mind whose process stops or crashes mid-wake stops waking with it (#1097),
   // so from then on it is skipped here like any other stopped mind.
   const targetMinds = mindParticipants
     .map((ap) => {
       const key = opts.targetName ? opts.targetName(ap.username) : ap.username;
-      if (manager.isRunning(key) || sm?.isQueueingInbound(ap.username)) return ap.username;
+      if (manager.isUpOrRecovering(key) || sm?.isQueueingInbound(ap.username)) return ap.username;
       if (ap.username !== opts.senderName) {
         // This is the load-bearing silent drop in delivery: a stopped participant simply
         // never receives the message. Make it traceable (#434) — but only for minds that
