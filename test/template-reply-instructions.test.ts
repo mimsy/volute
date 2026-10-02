@@ -129,7 +129,10 @@ describe("pi template: reply instructions vs system events", () => {
   /** Drive the real extension: capture its `before_agent_start` handler and fire it. */
   function setup() {
     const messageChannels = new Map<string, { channel: string; sender?: string }>();
-    const factory = createReplyInstructionsExtension(messageChannels);
+    const factory = createReplyInstructionsExtension(messageChannels, {
+      eventNoteFired: false,
+      replyInstructionsFired: false,
+    });
     let handler:
       | (() => { message?: { customType: string; content: string } } | undefined)
       | undefined;
@@ -354,7 +357,10 @@ const modeHarnesses: Record<string, () => Promise<() => Fire>> = {
     return () => {
       const pending = new Map<string, Entry>();
       let handler: (() => { message?: { content: string } } | undefined) | undefined;
-      createReplyInstructionsExtension(pending)({
+      createReplyInstructionsExtension(pending, {
+        eventNoteFired: false,
+        replyInstructionsFired: false,
+      })({
         on: (event: string, fn: typeof handler) => {
           if (event === "before_agent_start") handler = fn;
         },

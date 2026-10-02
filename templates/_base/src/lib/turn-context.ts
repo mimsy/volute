@@ -11,9 +11,24 @@ export type TurnContext = {
 /** The mutable per-session state this decision reads and updates. */
 export type TurnContextState = {
   eventNoteFired: boolean;
-  /** Reply instructions have been given in this session (what `once` counts). */
+  /**
+   * Reply instructions have been given in this model context (what `once` counts). Cleared
+   * by `newModelContext` wherever a template rebuilds the context.
+   */
   replyInstructionsFired: boolean;
 };
+
+/**
+ * The model's context was just rebuilt — a rotation, or a fresh start in place — so the
+ * reply instructions it was given are gone from what it can see. `once` means once per
+ * model context, not per session object: each template's session object spans a different
+ * window (claude's survives a rotation), and a mind that has lost the reminder, a small
+ * model above all, may stop answering where anyone can hear (#1226). A session created
+ * anew starts clear and needs no call.
+ */
+export function newModelContext(state: TurnContextState): void {
+  state.replyInstructionsFired = false;
+}
 
 /** What the decision needs to know about each message the turn runs. */
 export type TurnEntry = Pick<
@@ -36,9 +51,9 @@ export type TurnEntry = Pick<
  * the channel would fire it on every single event.
  *
  * Reply instructions follow the thread's routes.json `replyInstructions`, which the daemon
- * resolves and sends with each delivery: `once` (the default) gives them on the session's
- * first message — not once per channel — `always` on every turn with someone to answer, and
- * `never` not at all.
+ * resolves and sends with each delivery: `once` (the default) gives them on the first message
+ * of each model context (see newModelContext) — not once per channel — `always` on every turn
+ * with someone to answer, and `never` not at all.
  */
 export function turnContextFor(
   turnEntries: TurnEntry[],

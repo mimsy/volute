@@ -1737,3 +1737,89 @@ describe("codex reply instructions follow routes.json (#1205)", () => {
     );
   });
 });
+
+describe("codex `once` reply instructions are once per model context (#1226)", () => {
+  const alice = { channel: "@alice", sender: "alice" };
+  const hello = [{ type: "text", text: "hello" }];
+  const reminded = (input: unknown) => /volute chat send "@alice"/.test(input as string);
+  const inputs = (session: string) =>
+    control.calls.filter((c) => c.session === session).map((c) => c.input);
+
+  it("a rotated thread is given them again", async () => {
+    script("ri-rot", overThreshold("019f5e60-0000-7000-8000-0000000012a6"));
+    await send("ri-rot", hello, rotatingMind, alice);
+    await send("ri-rot", hello, rotatingMind, alice);
+    assert.deepEqual(inputs("ri-rot").map(reminded), [true, true]);
+  });
+
+  it("a fresh thread after a failed first turn is given them again", async () => {
+    script(
+      "ri-fresh",
+      { events: [{ type: "thread.started", thread_id: "t-ri-first" }], throws: "auth failed" },
+      {
+        events: [
+          { type: "thread.started", thread_id: "t-ri-second" },
+          { type: "turn.completed", usage: USAGE },
+        ],
+      },
+    );
+    await send("ri-fresh", hello, mind, alice);
+    await send("ri-fresh", hello, mind, alice);
+    assert.deepEqual(inputs("ri-fresh").map(reminded), [true, true]);
+  });
+
+  it("a retry on a fresh thread that carried them is not given them twice", async () => {
+    // The first turn names no one to answer, so the reminder first rides on the turn
+    // whose rollout has vanished — and on its retry, onto the fresh thread.
+    const rollout = writeRollout(resolve(codexHome, "sessions"), "t-ri-vanish");
+    writePointer("ri-vanish", "t-ri-vanish", true);
+    await send("ri-vanish");
+    rmSync(rollout);
+    script(
+      "ri-vanish",
+      { throws: "Codex Exec exited with code 1: no rollout found for thread id t-ri-vanish" },
+      {
+        events: [
+          { type: "thread.started", thread_id: "t-ri-vanish-fresh" },
+          { type: "turn.completed", usage: USAGE },
+        ],
+      },
+    );
+    await send("ri-vanish", hello, mind, alice);
+    await send("ri-vanish", hello, mind, alice);
+    assert.deepEqual(inputs("ri-vanish").map(reminded), [false, true, true, false]);
+  });
+
+  it("a retry that failed gave the fresh thread nothing, so the next turn is reminded", async () => {
+    const rollout = writeRollout(resolve(codexHome, "sessions"), "t-ri-vanish2");
+    writePointer("ri-vanish2", "t-ri-vanish2", true);
+    await send("ri-vanish2");
+    rmSync(rollout);
+    script(
+      "ri-vanish2",
+      { throws: "no rollout found for thread id t-ri-vanish2" },
+      { throws: "auth failed" },
+    );
+    await send("ri-vanish2", hello, mind, alice);
+    await send("ri-vanish2", hello, mind, alice);
+    assert.deepEqual(inputs("ri-vanish2").map(reminded), [false, true, true, true]);
+  });
+
+  it("a thread carried past a stale rollout path is given them again", async () => {
+    const stale = "019f5e60-0000-7000-8000-0000000012a7";
+    writeConversation(resolve(codexHome, "sessions"), stale);
+    writePointer("ri-stale", stale, true);
+    await send("ri-stale", hello, mind, alice);
+    script("ri-stale", {
+      throws: `Codex Exec exited with code 1: thread/resume failed: no rollout found for thread id ${stale}`,
+    });
+    await send("ri-stale", hello, mind, alice);
+    await send("ri-stale", hello, mind, alice);
+    const calls = control.calls.filter((c) => c.session === "ri-stale");
+    assert.notEqual(calls[2].threadId, stale, "the retry ran on a carried thread");
+    assert.deepEqual(
+      calls.map((c) => reminded(c.input)),
+      [true, false, false, true],
+    );
+  });
+});

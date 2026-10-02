@@ -60,6 +60,7 @@ import {
   type SubagentConfig,
 } from "./lib/startup.js";
 import { createSubagentExtension } from "./lib/subagents.js";
+import { newModelContext, type TurnContextState } from "./lib/turn-context.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -648,6 +649,8 @@ export async function createMind(options: {
     // through on its second pass, inside the run) is the backstop.
     let compactBlocked = false;
     let rotatePending = false;
+    /** What the reply instructions have told this session's model context (turn-context.ts). */
+    const turnContext: TurnContextState = { eventNoteFired: false, replyInstructionsFired: false };
 
     /**
      * Rotate the session in place onto a synthetic session holding the verbatim recent
@@ -682,6 +685,7 @@ export async function createMind(options: {
       session.seededCause = "rotation";
       session.seededRecollection = rotated.recallEntries > 0;
       refreshStartupContext(session, "compact");
+      newModelContext(turnContext);
       session.identityLoadedNotePending =
         rebuildSystemPrompt(session) && carriesIdentityNotice(rotated.path);
       session.consecutiveRotations = (session.consecutiveRotations ?? 0) + 1;
@@ -719,6 +723,7 @@ export async function createMind(options: {
       }
       refreshStartupContext(session, "clear");
       rebuildSystemPrompt(session);
+      newModelContext(turnContext);
       session.identityLoadedNotePending = false;
       session.consecutiveRotations = 0;
       compactBlocked = false;
@@ -837,6 +842,7 @@ export async function createMind(options: {
 
       const replyInstructionsExtension = createReplyInstructionsExtension(
         session.messageChannels,
+        turnContext,
         emit,
         session,
       );

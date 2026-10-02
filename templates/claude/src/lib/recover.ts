@@ -1,6 +1,7 @@
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ChannelEntry } from "./message-channel.js";
-import type { MessageIdEntry } from "./stream-consumer.js";
+import type { MessageChannelEntry, MessageIdEntry } from "./stream-consumer.js";
+import type { Listener } from "./types.js";
 
 /**
  * `recover()` returns messages the channel can't prove were unprocessed — a genuinely
@@ -66,4 +67,26 @@ export function relockstepMessageIds(
     })),
   );
   return existingMessageIds;
+}
+
+/** The per-delivery bookkeeping a session keeps beside its channel. */
+type DeliveryState = {
+  messageChannels: Map<string, MessageChannelEntry>;
+  /** Each listener, with the delivery it was registered for. */
+  listeners: Map<Listener, string>;
+};
+
+/**
+ * Hand a fresh session what it needs of the one whose input it took over: the channel entry
+ * and listeners of each delivery it now holds (`ids`), and nothing else. Anything more
+ * belongs to a turn that has already ended there — it would never be cleared from the fresh
+ * session, and would sit in it, rotation after rotation, for its whole life (#1220).
+ */
+export function carryOver(
+  from: DeliveryState,
+  to: DeliveryState,
+  ids: ReadonlySet<string | undefined>,
+): void {
+  for (const [id, ch] of from.messageChannels) if (ids.has(id)) to.messageChannels.set(id, ch);
+  for (const [listener, id] of from.listeners) if (ids.has(id)) to.listeners.set(listener, id);
 }
