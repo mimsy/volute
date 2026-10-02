@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { readSystemsConfig } from "../config/systems-config.js";
-import { getMindManager } from "../daemon/mind-manager.js";
+import { getMindManager, tryGetMindManager } from "../daemon/mind-manager.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { migrateSkillsToTemplate } from "../skills.js";
 import {
@@ -450,6 +450,22 @@ export async function mergeWithUntrackResolution(
   } catch (err) {
     await gitExec(["merge", "--abort"], git).catch(() => {});
     throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+
+/**
+ * Run `fn` with crash recovery held for `mindName`: from the merge until the upgrade's
+ * own final start, the tree is half-written, and a recovery restart firing in that
+ * window would boot the mind on it (#1279). A restart that comes due meanwhile runs on
+ * release — when the upgrade restarts the mind, its final start has already cancelled it.
+ */
+export async function withRecoveryHold<T>(mindName: string, fn: () => Promise<T>): Promise<T> {
+  const manager = tryGetMindManager();
+  await manager?.holdRecovery(mindName);
+  try {
+    return await fn();
+  } finally {
+    manager?.releaseRecovery(mindName);
   }
 }
 
@@ -1041,15 +1057,17 @@ async function runUpgradeCore(
     }
 
     // Merge upgrade branch back to main, cleanup, and restart
-    const result = await mergeUpgradeAndRestart(
-      mindName,
-      dir,
-      worktreeDir,
-      variantName,
-      UPGRADE_BRANCH,
-      template,
-      oldTemplate,
-      restart,
+    const result = await withRecoveryHold(mindName, () =>
+      mergeUpgradeAndRestart(
+        mindName,
+        dir,
+        worktreeDir,
+        variantName,
+        UPGRADE_BRANCH,
+        template,
+        oldTemplate,
+        restart,
+      ),
     );
     if (!result.ok) {
       return {
@@ -1151,15 +1169,17 @@ async function continueUpgradeCore(
   }
 
   // Merge upgrade branch back to main, cleanup, and restart
-  const result = await mergeUpgradeAndRestart(
-    mindName,
-    dir,
-    worktreeDir,
-    variantName,
-    UPGRADE_BRANCH,
-    template,
-    oldTemplate,
-    restart,
+  const result = await withRecoveryHold(mindName, () =>
+    mergeUpgradeAndRestart(
+      mindName,
+      dir,
+      worktreeDir,
+      variantName,
+      UPGRADE_BRANCH,
+      template,
+      oldTemplate,
+      restart,
+    ),
   );
   if (!result.ok) {
     return {

@@ -3,7 +3,12 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
+import {
+  getMindManager,
+  initMindManager,
+  tryGetMindManager,
+} from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { mergeVariant } from "../packages/daemon/src/lib/mind/lifecycle.js";
 
 // #330: the single mergeVariant() behind both the merge route (verify:true) and the
@@ -218,6 +223,46 @@ describe("mergeVariant (#330 unified merge)", () => {
       assert.ok(existsSync(variantDir));
       assert.equal(git(baseDir, "rev-parse", "--verify", variantBranch).length, 40);
     } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("mergeVariant holds the parent's crash recovery (#1279)", () => {
+  it("takes the hold before the merge touches the parent and releases it after", async () => {
+    if (!tryGetMindManager()) initMindManager();
+    const { baseDir, variantDir, variantName, variantBranch } = setupRepo();
+    const manager = getMindManager();
+    const seen: { call: string; name: string; merged: boolean }[] = [];
+    const merged = () => existsSync(resolve(baseDir, "feature.txt"));
+    const hold = mock.method(manager, "holdRecovery", async (name: string) => {
+      seen.push({ call: "hold", name, merged: merged() });
+    });
+    const release = mock.method(manager, "releaseRecovery", (name: string) => {
+      seen.push({ call: "release", name, merged: merged() });
+    });
+    try {
+      writeFileSync(resolve(variantDir, "feature.txt"), "from variant\n");
+      git(variantDir, "add", "-A");
+      git(variantDir, "commit", "-q", "-m", "variant work");
+
+      const result = await mergeVariant({
+        parentName: "mv-held-parent",
+        variantName,
+        projectRoot: baseDir,
+        variantDir,
+        variantBranch,
+        verify: false,
+      });
+
+      assert.equal(result.status, "merged");
+      assert.deepEqual(seen, [
+        { call: "hold", name: "mv-held-parent", merged: false },
+        { call: "release", name: "mv-held-parent", merged: true },
+      ]);
+    } finally {
+      hold.mock.restore();
+      release.mock.restore();
       rmSync(baseDir, { recursive: true, force: true });
     }
   });
