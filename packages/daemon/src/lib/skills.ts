@@ -429,28 +429,79 @@ async function recordUpstreamBase(
     const mode = lstatSync(src).mode & 0o111 ? "100755" : "100644";
     lines.push(`${mode} ${sha}\t${join(relSkillPath, f)}\n`);
   }
-  // The scratch index lives in the mind's own git dir (a worktree's, for a variant), and
-  // is written and removed only as the mind — the daemon never touches it.
-  const index = resolve(
-    dir,
-    (await git(["rev-parse", "--git-path", `volute-skill-base-${randomUUID()}.index`])).trim(),
-  );
-  try {
-    const env = { GIT_INDEX_FILE: index };
+  const tree = await withScratchIndex(dir, mindName, async (env) => {
     await git(["read-tree", "--empty"], { env });
     await git(["update-index", "--add", "--index-info"], { env, stdin: lines.join("") });
-    const tree = (await git(["write-tree"], { env })).trim();
-    await ensureCommitIdentity(dir, mindName);
-    const commit = (
-      await git(["commit-tree", "--no-gpg-sign", tree, "-m", UPSTREAM_SUBJECT(skillId, version)])
-    ).trim();
-    await git(["update-ref", upstreamRef(skillId, version), commit]);
-    return commit;
+    return (await git(["write-tree"], { env })).trim();
+  });
+  await ensureCommitIdentity(dir, mindName);
+  const commit = (
+    await git(["commit-tree", "--no-gpg-sign", tree, "-m", UPSTREAM_SUBJECT(skillId, version)])
+  ).trim();
+  await git(["update-ref", upstreamRef(skillId, version), commit]);
+  return commit;
+}
+
+/**
+ * Run `fn` with a scratch index, so HEAD, the mind's index and its working tree are
+ * untouched. The index lives in the mind's own git dir (a worktree's, for a variant), and
+ * is written and removed only as the mind — the daemon never touches it.
+ */
+async function withScratchIndex<T>(
+  dir: string,
+  mindName: string,
+  fn: (env: { GIT_INDEX_FILE: string }) => Promise<T>,
+): Promise<T> {
+  const index = resolve(
+    dir,
+    (
+      await mindGit(dir, mindName, [
+        ...PLUMBING,
+        "rev-parse",
+        "--git-path",
+        `volute-skill-${randomUUID()}.index`,
+      ])
+    ).trim(),
+  );
+  try {
+    return await fn({ GIT_INDEX_FILE: index });
   } finally {
     await exec("rm", ["-f", "--", index], { mindName }).catch((err) =>
       log.warn(`failed to remove ${index}`, log.errorData(err)),
     );
   }
+}
+
+/**
+ * The skill's files as they stand — uncommitted edits and all — as a tree, so an update
+ * that fails partway can put them back (`restoreSkill`). The merge reads the working tree,
+ * not HEAD: restoring HEAD would discard an edit the mind hadn't committed yet.
+ */
+async function snapshotSkill(dir: string, mindName: string, relSkillPath: string) {
+  const git = (args: string[], env: NodeJS.ProcessEnv) =>
+    mindGit(dir, mindName, [...PLUMBING, ...args], { env });
+  return withScratchIndex(dir, mindName, async (env) => {
+    await git(["read-tree", "HEAD"], env);
+    await git(["add", "-A", "--", relSkillPath], env);
+    return (await git(["write-tree"], env)).trim();
+  });
+}
+
+/**
+ * Undo a failed update: the skill's files back to `snapshot` — any the merge added removed —
+ * and its index entries back to HEAD, so the update changed nothing (#1321).
+ */
+async function restoreSkill(
+  dir: string,
+  mindName: string,
+  relSkillPath: string,
+  snapshot: string,
+): Promise<void> {
+  const git = (args: string[]) => mindGit(dir, mindName, [...PLUMBING, ...args]);
+  // Staged first, so --no-overlay sees a file the merge added and removes it.
+  await git(["add", "-A", "--", relSkillPath]);
+  await git(["checkout", "--no-overlay", snapshot, "--", relSkillPath]);
+  await git(["reset", "-q", "HEAD", "--", relSkillPath]);
 }
 
 const UPSTREAM_SUBJECT = (skillId: string, version: number) =>
@@ -1091,6 +1142,17 @@ async function updateSkillLocked(
     ),
   };
   const conflictFiles: string[] = [];
+  // From here a failure puts the skill back as it was: the base is recorded, but the merge
+  // writes files, and a commit that then fails would leave them staged under an
+  // .upstream.json that still names the old version (#1321).
+  const snapshot = await snapshotSkill(dir, mindName, relSkillPath);
+  const undo = () =>
+    restoreSkill(dir, mindName, relSkillPath, snapshot).catch((err) =>
+      log.error(
+        `failed to restore skill ${skillId} for ${mindName} after a failed update`,
+        log.errorData(err),
+      ),
+    );
   // Unpredictable, and root's: a fixed name in a world-writable tmp could be pre-planted.
   const tmpBase = mkdtempSync(join(tmpdir(), "volute-merge-"));
 
@@ -1179,6 +1241,9 @@ async function updateSkillLocked(
         }
       }
     }
+  } catch (err) {
+    await undo();
+    throw err;
   } finally {
     rmSync(tmpBase, { recursive: true, force: true });
   }
@@ -1207,19 +1272,23 @@ async function updateSkillLocked(
     return { status: "conflict", conflictFiles };
   }
 
-  const npmDependencies = await wireSkill(mindName, dir, skillId, await readMindSkillMd());
-
   // .upstream.json only moves to the new version once the merge is committed:
   // written first, a failed commit would leave the skill reading as up to date.
-  await git(["add", relSkillPath]);
-  await git(["add", join("home", ".local", "hooks")]).catch(() => {});
-  await git(["add", join("home", ".local", "bin")]).catch(() => {});
-  if (npmDependencies.length > 0) {
-    await git(["add", "package.json", "package-lock.json"]);
+  try {
+    const npmDependencies = await wireSkill(mindName, dir, skillId, await readMindSkillMd());
+    await git(["add", relSkillPath]);
+    await git(["add", join("home", ".local", "hooks")]).catch(() => {});
+    await git(["add", join("home", ".local", "bin")]).catch(() => {});
+    if (npmDependencies.length > 0) {
+      await git(["add", "package.json", "package-lock.json"]);
+    }
+    await ensureCommitIdentity(dir, mindName);
+    // --allow-empty: a version bump need not change any file this mind tracks.
+    await git(["commit", "--allow-empty", "-m", `Update skill: ${skillId} (v${shared.version})`]);
+  } catch (err) {
+    await undo();
+    throw err;
   }
-  await ensureCommitIdentity(dir, mindName);
-  // --allow-empty: a version bump need not change any file this mind tracks.
-  await git(["commit", "--allow-empty", "-m", `Update skill: ${skillId} (v${shared.version})`]);
   await writeUpstream(info);
   await git(["add", join(relSkillPath, ".upstream.json")]);
   await git(["commit", "--amend", "--no-edit"]);
