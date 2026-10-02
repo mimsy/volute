@@ -23,6 +23,7 @@ import { resolveRealWithinBase } from "../packages/daemon/src/lib/util/paths.js"
 import {
   addPagesWorktree,
   ensurePagesRepo,
+  hasUnpublishedSharedChanges,
   type IsolationInfo,
   pagesLog,
   pagesMerge,
@@ -33,6 +34,7 @@ import {
   REFUSALS,
   reclaimGitDir,
   removePagesWorktree,
+  WORKTREE_GIT,
   worktreeGitDir,
 } from "../packages/extensions/pages/src/shared-pages.js";
 import { cleanGitEnv } from "./helpers/test-git-env.js";
@@ -398,14 +400,14 @@ describe("pages collaborative repo", () => {
     const worktreePath = resolve(mindDir, "home", "pages", "_system");
 
     // Initial log should have at least the init commit
-    let log = await pagesLog("test-pages-log", mindDir, 10);
+    let log = await pagesLog(dataDir, 10);
     assert.ok(log.includes("init pages repo"));
 
     // Merge a change and check log
     writeFileSync(resolve(worktreePath, "index.html"), "<h1>Hi</h1>");
     await pagesMerge("test-pages-log", mindDir, dataDir, "Add index page");
 
-    log = await pagesLog("test-pages-log", mindDir, 10);
+    log = await pagesLog(dataDir, 10);
     assert.ok(log.includes("Add index page"));
 
     await removePagesWorktree("test-pages-log", mindDir, dataDir);
@@ -771,41 +773,77 @@ describe("pages collaborative repo", () => {
     assert.ok(result.ok, JSON.stringify(result));
   });
 
-  it("runs a filter from a redirected commondir as the mind, never as the daemon", async (t) => {
-    t.mock.method(console, "warn", () => {});
-    t.mock.method(console, "error", () => {});
-    await ensurePagesRepo(dataDir);
-    const name = "test-pages-commondir";
-    const mindDir = await createFakeMind(name);
-    await addPagesWorktree(name, mindDir, dataDir);
-    const wt = resolve(mindDir, "home", "pages", "_system");
-    const gitDir = worktreeGitDir(pagesRepoDir(dataDir), wt)!;
-
-    // The mind owns its gitdir, so it can point `commondir` at a repo whose config
-    // defines a filter, and name that filter from its worktree.
-    const decoy = resolve(voluteHome(), "test-pages-commondir-decoy");
+  /**
+   * The mind owns its gitdir, so it can point `commondir` at a repo whose config
+   * defines a filter, and name that filter from its worktree (#1357). Returns the
+   * marker the filter writes to when it runs.
+   */
+  function redirectCommondir(name: string, gitDir: string, wt: string): string {
+    const decoy = resolve(voluteHome(), `${name}-decoy`);
     rmSync(decoy, { recursive: true, force: true });
     mkdirSync(decoy, { recursive: true });
     git(decoy, "init", "-q");
-    const marker = resolve(voluteHome(), "test-pages-commondir-ran");
+    const marker = resolve(voluteHome(), `${name}-ran`);
     rmSync(marker, { force: true });
     const filter = resolve(decoy, "probe");
     writeFileSync(filter, `#!/bin/sh\necho "as=[$PAGES_GIT_AS]" >> "${marker}"\ncat\n`, {
       mode: 0o755,
     });
     git(decoy, "config", "filter.probe.clean", filter);
+    git(decoy, "config", "filter.probe.smudge", filter);
     writeFileSync(resolve(gitDir, "commondir"), resolve(decoy, ".git"));
     writeFileSync(resolve(wt, ".gitattributes"), "*.md filter=probe\n");
     writeFileSync(resolve(wt, "lore.md"), "# Lore\n");
+    return marker;
+  }
 
-    const { isolation } = containingIsolation();
-    // The commit after the filter fails on the decoy's missing objects; only who ran
-    // the filter matters here.
-    await pagesPull(name, mindDir, dataDir, isolation).catch(() => {});
-    assert.ok(existsSync(marker), "the filter never ran, so this proves nothing");
-    for (const line of readFileSync(marker, "utf-8").trim().split("\n")) {
-      assert.equal(line, `as=[${name}]`);
-    }
+  for (const isolated of [false, true]) {
+    it(`refuses a worktree whose commondir was redirected (${isolated ? "user" : "no"} isolation)`, async (t) => {
+      t.mock.method(console, "warn", () => {});
+      t.mock.method(console, "error", () => {});
+      await ensurePagesRepo(dataDir);
+      const name = `test-pages-commondir-${isolated ? "iso" : "plain"}`;
+      const mindDir = await createFakeMind(name);
+      await addPagesWorktree(name, mindDir, dataDir);
+      const wt = resolve(mindDir, "home", "pages", "_system");
+      const gitDir = worktreeGitDir(pagesRepoDir(dataDir), wt)!;
+      const marker = redirectCommondir(name, gitDir, wt);
+      assert.equal(worktreeGitDir(pagesRepoDir(dataDir), wt), null);
+
+      const isolation = isolated ? containingIsolation().isolation : undefined;
+      assert.deepEqual(
+        await pagesPull(name, mindDir, dataDir, isolation),
+        REFUSALS.UNVERIFIED_WORKTREE,
+      );
+      assert.deepEqual(
+        await pagesPullAndMerge(name, mindDir, dataDir, "m", isolation),
+        REFUSALS.UNVERIFIED_WORKTREE,
+      );
+      await assert.rejects(pagesStatus(name, mindDir, dataDir, isolation));
+      assert.equal(await hasUnpublishedSharedChanges(name, mindDir, dataDir, isolation), false);
+      assert.equal(existsSync(marker), false, "the planted filter ran");
+    });
+  }
+
+  it("pins daemon git to the repo, whatever commondir says after vouching", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const name = "test-pages-commondir-pin";
+    const mindDir = await createFakeMind(name);
+    await addPagesWorktree(name, mindDir, dataDir);
+    const wt = resolve(mindDir, "home", "pages", "_system");
+    const repo = pagesRepoDir(dataDir);
+    const gitDir = worktreeGitDir(repo, wt)!;
+    // Vouched first, then redirected: the window between the check and the git run.
+    const opts = await WORKTREE_GIT.mindWorktree(name, mindDir, repo);
+    const marker = redirectCommondir(name, gitDir, wt);
+
+    const common = await WORKTREE_GIT.gitExec(["rev-parse", "--git-common-dir"], opts);
+    assert.equal(realpathSync(resolve(wt, common.trim())), realpathSync(resolve(repo, ".git")));
+    await WORKTREE_GIT.gitExec(["add", "-A"], opts);
+    await WORKTREE_GIT.gitExec(["status", "--porcelain"], opts);
+    assert.equal(existsSync(marker), false, "the planted filter ran as the daemon");
+    assert.match(await WORKTREE_GIT.gitExec(["diff", "--cached", "--name-only"], opts), /lore\.md/);
   });
 
   it("keeps the repo's config, hooks and info out of the minds' group", async (t) => {

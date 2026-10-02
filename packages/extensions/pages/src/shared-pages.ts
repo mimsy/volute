@@ -84,9 +84,15 @@ const IDENTITY_ARGS = ["-c", "user.name=volute", "-c", "user.email=volute@localh
 
 /**
  * Where a git command runs, and as whom. `asMind` runs it as that mind under user
- * isolation, with `home` as its HOME; see `mindWorktree`.
+ * isolation, with `home` as its HOME; see `mindWorktree`. `pin` names a worktree's
+ * vouched gitdir and the repo's `.git`, which git then uses in place of the pointer
+ * files the mind can rewrite.
  */
-type GitOpts = { cwd: string; asMind?: { name: string; home: string } };
+type GitOpts = {
+  cwd: string;
+  asMind?: { name: string; home: string };
+  pin?: { gitDir: string; commonDir: string };
+};
 
 /**
  * How long one git command may run. A mind owns its gitdir under `.git/worktrees/`,
@@ -121,6 +127,10 @@ async function gitExec(args: string[], opts: GitOpts, isolation?: IsolationInfo)
     argv = [...prefix, "-c", "gc.auto=0", "-c", "maintenance.auto=false", ...args];
     [cmd, argv] = await isolation!.wrapForIsolation(cmd, argv, opts.asMind.name);
     env.HOME = opts.asMind.home;
+  } else if (opts.pin) {
+    env.GIT_DIR = opts.pin.gitDir;
+    env.GIT_COMMON_DIR = opts.pin.commonDir;
+    env.GIT_WORK_TREE = opts.cwd;
   }
   return new Promise((resolve, reject) => {
     const execOpts = { cwd: opts.cwd, env, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_OUTPUT };
@@ -162,8 +172,8 @@ function readPointerFile(path: string, max = 4096): string {
  * to point anywhere — including another mind's gitdir, which also lives in
  * `.git/worktrees/` (#1248). So the gitdir must be a direct child of the repo's
  * `.git/worktrees/`, and its `gitdir` back-pointer (written by git into the repo,
- * not the mind's tree) must lead back to this worktree. `worktree` is the
- * worktree's contained path.
+ * not the mind's tree) must lead back to this worktree, and its `commondir` must
+ * lead to the repo's `.git` (#1357). `worktree` is the worktree's contained path.
  */
 export function worktreeGitDir(repoDir: string, worktree: string): string | null {
   try {
@@ -171,10 +181,14 @@ export function worktreeGitDir(repoDir: string, worktree: string): string | null
     const match = readPointerFile(resolve(realWorktree, ".git")).match(/^gitdir:\s*(.+)$/);
     if (!match) return null;
     const gitDir = realpathSync(resolve(realWorktree, match[1]));
-    if (dirname(gitDir) !== realpathSync(resolve(repoDir, ".git", "worktrees"))) return null;
+    const commonDir = realpathSync(resolve(repoDir, ".git"));
+    if (dirname(gitDir) !== realpathSync(resolve(commonDir, "worktrees"))) return null;
     // Relative under git's worktree.useRelativePaths, and then relative to the gitdir.
     const back = resolve(gitDir, readPointerFile(resolve(gitDir, "gitdir")));
     if (realpathSync(dirname(back)) !== realWorktree) return null;
+    // The mind owns the gitdir too, and its `commondir` decides whose config git reads.
+    const common = resolve(gitDir, readPointerFile(resolve(gitDir, "commondir")));
+    if (realpathSync(common) !== commonDir) return null;
     return gitDir;
   } catch (err) {
     console.warn(`[pages] can't resolve the gitdir of ${worktree}: ${(err as Error).message}`);
@@ -207,20 +221,30 @@ function worktreePath(mindDir: string): string {
  * symlink into another mind's pages (#1285). Git then runs as the mind, not as root.
  * The worktree's gitdir is the mind's (`addPagesWorktree` hands it over), and its
  * `commondir` file decides which repo's config git reads. So root git here would run
- * any filter driver or other program that config names. Throws if containment
- * refuses, or if the worktree isn't there.
+ * any filter driver or other program that config names.
+ *
+ * Without isolation git runs as the daemon user, so it is pinned to the vouched gitdir
+ * and the repo's `.git`: the mind can still rewrite `commondir` after the vouching,
+ * and git never reads it (#1357). Throws if containment refuses, if the worktree isn't
+ * there, or if its gitdir can't be vouched for.
  */
 async function mindWorktree(
   mindName: string,
   mindDir: string,
+  dir: string,
   isolation?: IsolationInfo,
 ): Promise<GitOpts> {
-  const wt = worktreePath(mindDir);
-  if (!isolation?.isIsolationEnabled()) return { cwd: wt };
-  return {
-    cwd: await isolation.containMindPath(mindName, wt),
-    asMind: { name: mindName, home: resolve(mindDir, "home") },
-  };
+  const iso = isolation?.isIsolationEnabled();
+  const cwd = iso
+    ? await isolation!.containMindPath(mindName, worktreePath(mindDir))
+    : worktreePath(mindDir);
+  if (!existsSync(cwd)) {
+    throw Object.assign(new Error(`${cwd} doesn't exist`), { code: "ENOENT" });
+  }
+  const gitDir = worktreeGitDir(dir, cwd);
+  if (!gitDir) throw new Error(UNVERIFIED_WORKTREE.message);
+  if (iso) return { cwd, asMind: { name: mindName, home: resolve(mindDir, "home") } };
+  return { cwd, pin: { gitDir, commonDir: realpathSync(resolve(dir, ".git")) } };
 }
 
 /** Why nothing was published or pulled, in words for the mind. */
@@ -229,6 +253,7 @@ type Refusal = { ok: false; conflicts?: boolean; message: string };
 /** What a mind is told when its worktree can't be contained. */
 function refusedWorktree(mindName: string, err: unknown): Refusal {
   console.warn(`[pages] refused ${mindName}'s worktree: ${(err as Error).message}`);
+  if ((err as Error).message === UNVERIFIED_WORKTREE.message) return UNVERIFIED_WORKTREE;
   if ((err as NodeJS.ErrnoException).code === "ENOENT") {
     // Never provisioned, or removed (#795).
     return {
@@ -636,7 +661,7 @@ async function tidyWorktreeGitDir(
   isolation: IsolationInfo,
 ): Promise<void> {
   try {
-    const git = await mindWorktree(mindName, mindDir, isolation);
+    const git = await mindWorktree(mindName, mindDir, dir, isolation);
     const gitDir = worktreeGitDir(dir, git.cwd);
     if (!gitDir) return;
     const { dropped } = await inspectWorktree(gitDir, git, isolation);
@@ -768,7 +793,11 @@ export async function addPagesWorktree(
   // The index starts empty after `--no-checkout`: read it from the branch, as the
   // mind, so the mind's files show as its changes against the branch.
   if (relink)
-    await gitExec(["reset", "-q"], await mindWorktree(mindName, mindDir, isolation), isolation);
+    await gitExec(
+      ["reset", "-q"],
+      await mindWorktree(mindName, mindDir, dir, isolation),
+      isolation,
+    );
 }
 
 /** Remove the worktree and branch for a mind. */
@@ -784,7 +813,7 @@ export async function removePagesWorktree(
   // `worktree remove --force` deletes the tree as root: never through a swapped link.
   let wt: string | null = worktreePath(mindDir);
   try {
-    wt = (await mindWorktree(mindName, mindDir, isolation)).cwd;
+    if (isolation?.isIsolationEnabled()) wt = await isolation.containMindPath(mindName, wt);
   } catch (err) {
     if (existsSync(wt)) {
       console.warn(`[pages] refused ${mindName}'s worktree: ${(err as Error).message}`);
@@ -1170,6 +1199,9 @@ const UNVERIFIED_WORKTREE: Refusal = {
     "a fresh worktree (your files stay in the copy you moved), then try again.",
 };
 
+/** How daemon-side git reaches a mind's worktree, for tests to drive. */
+export const WORKTREE_GIT = { mindWorktree, gitExec };
+
 /** Every refusal a mind can be given about its worktree's git state, for tests to read. */
 export const REFUSALS = {
   refusedWorktree,
@@ -1313,7 +1345,7 @@ export async function pagesMerge(
     const dir = pagesRepoDir(dataDir);
     let wt: GitOpts;
     try {
-      wt = await mindWorktree(mindName, mindDir, isolation);
+      wt = await mindWorktree(mindName, mindDir, pagesRepoDir(dataDir), isolation);
     } catch (err) {
       return refusedWorktree(mindName, err);
     }
@@ -1399,7 +1431,7 @@ export async function pagesPull(
   return withPagesLock(async () => {
     let wt: GitOpts;
     try {
-      wt = await mindWorktree(mindName, mindDir, isolation);
+      wt = await mindWorktree(mindName, mindDir, pagesRepoDir(dataDir), isolation);
     } catch (err) {
       return refusedWorktree(mindName, err);
     }
@@ -1442,7 +1474,7 @@ export async function pagesPullAndMerge(
     const dir = pagesRepoDir(dataDir);
     let wt: GitOpts;
     try {
-      wt = await mindWorktree(mindName, mindDir, isolation);
+      wt = await mindWorktree(mindName, mindDir, pagesRepoDir(dataDir), isolation);
     } catch (err) {
       return refusedWorktree(mindName, err);
     }
@@ -1595,8 +1627,7 @@ export async function hasUnpublishedSharedChanges(
 ): Promise<boolean> {
   if (!existsSync(resolve(worktreePath(mindDir), ".git"))) return false;
   try {
-    const wt = await mindWorktree(mindName, mindDir, isolation);
-    if (!worktreeGitDir(pagesRepoDir(dataDir), wt.cwd)) return false;
+    const wt = await mindWorktree(mindName, mindDir, pagesRepoDir(dataDir), isolation);
     const status = await gitExec(["--no-optional-locks", "status", "--porcelain"], wt, isolation);
     if (status.trim()) return true;
     return !!(await gitExec(["diff", "--name-only", "main...HEAD"], wt, isolation)).trim();
@@ -1616,8 +1647,7 @@ export async function pagesStatus(
   dataDir: string,
   isolation?: IsolationInfo,
 ): Promise<string> {
-  const wt = await mindWorktree(mindName, mindDir, isolation);
-  if (!worktreeGitDir(pagesRepoDir(dataDir), wt.cwd)) throw new Error(UNVERIFIED_WORKTREE.message);
+  const wt = await mindWorktree(mindName, mindDir, pagesRepoDir(dataDir), isolation);
 
   // Get files on main and files on the mind's branch (including uncommitted)
   const errors: Error[] = [];
@@ -1681,14 +1711,15 @@ export async function pagesStatus(
   return lines.join("\n");
 }
 
-/** Show recent commit history on main. */
+/** Show recent commit history on main, read from the repo, never a mind's worktree. */
 export async function pagesLog(
-  mindName: string,
-  mindDir: string,
+  dataDir: string,
   limit = 20,
   isolation?: IsolationInfo,
 ): Promise<string> {
-  const wt = await mindWorktree(mindName, mindDir, isolation);
-  const output = (await gitExec(["log", "--oneline", "main", `-${limit}`], wt, isolation)).trim();
+  const dir = pagesRepoDir(dataDir);
+  const output = (
+    await gitExec(["log", "--oneline", "main", `-${limit}`], { cwd: dir }, isolation)
+  ).trim();
   return output || "No history.";
 }
