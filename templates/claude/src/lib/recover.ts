@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ChannelEntry } from "./message-channel.js";
 import type { MessageChannelEntry, MessageIdEntry } from "./stream-consumer.js";
@@ -61,10 +62,12 @@ export function relockstepMessageIds(
 ): MessageIdEntry[] {
   const idBySeq = new Map(oldMessageIds.map((e) => [e.seq, e.id]));
   existingMessageIds.push(
-    ...pending.map((entry) => ({
-      id: idBySeq.get(entry.seq),
-      seq: push(transform(entry.msg)),
-    })),
+    ...pending.map((entry) => {
+      // A fresh uuid: the fresh stream's `result` lists the message by it (see
+      // stream-consumer.ts), and the old one is already in the session's transcript.
+      const uuid = randomUUID();
+      return { id: idBySeq.get(entry.seq), seq: push({ ...transform(entry.msg), uuid }), uuid };
+    }),
   );
   return existingMessageIds;
 }
