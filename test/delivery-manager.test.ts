@@ -12,8 +12,11 @@ import {
 } from "../packages/daemon/src/lib/events/conversation-events.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 
+/** Each mind its own port: a random one can collide with an earlier mind's. */
+let nextTestPort = 4100;
+
 function createMindWithRoutes(config: RoutingConfig | object): string {
-  const port = 4100 + Math.floor(Math.random() * 1000);
+  const port = nextTestPort++;
   const name = `dm-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   addMind(name, port);
   const dir = resolve(process.env.VOLUTE_HOME!, "minds", name);

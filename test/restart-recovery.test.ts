@@ -19,6 +19,7 @@ import {
   voluteSystemDir,
 } from "../packages/daemon/src/lib/mind/registry.js";
 import log from "../packages/daemon/src/lib/util/logger.js";
+import { warmDeliveryPath } from "./helpers/warm-delivery.js";
 
 // #1033: both managers cleared the restart budget when the child was *spawned*,
 // so a child that started and died immediately reset its own budget every time —
@@ -195,6 +196,10 @@ describe("crash recovery wiring", () => {
   });
 
   describe("MindManager", () => {
+    // The crash handler imports its lazy module graph before it counts the crash; cold,
+    // that outlasts the 500ms these tests wait (#1289).
+    before(warmDeliveryPath);
+
     function fakeChild(): EventEmitter & { pid: number } {
       const child = new EventEmitter() as EventEmitter & { pid: number };
       child.pid = 0;

@@ -11,8 +11,11 @@ import {
 } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 
+/** Each mind its own port, clear of the fixed 4199 below: a random one can collide. */
+let nextTestPort = 4200;
+
 function createMindWithRoutes(config: RoutingConfig | object): string {
-  const port = 4100 + Math.floor(Math.random() * 1000);
+  const port = nextTestPort++;
   const name = `test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   addMind(name, port);
   const dir = resolve(process.env.VOLUTE_HOME!, "minds", name);
