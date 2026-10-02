@@ -65,7 +65,7 @@ export function npmInstallEnv(cwd: string): NodeJS.ProcessEnv {
 export type NpmRunner = (
   cmd: string,
   args: string[],
-  options: { cwd: string; env?: NodeJS.ProcessEnv },
+  options: { cwd: string; env?: NodeJS.ProcessEnv; supervised?: boolean },
 ) => Promise<unknown>;
 
 /** One npm install attempt, wrapped for low priority and (under isolation) for the mind's uid. */
@@ -80,8 +80,12 @@ async function runNpmInstall(
   if (isIsolationEnabled()) {
     // Re-wrapped per attempt: the argv differs between attempts, and the
     // isolation wrapper embeds it.
-    const [wrappedCmd, wrappedArgs] = await wrapForIsolation(cmd, priorityArgs, mindName);
-    await run(wrappedCmd, wrappedArgs, { cwd, env });
+    const [wrappedCmd, wrappedArgs, supervised] = await wrapForIsolation(
+      cmd,
+      priorityArgs,
+      mindName,
+    );
+    await run(wrappedCmd, wrappedArgs, { cwd, env, supervised });
   } else {
     await run(cmd, priorityArgs, { cwd, env });
   }

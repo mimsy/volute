@@ -31,6 +31,7 @@ import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { buildMindBaseEnv, type IsolationMode } from "../util/mind-env.js";
+import { isRunuser, killRemainder, stopGroup } from "../util/process-group.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
 import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
@@ -108,10 +109,10 @@ export async function wrapMindServer(
   cmd: string,
   args: string[],
   opts: { name: string; template?: string; dir: string; allowWrite: string[] },
-): Promise<{ cmd: string; args: string[]; isolationMode: IsolationMode }> {
+): Promise<{ cmd: string; args: string[]; isolationMode: IsolationMode; supervised: boolean }> {
   if (isIsolationEnabled()) {
-    const [wrappedCmd, wrappedArgs] = await wrapForIsolation(cmd, args, opts.name);
-    return { cmd: wrappedCmd, args: wrappedArgs, isolationMode: "user" };
+    const [wrappedCmd, wrappedArgs, supervised] = await wrapForIsolation(cmd, args, opts.name);
+    return { cmd: wrappedCmd, args: wrappedArgs, isolationMode: "user", supervised };
   }
   if (isSandboxEnabled() && opts.template !== "codex") {
     // Codex minds can't use @anthropic-ai/sandbox-runtime — it blocks Mach IPC
@@ -127,9 +128,9 @@ export async function wrapMindServer(
     );
     // wrapForSandbox hands the command back unwrapped when it degrades.
     const isolationMode = wrappedCmd === cmd ? "none" : "sandbox";
-    return { cmd: wrappedCmd, args: wrappedArgs, isolationMode };
+    return { cmd: wrappedCmd, args: wrappedArgs, isolationMode, supervised: false };
   }
-  return { cmd, args, isolationMode: "none" };
+  return { cmd, args, isolationMode: "none", supervised: false };
 }
 
 /**
@@ -186,9 +187,14 @@ export function composeMindEnv(opts: {
   };
 }
 
+/** How long a stopping mind gets between SIGTERM and SIGKILL. */
+const STOP_GRACE_MS = 5000;
+
 type TrackedMind = {
   child: ChildProcess;
   port: number;
+  /** A supervisor (`runuser`) leads the mind's process group — see `terminateGroup`. */
+  supervised: boolean;
 };
 
 /**
@@ -389,8 +395,10 @@ export class MindManager {
             const { stdout } = await execFileAsync("ps", ["-p", String(stalePid), "-o", "args="]);
             if (stdout.includes("server.ts")) {
               mlog.warn(`killing stale mind process ${stalePid} for ${name}`);
-              process.kill(-stalePid, "SIGTERM");
-              await new Promise((r) => setTimeout(r, 500));
+              await stopGroup(stalePid, {
+                spareLeader: await isRunuser(stalePid),
+                graceMs: STOP_GRACE_MS,
+              });
             } else {
               mlog.debug(`stale PID ${stalePid} for ${name} is not a mind process, skipping`);
             }
@@ -413,7 +421,6 @@ export class MindManager {
       if (res.ok) {
         mlog.warn(`killing orphan process on port ${port}`);
         await killProcessOnPort(port);
-        await new Promise((r) => setTimeout(r, 500));
       }
     } catch {
       // Port not in use — good
@@ -477,6 +484,7 @@ export class MindManager {
       cmd: spawnCmd,
       args: spawnArgs,
       isolationMode,
+      supervised,
     } = await wrapMindServer(baseBin, baseArgs, {
       name,
       template: target.template,
@@ -655,7 +663,11 @@ export class MindManager {
 
     const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
-    this.minds.set(name, { child, port });
+    this.minds.set(name, {
+      child,
+      port,
+      supervised,
+    });
 
     // Pipe output to log file and check for listening
     child.stdout?.pipe(logStream);
@@ -742,9 +754,7 @@ export class MindManager {
       });
     } catch (err) {
       this.minds.delete(name);
-      try {
-        child.kill();
-      } catch {}
+      await stopGroup(child, { spareLeader: supervised, graceMs: STOP_GRACE_MS });
       throw err;
     }
 
@@ -1076,27 +1086,9 @@ export class MindManager {
       const { child } = tracked;
       this.minds.delete(name);
 
-      await new Promise<void>((resolve) => {
-        // Force kill after 5s — but disarm it on a clean exit so a stray
-        // group-SIGKILL can't later fire against a reused pgid.
-        const killTimer = setTimeout(() => {
-          try {
-            process.kill(-child.pid!, "SIGKILL");
-          } catch {}
-          resolve();
-        }, 5000);
-        child.on("exit", () => {
-          clearTimeout(killTimer);
-          resolve();
-        });
-        try {
-          // Kill the entire process group (node + any children it spawns)
-          process.kill(-child.pid!, "SIGTERM");
-        } catch {
-          clearTimeout(killTimer);
-          resolve();
-        }
-      });
+      // SIGTERM the group (past runuser, whose own SIGTERM handling would SIGKILL
+      // the mind 2s in — #1364), give it 5s, then SIGKILL whatever is left.
+      await stopGroup(child, { spareLeader: tracked.supervised, graceMs: STOP_GRACE_MS });
 
       this.stopping.delete(name);
     }
@@ -1205,30 +1197,54 @@ export class MindManager {
 }
 
 async function killProcessOnPort(port: number): Promise<void> {
-  try {
-    const { stdout } = await execFileAsync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
-    const pids = new Set<number>();
-    for (const line of stdout.trim().split("\n").filter(Boolean)) {
-      const pid = parseInt(line, 10);
-      pids.add(pid);
-      // Find the process group to kill supervisors/wrappers too
-      try {
-        const { stdout: psOut } = await execFileAsync("ps", ["-p", String(pid), "-o", "pgid="]);
-        const pgid = parseInt(psOut.trim(), 10);
-        if (pgid > 1) pids.add(pgid);
-      } catch {}
+  const listeners = async () => {
+    try {
+      const { stdout } = await execFileAsync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
+      return stdout.trim().split("\n").filter(Boolean).map(Number);
+    } catch {
+      return []; // lsof exits 1 when nothing listens
     }
-    for (const pid of pids) {
-      try {
-        process.kill(-pid, "SIGTERM");
-      } catch {}
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {}
-    }
-  } catch {
-    // lsof may fail if no process on port — expected
+  };
+  const groups = new Set<number>();
+  for (const pid of await listeners()) {
+    // Find the process group to stop supervisors/wrappers too
+    try {
+      const { stdout: psOut } = await execFileAsync("ps", ["-p", String(pid), "-o", "pgid="]);
+      const pgid = parseInt(psOut.trim(), 10);
+      if (pgid > 1) {
+        groups.add(pgid);
+        continue;
+      }
+    } catch {}
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {}
   }
+  await Promise.all(
+    [...groups].map(async (pgid) =>
+      // Supervised is read off the process itself: an orphan from a previous
+      // daemon was started by whatever wrap that daemon used.
+      stopGroup(pgid, { spareLeader: await isRunuser(pgid), graceMs: STOP_GRACE_MS }),
+    ),
+  );
+  // The new server binds this port next: wait, bounded, for it to come free.
+  const waitFree = async (ms: number) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (!(await listeners()).length) return true;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  };
+  if (await waitFree(STOP_GRACE_MS)) return;
+  // Still held: SIGKILL now, rather than leave it to stopGroup's deferred check.
+  for (const pid of await listeners()) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+  await Promise.all([...groups].map((pgid) => killRemainder(pgid, { leaderAlive: false })));
+  if (!(await waitFree(1000))) mlog.warn(`port ${port} is still held after SIGKILL`);
 }
 
 let instance: MindManager | null = null;

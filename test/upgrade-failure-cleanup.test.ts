@@ -178,7 +178,7 @@ describe("daemon git in a mind's repo runs as the mind (#961, #1284)", () => {
   // mindGitOpts, and fails.
   const NOT_GIT: Record<string, Record<string, number>> = {
     // npm itself, in the isolation-wrapped (or unwrapped, isolation off) runner.
-    "mind/npm-install.ts": { "{ cwd, env }": 2 },
+    "mind/npm-install.ts": { "{ cwd, env, supervised }": 1, "{ cwd, env }": 1 },
     // The spirit's first npm install, as the host, before its user exists.
     "mind/spirit.ts": { "{ cwd: dir, env: hostNpmEnv() }": 1 },
     // merge-file on the daemon's own temp files, in a fresh mkdtemp dir with repo

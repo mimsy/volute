@@ -33,15 +33,17 @@ export async function spawnServer(
   cwd: string,
   port: number,
   options?: { detached?: boolean; logDir?: string; mindName?: string; template?: string },
-): Promise<SpawnResult> {
+): Promise<(NonNullable<SpawnResult> & { supervised: boolean }) | null> {
   // Run node directly with tsx as an import loader rather than the tsx bin
   // shim, which forks a second idle node process (~60MB RSS). The bare `tsx`
   // specifier resolves against the spawn cwd (the mind directory).
   let cmd = process.env.VOLUTE_NODE_PATH ?? process.execPath;
   let args = ["--import", "tsx", "src/server.ts", "--port", String(port)];
+  // Whether a supervisor (`runuser`) leads the group a stop must signal past (#1364).
+  let supervised = false;
   if (options?.mindName) {
     if (isIsolationEnabled()) {
-      [cmd, args] = await wrapForIsolation(cmd, args, options.mindName);
+      [cmd, args, supervised] = await wrapForIsolation(cmd, args, options.mindName);
     } else if (isSandboxEnabled() && options.template !== "codex") {
       [cmd, args] = await wrapForSandbox(cmd, args, cwd, options.mindName, [cwd, mindTmpDir(cwd)]);
     }
@@ -52,10 +54,10 @@ export async function spawnServer(
   // strip the host's ~/.gitconfig and npm config from a process that legitimately
   // runs as the daemon's user.
   if (isIsolationEnabled()) env.HOME = resolve(cwd, "home");
-  if (options?.detached) {
-    return spawnDetached(cmd, args, cwd, env, options.logDir);
-  }
-  return spawnAttached(cmd, args, cwd, env);
+  const result = options?.detached
+    ? await spawnDetached(cmd, args, cwd, env, options.logDir)
+    : await spawnAttached(cmd, args, cwd, env);
+  return result && { ...result, supervised };
 }
 
 function spawnAttached(

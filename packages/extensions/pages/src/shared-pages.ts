@@ -30,6 +30,7 @@ import { chownTree } from "@volute/daemon/lib/util/chown-tree.js";
 import logger from "@volute/daemon/lib/util/logger.js";
 import { buildMindBaseEnv } from "@volute/daemon/lib/util/mind-env.js";
 import { resolveRealWithinBase } from "@volute/daemon/lib/util/paths.js";
+import { trackChild } from "@volute/daemon/lib/util/tracked-children.js";
 import { isMultiplyLinkedFile } from "./ownership.js";
 
 const log = logger.child("pages");
@@ -39,7 +40,11 @@ export type IsolationInfo = {
   isIsolationEnabled: () => boolean;
   getMindUser: (name: string) => string;
   containMindPath: (name: string, path: string) => Promise<string>;
-  wrapForIsolation: (cmd: string, args: string[], name: string) => Promise<[string, string[]]>;
+  wrapForIsolation: (
+    cmd: string,
+    args: string[],
+    name: string,
+  ) => Promise<[cmd: string, args: string[], supervised?: boolean]>;
 };
 
 /** Extract IsolationInfo from an ExtensionContext-shaped object. */
@@ -127,9 +132,10 @@ async function gitExec(args: string[], opts: GitOpts, isolation?: IsolationInfo)
   if (isIso) prefix.push("-c", "safe.directory=*");
   const env = buildMindBaseEnv();
   let [cmd, argv] = ["git", [...prefix, ...args]];
+  let supervised: boolean | undefined;
   if (isIso && opts.asMind) {
     argv = [...prefix, "-c", "gc.auto=0", "-c", "maintenance.auto=false", ...args];
-    [cmd, argv] = await isolation!.wrapForIsolation(cmd, argv, opts.asMind.name);
+    [cmd, argv, supervised] = await isolation!.wrapForIsolation(cmd, argv, opts.asMind.name);
     env.HOME = opts.asMind.home;
   } else if (opts.worktree) {
     env.GIT_DIR = opts.worktree.gitDir;
@@ -138,7 +144,7 @@ async function gitExec(args: string[], opts: GitOpts, isolation?: IsolationInfo)
   }
   return new Promise((resolve, reject) => {
     const execOpts = { cwd: opts.cwd, env, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_OUTPUT };
-    execFileCb(cmd, argv, execOpts, (err, stdout, stderr) => {
+    const child = execFileCb(cmd, argv, execOpts, (err, stdout, stderr) => {
       if (err) {
         const e = err as Error & { stderr?: string; stdout?: string };
         e.stderr = stderr;
@@ -148,6 +154,8 @@ async function gitExec(args: string[], opts: GitOpts, isolation?: IsolationInfo)
         resolve(stdout);
       }
     });
+    // So a daemon shutdown stops it with a grace (#1364).
+    trackChild(child, { group: false, supervised: !!supervised });
   });
 }
 

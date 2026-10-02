@@ -54,6 +54,7 @@ import {
 import { computeTemplateHash } from "../template/template-hash.js";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
+import { stopGroup } from "../util/process-group.js";
 import { fireWebhook } from "../webhook.js";
 import { consolidateMemory } from "./consolidate.js";
 import { defaultHeartbeatSchedule, setupDefaultDreaming } from "./default-autonomy.js";
@@ -251,9 +252,8 @@ async function mergeVariantHeld(params: MergeVariantParams): Promise<VariantMerg
       };
     }
     const verified = await verify(result.actualPort);
-    try {
-      process.kill(-result.child.pid!, "SIGTERM");
-    } catch {}
+    // Awaited, so the verify server's own shutdown is over before the merge starts.
+    await stopGroup(result.child, { spareLeader: result.supervised, graceMs: 5000 });
     if (!verified) {
       return {
         status: "verify_failed",

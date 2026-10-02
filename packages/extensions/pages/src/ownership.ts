@@ -21,6 +21,7 @@
 import { execFile } from "node:child_process";
 import { realpathSync, statSync } from "node:fs";
 import { basename, dirname, resolve, sep } from "node:path";
+import { trackChild } from "@volute/daemon/lib/util/tracked-children.js";
 
 /** The slice of `ExtensionContext` this needs. Structural, so any ctx satisfies it. */
 export type MindOwnership = {
@@ -33,7 +34,8 @@ export type ChownExec = (cmd: string, args: string[]) => Promise<void>;
 /** Async by rule: sync exec on a daemon request path blocks the loop for every mind. */
 const defaultExec: ChownExec = (cmd, args) =>
   new Promise((res, rej) => {
-    execFile(cmd, args, (err) => (err ? rej(err) : res()));
+    const child = execFile(cmd, args, (err) => (err ? rej(err) : res()));
+    trackChild(child, { group: false, supervised: false });
   });
 
 /**

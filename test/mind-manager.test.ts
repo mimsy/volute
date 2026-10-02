@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import { MindManager } from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import log from "../packages/daemon/src/lib/util/logger.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -101,33 +103,62 @@ describe("MindManager crash-recovery exit guard", () => {
   });
 });
 
-describe("MindManager.stopMind kill timer", () => {
-  it("clears the SIGKILL timer on a clean exit", async () => {
-    await addMind("stopper-test", 4993);
-    const killSignals: string[] = [];
+describe("MindManager.stopMind signals", () => {
+  /**
+   * Stop a tracked mind whose process is a real detached `sh` with a `sleep`
+   * below it, with process.kill stubbed so nothing is actually signalled; returns
+   * what was sent and logged.
+   */
+  async function stopTracked(
+    supervised: boolean,
+  ): Promise<{ sent: [number, string][]; logs: string[]; pgid: number }> {
+    const name = `stopper-${Math.random().toString(36).slice(2, 8)}`;
+    await addMind(name, 4993);
+    const child = spawn("sh", ["-c", "sleep 30 & wait"], { detached: true, stdio: "ignore" });
+    const pgid = child.pid!;
+    await delay(100); // let sh fork the sleep
+    const sent: [number, string][] = [];
+    const logs: string[] = [];
     const origKill = process.kill.bind(process);
-    // Stub process.kill so the fake pid never touches a real process group.
-    (process as AnyMgr).kill = (_pid: number, sig?: string | number) => {
-      if (typeof sig === "string") killSignals.push(sig);
+    (process as AnyMgr).kill = (pid: number, sig?: string | number) => {
+      if (typeof sig === "string") sent.push([pid, sig]);
       return true;
     };
+    log.setOutput((line) => logs.push(line));
     try {
       const mgr = new MindManager() as AnyMgr;
-      const child = new EventEmitter() as AnyMgr;
-      child.pid = 999999;
-      mgr.minds.set("stopper-test", { child, port: 4993 });
-
-      const p = mgr.stopMind("stopper-test");
-      // Let withLock's microtask run so the exit listener + SIGTERM are wired up.
-      await delay(5);
-      child.emit("exit", 0);
+      mgr.minds.set(name, { child, port: 4993, supervised });
+      const p = mgr.stopMind(name);
+      await delay(50); // withLock + the group scan
+      (process as AnyMgr).kill = origKill;
+      process.kill(-pgid, "SIGKILL"); // end it for real, as the stub didn't
       await p;
-
-      assert.ok(killSignals.includes("SIGTERM"), "sent SIGTERM to the group");
-      assert.ok(!killSignals.includes("SIGKILL"), "clean exit disarms the SIGKILL timer");
+      return { sent, logs, pgid };
     } finally {
       (process as AnyMgr).kill = origKill;
-      await removeMind("stopper-test");
+      log.setOutput((line) => process.stderr.write(`${line}\n`));
+      await removeMind(name);
+    }
+  }
+
+  it("SIGTERMs an unsupervised mind's group, and no SIGKILL follows its exit", async () => {
+    const { sent, logs, pgid } = await stopTracked(false);
+    assert.deepEqual(sent, [[-pgid, "SIGTERM"]]);
+    assert.ok(!logs.some((l) => l.includes("could not scan")), "no scan for an unsupervised stop");
+  });
+
+  it("signals a runuser-supervised mind past its leader (#1364)", async () => {
+    const { sent, logs, pgid } = await stopTracked(true);
+    assert.equal(sent.length, 1);
+    if (process.platform === "linux") {
+      // The sleep below the leader, never the leader or its group.
+      assert.notEqual(sent[0][0], pgid);
+      assert.ok(sent[0][0] > 0);
+      assert.equal(sent[0][1], "SIGTERM");
+    } else {
+      // No /proc to scan: the group fallback, and the log saying so.
+      assert.deepEqual(sent, [[-pgid, "SIGTERM"]]);
+      assert.ok(logs.some((l) => l.includes(`could not scan process group ${pgid}`)));
     }
   });
 });

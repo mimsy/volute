@@ -1,6 +1,8 @@
-import { execFile as execFileCb, execFileSync, spawn } from "node:child_process";
+import { type ChildProcess, execFile as execFileCb, execFileSync, spawn } from "node:child_process";
 import { wrapForIsolation } from "../mind/isolation.js";
 import { buildMindBaseEnv } from "./mind-env.js";
+import { terminateGroup } from "./process-group.js";
+import { trackChild } from "./tracked-children.js";
 
 /**
  * Grace between SIGTERM and SIGKILL for a timed-out child's process group —
@@ -75,11 +77,16 @@ export async function exec(
      * promise rejects with `timedOut: true`. See {@link execTimed}.
      */
     timeout?: number;
+    /**
+     * For a caller that wrapped `cmd` for isolation itself (no `mindName`): the
+     * wrap's own answer, so a shutdown signals past its `runuser` (#1364).
+     */
+    supervised?: boolean;
   },
 ): Promise<string> {
-  const [wrappedCmd, wrappedArgs] = options?.mindName
+  const [wrappedCmd, wrappedArgs, supervised] = options?.mindName
     ? await wrapForIsolation(cmd, args, options.mindName)
-    : [cmd, args];
+    : [cmd, args, options?.supervised ?? false];
   const env = { ...buildMindBaseEnv(), ...options?.env };
   // The base already withholds the token, so this only matters when a caller's own
   // env re-admits it — which is exactly the failure this PR is undoing, and a default
@@ -91,10 +98,13 @@ export async function exec(
   // scheduled mind script is precisely the mind-authored child #966 is about, and
   // it is the one child here that is *always* mind-authored.
   if (options?.timeout) {
-    return execTimed(wrappedCmd, wrappedArgs, options.timeout, env, options);
+    return execTimed(wrappedCmd, wrappedArgs, options.timeout, env, {
+      ...options,
+      spareLeader: supervised,
+    });
   }
   return new Promise((resolve, reject) => {
-    const child = execFileCb(
+    const child: ChildProcess = execFileCb(
       wrappedCmd,
       wrappedArgs,
       {
@@ -112,6 +122,7 @@ export async function exec(
         }
       },
     );
+    trackChild(child, { group: false, supervised });
     if (options?.stdin !== undefined && child.stdin) {
       // Discard stdin stream errors. EPIPE here means the child exited without
       // reading its input, which is legitimate — a hook may not want stdin at all —
@@ -168,7 +179,13 @@ function execTimed(
    * or a mind's lifecycle hook, the mind-authored code #966 exists for.
    */
   env: NodeJS.ProcessEnv,
-  options: { cwd?: string; maxBuffer?: number; stdin?: string | Buffer },
+  options: {
+    cwd?: string;
+    maxBuffer?: number;
+    stdin?: string | Buffer;
+    /** The isolation wrap's `runuser` leads the group — see `terminateGroup`. */
+    spareLeader?: boolean;
+  },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
@@ -177,6 +194,7 @@ function execTimed(
       detached: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    trackChild(child, { group: true, supervised: !!options.spareLeader });
 
     let stdout = "";
     let stderr = "";
@@ -236,7 +254,10 @@ function execTimed(
 
     const timer = setTimeout(() => {
       timedOut = true;
-      killGroup("SIGTERM");
+      // Past runuser, which would SIGKILL the script 2s in rather than after the
+      // grace below (#1364). A failure is logged; the SIGKILL still follows.
+      if (pgid) void terminateGroup(pgid, { spareLeader: !!options.spareLeader });
+      else killGroup("SIGTERM");
       killTimer = setTimeout(() => {
         killGroup("SIGKILL");
         settle(
