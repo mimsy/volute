@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -200,5 +200,115 @@ describe("auto-commit batching", () => {
     assert.equal(git(["rev-parse", "HEAD"], sharedDir), head, "nothing committed");
     assert.match(git(["status", "--porcelain"], sharedDir), /^UU clash\.md/m);
     git(["rebase", "--abort"], sharedDir);
+  });
+});
+
+describe("auto-commit retries a failed commit (#1206)", () => {
+  const repoDir = join(tmpDir, "retry-repo");
+  const binDir = join(tmpDir, "retry-bin");
+  const gitLog = join(tmpDir, "retry-git-calls.txt");
+  const refuseOnce = join(tmpDir, "retry-refuse-once");
+
+  after(() => {
+    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
+  });
+
+  before(() => {
+    mkdirSync(repoDir, { recursive: true });
+    git(["init", "-b", "main"], repoDir);
+    git(["config", "user.email", "test@test.com"], repoDir);
+    git(["config", "user.name", "Test"], repoDir);
+    writeFileSync(join(repoDir, "SOUL.md"), "soul");
+    writeFileSync(join(repoDir, "MEMORY.md"), "memory");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "initial"], repoDir);
+    // Refuses one commit — the stand-in for a commit killed mid-flight.
+    const hook = join(repoDir, ".git", "hooks", "pre-commit");
+    writeFileSync(
+      hook,
+      `#!/bin/sh\nif [ -f "${refuseOnce}" ]; then rm "${refuseOnce}"; exit 1; fi\nexit 0\n`,
+    );
+    chmodSync(hook, 0o755);
+
+    // A `git` on PATH that records each call, so the test can count spawns.
+    const realGit = execFileSync("which", ["git"], { encoding: "utf-8" }).trim();
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      join(binDir, "git"),
+      `#!/bin/sh\necho "$*" >> "${gitLog}"\nexec "${realGit}" "$@"\n`,
+    );
+    chmodSync(join(binDir, "git"), 0o755);
+  });
+
+  it("re-queues a failed commit's files, so the next flush commits them", async () => {
+    const { trackFileChange, flushFileChanges, waitForCommits } = await import(
+      "../templates/_base/src/lib/auto-commit.js"
+    );
+    const before = git(["rev-list", "--count", "HEAD"], repoDir).trim();
+    writeFileSync(refuseOnce, "");
+    writeFileSync(join(repoDir, "SOUL.md"), "soul, revised");
+    trackFileChange("SOUL.md", repoDir);
+    await flushFileChanges(repoDir);
+    assert.equal(git(["rev-list", "--count", "HEAD"], repoDir).trim(), before, "refused");
+
+    // What the shutdown flush does.
+    await waitForCommits();
+    await flushFileChanges(repoDir);
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update SOUL.md");
+    assert.equal(git(["status", "--porcelain"], repoDir), "");
+  });
+
+  it("re-queues a failed pages/_system commit too", async () => {
+    const { trackFileChange, flushFileChanges, waitForCommits } = await import(
+      "../templates/_base/src/lib/auto-commit.js"
+    );
+    const sharedDir = join(repoDir, "pages", "_system");
+    mkdirSync(sharedDir, { recursive: true });
+    git(["init", "-b", "main"], sharedDir);
+    git(["config", "user.email", "test@test.com"], sharedDir);
+    git(["config", "user.name", "Test"], sharedDir);
+    writeFileSync(join(sharedDir, "index.md"), "page");
+    git(["add", "-A"], sharedDir);
+    git(["commit", "-m", "initial"], sharedDir);
+    const hook = join(sharedDir, ".git", "hooks", "pre-commit");
+    writeFileSync(
+      hook,
+      `#!/bin/sh\nif [ -f "${refuseOnce}" ]; then rm "${refuseOnce}"; exit 1; fi\nexit 0\n`,
+    );
+    chmodSync(hook, 0o755);
+
+    writeFileSync(refuseOnce, "");
+    writeFileSync(join(sharedDir, "index.md"), "page v2");
+    trackFileChange("pages/_system/index.md", repoDir);
+    await flushFileChanges(repoDir);
+    assert.equal(git(["log", "-1", "--format=%s"], sharedDir).trim(), "initial", "refused");
+
+    await waitForCommits();
+    await flushFileChanges(repoDir);
+    assert.equal(git(["log", "-1", "--format=%s"], sharedDir).trim(), "Update index.md");
+    assert.equal(git(["status", "--porcelain"], sharedDir), "");
+  });
+
+  it("stages a batch with one git add", async () => {
+    const { trackFileChange, flushFileChanges } = await import(
+      "../templates/_base/src/lib/auto-commit.js"
+    );
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${priorPath}`;
+    try {
+      writeFileSync(gitLog, "");
+      writeFileSync(join(repoDir, "SOUL.md"), "soul, again");
+      writeFileSync(join(repoDir, "MEMORY.md"), "memory, again");
+      trackFileChange("SOUL.md", repoDir);
+      trackFileChange("MEMORY.md", repoDir);
+      await flushFileChanges(repoDir);
+    } finally {
+      process.env.PATH = priorPath;
+    }
+    const adds = readFileSync(gitLog, "utf-8")
+      .split("\n")
+      .filter((l) => l.startsWith("add "));
+    assert.deepEqual(adds, ["add -- SOUL.md MEMORY.md"]);
+    assert.equal(git(["status", "--porcelain", "--", "SOUL.md", "MEMORY.md"], repoDir), "");
   });
 });

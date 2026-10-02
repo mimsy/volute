@@ -50,13 +50,6 @@ const mlog = log.child("minds");
 const execFileAsync = promisify(execFile);
 
 /**
- * How long a stopping mind gets between SIGTERM and SIGKILL. The templates' shutdown
- * budget (`SHUTDOWN_BUDGET_MS` in `_base/src/lib/startup.ts`) stays under it, so a
- * mind's shutdown commit finishes or gives up before the kill lands.
- */
-export const MIND_STOP_GRACE_MS = 5000;
-
-/**
  * The mind's own spend cap, as environment variables it can read.
  *
  * A mind currently meets its economics only as constraint — a notice at 80%, a
@@ -1084,14 +1077,14 @@ export class MindManager {
       this.minds.delete(name);
 
       await new Promise<void>((resolve) => {
-        // Force kill after the grace — but disarm it on a clean exit so a stray
+        // Force kill after 5s — but disarm it on a clean exit so a stray
         // group-SIGKILL can't later fire against a reused pgid.
         const killTimer = setTimeout(() => {
           try {
             process.kill(-child.pid!, "SIGKILL");
           } catch {}
           resolve();
-        }, MIND_STOP_GRACE_MS);
+        }, 5000);
         child.on("exit", () => {
           clearTimeout(killTimer);
           resolve();

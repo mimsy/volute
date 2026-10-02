@@ -142,6 +142,7 @@ export function createMind(options: {
   recollection?: boolean;
 }): {
   resolve: HandlerResolver;
+  flushFileChanges: () => Promise<void>;
   getContextInfo: () => Promise<ContextInfo>;
   getContextMessages: () => Promise<ContextMessages>;
   reapAllSessions: () => Promise<void>;
@@ -1239,6 +1240,7 @@ export function createMind(options: {
 
   return {
     resolve,
+    flushFileChanges: autoCommit.flushFileChanges,
     getContextInfo,
     getContextMessages,
     reapAllSessions,

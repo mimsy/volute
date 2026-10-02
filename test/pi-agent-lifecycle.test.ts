@@ -897,8 +897,8 @@ describe("pi shutdown", () => {
     // Source-level: exercising it would mean signalling a live server process.
     const server = readFileSync(resolvePath(repoRoot, "templates/pi/src/server.ts"), "utf-8");
     const shutdown = server.split("setupShutdown(")[1] ?? "";
-    // Asks git rather than trusting what was pending, so a killed turn-end commit is redone (#1206).
-    assert.match(shutdown, /commitHomeChanges\(resolve\("home"\)\)/);
+    // After waiting out an in-flight commit, whose killed files it then retries (#1206).
+    assert.match(shutdown, /waitForCommits\(\)\s*\.then\(\(\) => flushFileChanges\(/);
   });
 
   it("never restarts the mind on an identity edit", () => {

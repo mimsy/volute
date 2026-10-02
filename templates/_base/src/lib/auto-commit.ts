@@ -29,6 +29,28 @@ async function rebaseStopped(cwd: string): Promise<boolean> {
   return false;
 }
 
+/**
+ * Stage `paths` (relative to `cwd`) and report which staged and which were refused. One
+ * `git add` for the whole batch; only when it fails — typically because a path is
+ * gitignored, which fails the lot — is each path retried alone to tell them apart.
+ */
+async function stage(
+  paths: string[],
+  cwd: string,
+  args: (a: string[]) => string[] = (a) => a,
+): Promise<{ staged: string[]; blocked: string[] }> {
+  if ((await exec("git", args(["add", "--", ...paths]), cwd)).code === 0) {
+    return { staged: paths, blocked: [] };
+  }
+  const staged: string[] = [];
+  const blocked: string[] = [];
+  for (const p of paths) {
+    if ((await exec("git", args(["add", "--", p]), cwd)).code === 0) staged.push(p);
+    else blocked.push(p);
+  }
+  return { staged, blocked };
+}
+
 // Serialize git operations to prevent concurrent commits from conflicting
 let pending = Promise.resolve();
 
@@ -83,15 +105,7 @@ export function flushFileChanges(cwd?: string): Promise<void> {
     // must never be named alongside files that really did commit, or the mind is
     // told its work is safe when it isn't (#656).
     if (filesToCommit.length > 0) {
-      const staged: string[] = [];
-      const blocked: string[] = [];
-      for (const f of filesToCommit) {
-        if ((await exec("git", ["add", f], effectiveCwd)).code === 0) {
-          staged.push(f);
-        } else {
-          blocked.push(f);
-        }
-      }
+      const { staged, blocked } = await stage(filesToCommit, effectiveCwd);
       if (blocked.length > 0) {
         const pronoun = blocked.length === 1 ? "it" : "they";
         warn(
@@ -121,6 +135,10 @@ export function flushFileChanges(cwd?: string): Promise<void> {
             }
           }
         } else {
+          // Failed or killed mid-flight — a stop's group SIGTERM lands on this git when
+          // the turn-end commit is still running. Re-queue the files so the next flush
+          // (the shutdown flush, after waitForCommits) retries exactly this commit (#1206).
+          for (const f of staged) pendingFiles.add(f);
           log("auto-commit", `commit failed for: ${names}`);
         }
       }
@@ -135,16 +153,13 @@ export function flushFileChanges(cwd?: string): Promise<void> {
       const sharedPrefix = "pages/_system/";
       const mindName = process.env.VOLUTE_MIND ?? "unknown";
 
-      const sharedStaged: string[] = [];
-      const sharedBlocked: string[] = [];
-      for (const f of sharedToCommit) {
-        const sharedRelative = f.slice(sharedPrefix.length);
-        if ((await exec("git", gitArgs(["add", sharedRelative]), sharedCwd)).code === 0) {
-          sharedStaged.push(f);
-        } else {
-          sharedBlocked.push(f);
-        }
-      }
+      const shared = await stage(
+        sharedToCommit.map((f) => f.slice(sharedPrefix.length)),
+        sharedCwd,
+        gitArgs,
+      );
+      const sharedStaged = shared.staged.map((f) => sharedPrefix + f);
+      const sharedBlocked = shared.blocked.map((f) => sharedPrefix + f);
       if (sharedBlocked.length > 0) {
         const pronoun = sharedBlocked.length === 1 ? "it" : "they";
         warn(
@@ -168,6 +183,7 @@ export function flushFileChanges(cwd?: string): Promise<void> {
         ) {
           log("auto-commit", `[pages/_system] ${message}`);
         } else {
+          for (const f of sharedStaged) pendingSharedFiles.add(f);
           log("auto-commit", `[pages/_system] commit failed`);
         }
       }
@@ -177,7 +193,7 @@ export function flushFileChanges(cwd?: string): Promise<void> {
   return pending.then(() => {});
 }
 
-/** Settles once every commit already queued has finished or failed. */
+/** Settles once every commit already queued has finished or failed (re-queuing its files). */
 export function waitForCommits(): Promise<void> {
   return pending.then(() => {});
 }

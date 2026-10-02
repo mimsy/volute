@@ -480,22 +480,12 @@ export async function runShutdown(
 }
 
 /**
- * How long shutdown teardown may run before the process exits anyway. Kept under the
- * daemon's SIGKILL grace (`MIND_STOP_GRACE_MS`, 5s) so the shutdown commit and reap end
- * on our own terms rather than being cut off by a kill mid-write.
- */
-export const SHUTDOWN_BUDGET_MS = 4_000;
-
-/**
  * Wire SIGINT/SIGTERM to a graceful shutdown. Without `onShutdown` this exits
  * immediately (as before); pass a teardown to reap live SDK subprocesses before
  * exit so they aren't orphaned to PID 1 as `<defunct>` zombies. The handler is
  * idempotent so a second signal during teardown doesn't double-run it.
  */
-export function setupShutdown(
-  onShutdown?: () => Promise<void>,
-  timeoutMs = SHUTDOWN_BUDGET_MS,
-): void {
+export function setupShutdown(onShutdown?: () => Promise<void>, timeoutMs = 10_000): void {
   let shuttingDown = false;
   async function shutdown() {
     if (shuttingDown) return;

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { resolve } from "node:path";
-import { flushFileChanges, gitArgs, trackFileChange, waitForCommits } from "./auto-commit.js";
+import { gitArgs } from "./auto-commit.js";
 
 /**
  * Untrimmed, unlike auto-commit's `exec`: porcelain's first record can begin with a space
@@ -52,23 +52,4 @@ export async function changedPaths(cwd: string): Promise<string[]> {
     if ("RC".includes(record[0]) || "RC".includes(record[1])) add(records[++i]);
   }
   return paths;
-}
-
-/**
- * Commit everything git sees changed under home/ and in the pages worktree (which the
- * mind's own repo ignores), not just the files tracked since the last flush.
- *
- * Codex commits this way after every turn. Claude and pi commit their tracked files at
- * turn end and call this at shutdown: their turn-end commit starts after `done`, so a
- * stop that follows `done` closely signals the whole process group and kills that
- * commit's git mid-flight. The files it was carrying are no longer pending by then, so
- * only asking git again recovers them (#1206).
- */
-export async function commitHomeChanges(cwd: string): Promise<void> {
-  // Let an in-flight commit finish (or fail) first, so git is read after it, not mid-write.
-  await waitForCommits();
-  for (const dir of [cwd, resolve(cwd, "pages/_system")]) {
-    for (const path of await changedPaths(dir)) trackFileChange(path, cwd);
-  }
-  await flushFileChanges(cwd);
 }
