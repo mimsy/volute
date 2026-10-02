@@ -140,15 +140,24 @@ afterEach(async () => {
   clearConfigCache();
 });
 
-async function setup(): Promise<void> {
-  await addMind(MIND, (server.address() as AddressInfo).port);
+async function setup(
+  port = (server.address() as AddressInfo).port,
+  routes: object = { default: "main", gateUnmatched: false },
+): Promise<void> {
+  await addMind(MIND, port);
   const configDir = resolve(process.env.VOLUTE_HOME!, "minds", MIND, "home/.config");
   mkdirSync(configDir, { recursive: true });
-  writeFileSync(
-    resolve(configDir, "routes.json"),
-    JSON.stringify({ default: "main", gateUnmatched: false }),
-  );
+  writeFileSync(resolve(configDir, "routes.json"), JSON.stringify(routes));
   clearConfigCache(MIND);
+}
+
+/** Allocate then release a port so nothing is listening on it: a POST there is refused. */
+async function deadPort(): Promise<number> {
+  const s = createServer();
+  await new Promise<void>((r) => s.listen(0, "127.0.0.1", () => r()));
+  const port = (s.address() as AddressInfo).port;
+  await new Promise<void>((r) => s.close(() => r()));
+  return port;
 }
 
 async function waitFor<T>(read: () => T | Promise<T>, ms = 3000): Promise<T> {
@@ -814,6 +823,140 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
       .where(and(eq(mindHistory.mind, MIND), eq(mindHistory.content, "?")))
       .get();
     assert.equal(inbound!.turn_id, rows[0].id);
+  });
+
+  // A stopped mind's port refuses the connection: the POST reached nothing, so the turn it
+  // opened would otherwise stay `active` on a mind that isn't running (#1327).
+  it("a delivery whose connection is refused takes its turn back — nothing got it", async () => {
+    await setup(await deadPort());
+    const seen: MindEvent[] = [];
+    const unsubscribe = subscribeMindEvents(MIND, (e) => seen.push(e));
+    await deliverMessage(MIND, {
+      channel: "@tester",
+      sender: "tester",
+      senderId: null,
+      content: "anyone?",
+    });
+    const opened = await waitFor(() => seen.find((e) => e.type === "turn_created")?.turnId);
+    assert.ok(opened, "the delivery opened a turn before its POST");
+    assert.ok(
+      await waitFor(() => seen.some((e) => e.type === "turn_discarded" && e.turnId === opened)),
+      "and took it back when the connection was refused",
+    );
+    unsubscribe();
+    const db = await getDb();
+    assert.equal((await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length, 0);
+    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+    const inbound = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, MIND), eq(mindHistory.content, "anyone?")))
+      .get();
+    assert.equal(inbound!.turn_id, null);
+    // Still queued for when the mind is back.
+    const queued = await db.select().from(deliveryQueue).where(eq(deliveryQueue.mind, MIND)).all();
+    assert.equal(queued.length, 1);
+  });
+
+  it("a batch whose connection is refused takes its turn back — nothing got it", async () => {
+    await setup(await deadPort(), {
+      default: "main",
+      gateUnmatched: false,
+      threads: { main: { delivery: { mode: "batch", debounce: 0, maxWait: 0 } } },
+    });
+    const seen: MindEvent[] = [];
+    const unsubscribe = subscribeMindEvents(MIND, (e) => seen.push(e));
+    await deliverMessage(MIND, {
+      channel: "#commons",
+      sender: null,
+      senderId: null,
+      content: "x published a page",
+    });
+    const opened = await waitFor(() => seen.find((e) => e.type === "turn_created")?.turnId);
+    assert.ok(opened, "the batch opened a turn before its POST");
+    assert.ok(
+      await waitFor(() => seen.some((e) => e.type === "turn_discarded" && e.turnId === opened)),
+      "and took it back when the connection was refused",
+    );
+    unsubscribe();
+    const db = await getDb();
+    assert.equal((await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length, 0);
+    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+  });
+
+  it("a wake batch whose connection is refused takes its turn back — nothing got it", async () => {
+    await setup(await deadPort());
+    const historyId = await recordInbound(MIND, "@tester", "tester", null, "overnight");
+    assert.equal(
+      await deliverBatch(MIND, [
+        { channel: "@tester", sender: "tester", senderId: null, content: "overnight", historyId },
+      ]),
+      false,
+    );
+    const db = await getDb();
+    assert.ok(
+      await waitFor(
+        async () => (await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length === 0,
+      ),
+      "no turn is left behind",
+    );
+    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+  });
+
+  it("an event whose connection is refused takes its turn back — nothing got it", async () => {
+    await setup(await deadPort());
+    const seen: MindEvent[] = [];
+    const unsubscribe = subscribeMindEvents(MIND, (e) => seen.push(e));
+    const { delivered } = await deliverEvent(MIND, {
+      type: "schedule",
+      body: "tick",
+      thread: "main",
+    });
+    assert.equal(delivered, false);
+    const opened = seen.find((e) => e.type === "turn_created")?.turnId;
+    assert.ok(opened, "the event opened a turn before its POST");
+    assert.ok(
+      await waitFor(() => seen.some((e) => e.type === "turn_discarded" && e.turnId === opened)),
+      "and took it back when the connection was refused",
+    );
+    unsubscribe();
+    const db = await getDb();
+    assert.equal((await db.select().from(turns).where(eq(turns.mind, MIND)).all()).length, 0);
+    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+    await db.delete(systemEvents).where(eq(systemEvents.mind, MIND));
+  });
+
+  it("a refused connection folded into a running turn leaves it — unlike a 503, it wasn't read", async () => {
+    await setup(await deadPort());
+    const db = await getDb();
+    const { turnId: running } = await handleMindEvent(MIND, {
+      type: "text",
+      session: "main",
+      content: "working",
+    });
+    await deliverMessage(MIND, {
+      channel: "@tester",
+      sender: "tester",
+      senderId: null,
+      content: "unread",
+    });
+    // Its retry is scheduled after its POST failed: from then on it can only leave a turn.
+    assert.ok(
+      await waitFor(async () => {
+        const q = await db.select().from(deliveryQueue).where(eq(deliveryQueue.mind, MIND)).get();
+        return q?.next_attempt_at != null;
+      }),
+    );
+    const row = await waitFor(async () => {
+      const r = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, MIND), eq(mindHistory.content, "unread")))
+        .get();
+      return r && r.turn_id === null ? r : undefined;
+    });
+    assert.ok(row, "its row left the running turn");
+    assert.equal(getActiveTurnId(MIND, "main"), running, "the running turn is untouched");
   });
 
   it("the next delivery folds into a turn whose POST went unanswered — the mind may be running it", async () => {

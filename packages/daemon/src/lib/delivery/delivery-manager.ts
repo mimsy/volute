@@ -16,6 +16,7 @@ import {
 import {
   adoptInterrupted,
   closedTurnFor,
+  isConnectionRefused,
   linkRowsToTurn,
   markInterrupted,
   openDeliveredTurn,
@@ -2901,11 +2902,13 @@ export class DeliveryManager {
           `failed to ${posting ? "deliver" : "prepare delivery"} to ${mindName}`,
           log.errorData(err),
         );
+        const sent = posting && !isConnectionRefused(err);
         this.dropOutstanding(baseName, session, deliveryId);
-        if (entered?.interrupted && !posting) unmarkInterrupted(entered.turnId, deliveryId);
+        if (entered?.interrupted && !sent) unmarkInterrupted(entered.turnId, deliveryId);
         // Only if nothing was sent: a POST that failed to answer may be running, and stays —
-        // the next delivery folds into it, and the mind's `done` settles it.
-        if (entered && !posting) {
+        // the next delivery folds into it, and the mind's `done` settles it. A refused
+        // connection sent nothing (see `isConnectionRefused`).
+        if (entered && !sent) {
           if (entered.created) this.unfold(baseName, session, entered.turnId);
           void unlinkRefused(
             baseName,
@@ -3195,8 +3198,16 @@ export class DeliveryManager {
       } catch (err) {
         // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
         dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
-        // A POST that failed to answer may be running: its turn stays.
         this.dropOutstanding(baseName, session, deliveryId);
+        // A POST that failed to answer may be running: its turn stays. A refused connection
+        // sent nothing (see `isConnectionRefused`), so it is taken back like one never sent.
+        if (isConnectionRefused(err)) {
+          if (entered?.interrupted) unmarkInterrupted(entered.turnId, deliveryId);
+          if (entered) {
+            if (entered.created) this.unfold(baseName, session, entered.turnId);
+            void unlinkRefused(baseName, session, entered.turnId, rowIds(), entered.created);
+          }
+        }
         if (ownsSlot) releaseTurnSlot(baseName, session);
         this.unnoteWake(baseName, session, wakeAt);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);

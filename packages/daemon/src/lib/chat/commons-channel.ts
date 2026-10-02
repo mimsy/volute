@@ -1,6 +1,7 @@
 import { isMind, isSystemSpirit } from "@volute/api/user-type";
 import { getOrCreateMindUser, getOrCreateSystemUser, getUserByUsername } from "../auth.js";
 import { getSpiritName } from "../config/setup.js";
+import { receivesDeliveries } from "../delivery/fan-out.js";
 import { deliverMessage } from "../delivery/message-delivery.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import {
@@ -137,7 +138,11 @@ export async function announceToCommons(text: string): Promise<void> {
   // structured field, so suppressing self-echo would need a fragile name match. The rare
   // self-echo (still a sender-less event, not the spirit's voice) is accepted instead.
   const participants = await getParticipants(channelId);
-  const recipients = participants.filter((p) => isMind(p) || isSystemSpirit(p));
+  // A stopped mind is skipped, as fan-out skips it for what people say (#1327): delivered
+  // here, the POST to its dead port left a turn open on a mind that wasn't running.
+  const recipients = participants.filter(
+    (p) => (isMind(p) || isSystemSpirit(p)) && receivesDeliveries(p.username),
+  );
   // The routing slug follows the channel's actual name (`#commons` on new installs,
   // an earned name like `#system` on migrated houses), not a hardcoded string.
   const channel = `#${row.name}`;

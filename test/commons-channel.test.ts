@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -14,6 +15,10 @@ import {
   joinCommonsChannelForSpirit,
   resetCommonsChannelCache,
 } from "../packages/daemon/src/lib/chat/commons-channel.js";
+import {
+  initMindManager,
+  tryGetMindManager,
+} from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
@@ -33,6 +38,7 @@ import {
 import {
   activity,
   channels,
+  deliveryQueue,
   messages,
   mindHistory,
   systemEvents,
@@ -66,7 +72,20 @@ function writeCommonsRoutes(name: string, config: object): void {
   clearConfigCache(name);
 }
 
+/** The manager's private map of running minds — the thing `isUpOrRecovering` reads. */
+function tracked(): Map<string, { child: ChildProcess; port: number }> {
+  const manager = tryGetMindManager() ?? initMindManager();
+  return (manager as unknown as { minds: Map<string, { child: ChildProcess; port: number }> })
+    .minds;
+}
+
+/** Mark a mind as running without spawning a real process (its port stays dead). */
+function markRunning(name: string, port: number): void {
+  tracked().set(name, { child: {} as ChildProcess, port });
+}
+
 async function cleanup() {
+  for (const mind of TEST_MINDS) tracked().delete(mind);
   resetCommonsChannelCache();
   clearConfigCache();
   const db = await getDb();
@@ -77,6 +96,7 @@ async function cleanup() {
     await db.delete(activity).where(eq(activity.mind, mind));
     await db.delete(mindHistory).where(eq(mindHistory.mind, mind));
     await db.delete(systemEvents).where(eq(systemEvents.mind, mind));
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, mind));
     await removeMind(mind);
   }
   // Remove every channel so each test exercises fresh creation / resolution.
@@ -235,6 +255,7 @@ describe("commons channel", () => {
 
   it("announceToCommons delivers to mind participants sender-less on the channel path (#687)", async () => {
     await addMind("commons-mind", 4901, "sprouted");
+    markRunning("commons-mind", 4901);
     await joinCommonsChannelForMind("commons-mind");
     // Disable gating so the (dead-port) delivery still records the inbound: the mind never acks,
     // but recordInbound runs first on the normal channel path and captures the delivered shape.
@@ -277,8 +298,10 @@ describe("commons channel", () => {
     // must still reach it — on the same sender-less channel path minds get — because
     // removing that inclusion is exactly the regression this guards.
     await addSpirit("volute", 4906, "claude", "/tmp/spirit");
+    markRunning("volute", 4906);
     await joinCommonsChannelForSpirit();
     await addMind("commons-mind", 4901, "sprouted");
+    markRunning("commons-mind", 4901);
     await joinCommonsChannelForMind("commons-mind");
     // Disable gating so the (dead-port) delivery still records the inbound for both.
     writeCommonsRoutes("volute", { gateUnmatched: false });
@@ -318,6 +341,44 @@ describe("commons channel", () => {
     );
   });
 
+  it("announceToCommons skips a stopped mind, as fan-out does for what people say (#1327)", async () => {
+    // Delivered anyway, its POST to the dead port left a turn `active` on a mind that
+    // wasn't running.
+    await addMind("commons-mind", 4901, "sprouted");
+    await joinCommonsChannelForMind("commons-mind");
+    await addMind("commons-legacy", 4902, "sprouted");
+    markRunning("commons-legacy", 4902);
+    await joinCommonsChannelForMind("commons-legacy");
+    writeCommonsRoutes("commons-mind", { gateUnmatched: false });
+    writeCommonsRoutes("commons-legacy", { gateUnmatched: false });
+
+    await announceToCommons("atlas has joined");
+
+    // The running mind's delivery is the marker that announcing has gone out to everyone.
+    const db = await getDb();
+    const delivered = async (mind: string) =>
+      (
+        await db
+          .select()
+          .from(mindHistory)
+          .where(and(eq(mindHistory.mind, mind), eq(mindHistory.type, "inbound")))
+          .all()
+      ).some((r) => r.content?.includes("atlas has joined"));
+    let ok = false;
+    for (let i = 0; i < 50 && !ok; i++) {
+      ok = await delivered("commons-legacy");
+      if (!ok) await new Promise((res) => setTimeout(res, 20));
+    }
+    assert.ok(ok, "the running mind receives it");
+    assert.equal(await delivered("commons-mind"), false, "the stopped mind is skipped");
+    const queued = await db
+      .select()
+      .from(deliveryQueue)
+      .where(eq(deliveryQueue.mind, "commons-mind"))
+      .all();
+    assert.equal(queued.length, 0, "nothing is queued for it either");
+  });
+
   it("announceToCommons follows a renamed default channel's slug", async () => {
     // A house kept a proper name on its commons. The delivered routing slug must
     // track that name, not a hardcoded "#commons".
@@ -325,6 +386,7 @@ describe("commons channel", () => {
     await markChannelDefault(legacy.id);
     resetCommonsChannelCache();
     await addMind("commons-mind", 4901, "sprouted");
+    markRunning("commons-mind", 4901);
     await joinCommonsChannelForMind("commons-mind");
     writeCommonsRoutes("commons-mind", { gateUnmatched: false });
 
