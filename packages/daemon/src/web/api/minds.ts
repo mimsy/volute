@@ -18,7 +18,7 @@ import {
   recordNotice,
 } from "../../lib/chat/system-events.js";
 import { getSpiritName } from "../../lib/config/setup.js";
-import { getUpgradeBlocked } from "../../lib/daemon/auto-upgrade.js";
+import { clearUpgradeFailure, getUpgradeBlocked } from "../../lib/daemon/auto-upgrade.js";
 import {
   forgetCredentialDegraded,
   getCredentialDegraded,
@@ -468,12 +468,15 @@ const app = new Hono<AuthEnv>()
         const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
         const lastActiveAt = lastActiveMap.get(entry.name) ?? null;
         if (!privileged) return toPublicMind(entry, mindStatus, { hasPages, lastActiveAt });
+        const templateStale = isTemplateStale(entry);
         return {
           ...entry,
           ...mindStatus,
           hasPages,
-          templateStale: isTemplateStale(entry),
-          upgradeBlocked: getUpgradeBlocked(entry.name)?.reason,
+          templateStale,
+          // A blocked upgrade outlives nothing it blocked: once the template is current
+          // (upgraded by any path), there is no upgrade left to be blocked (#974).
+          upgradeBlocked: templateStale ? getUpgradeBlocked(entry.name)?.reason : undefined,
           credentialDegraded: credentialDegradedField(entry.name),
           lastActiveAt,
         };
@@ -520,13 +523,14 @@ const app = new Hono<AuthEnv>()
     // so `mind status` can show why a mind is silent (#573). Admin/system only.
     const notice = await latestEvent(name);
 
+    const templateStale = isTemplateStale(entry);
     return c.json({
       ...entry,
       ...mindStatus,
       variants: variantStatuses,
       hasPages,
-      templateStale: isTemplateStale(entry),
-      upgradeBlocked: getUpgradeBlocked(name)?.reason,
+      templateStale,
+      upgradeBlocked: templateStale ? getUpgradeBlocked(name)?.reason : undefined,
       credentialDegraded: credentialDegradedField(name),
       ...(notice && {
         lastNotice: {
@@ -1452,6 +1456,7 @@ const app = new Hono<AuthEnv>()
               result.message ?? "Merge conflicts detected. Resolve them, then run with continue.",
           });
         }
+        clearUpgradeFailure(mindName);
         return c.json({ ok: true, warning: result.warning });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to merge upgrade";
@@ -1490,6 +1495,7 @@ const app = new Hono<AuthEnv>()
             result.message ?? "Merge conflicts detected. Resolve them, then run with continue.",
         });
       }
+      clearUpgradeFailure(mindName);
       return c.json({ ok: true, warning: result.warning });
     } catch (err) {
       if (err instanceof UpgradeInProgressError || err instanceof UpgradeBlockedByJoinError) {

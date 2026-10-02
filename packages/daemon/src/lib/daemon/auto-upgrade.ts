@@ -54,6 +54,17 @@ export function getUpgradeBlocked(name: string): AutoUpgradeBlocked | undefined 
   return blocked.get(name);
 }
 
+/**
+ * Forget a mind's failure record after an upgrade succeeds, however it was run. The
+ * blocked notice tells the host to upgrade by hand; once that works, the badge, the
+ * attempt gate and the alert dedupe all describe a failure that is over (#974).
+ */
+export function clearUpgradeFailure(name: string): void {
+  blocked.delete(name);
+  failedThisRun.delete(name);
+  alertedReason.delete(name);
+}
+
 /** Test seam: forget every in-memory auto-upgrade failure/alert record. */
 export function resetAutoUpgradeState(): void {
   blocked.clear();
@@ -278,8 +289,7 @@ export async function autoUpgradeOne(
   // and the alert record — if this mind breaks again later, even in the same way,
   // that is news and gets its own alert. (pruneAutoUpgradeState does the same for a
   // mind fixed by hand, which leaves the eligible set instead of passing through here.)
-  failedThisRun.delete(entry.name);
-  alertedReason.delete(entry.name);
+  clearUpgradeFailure(entry.name);
 }
 
 /** Serialized auto-upgrade pass over stale, eligible minds. Never throws. */
