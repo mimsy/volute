@@ -13,7 +13,7 @@ import {
 } from "./mind/registry.js";
 import { computeMindTemplateHash } from "./mind/template-staleness.js";
 import { readVoluteConfig } from "./mind/volute-config.js";
-import { parseReleaseNotes } from "./release-notes.js";
+import { formatReleaseNotes, parseReleaseNotesSince } from "./release-notes.js";
 import { computeTemplateHash } from "./template/template-hash.js";
 import { getCurrentVersion } from "./update-check.js";
 import log from "./util/logger.js";
@@ -129,10 +129,12 @@ export function resetVersionNotifyState(): void {
   seeded = false;
   startedEarly.clear();
   inFlight.clear();
+  releaseNotes.clear();
 }
 
 /**
- * Tell one mind about the current Volute version, once, if it hasn't been told.
+ * Tell one mind about the current Volute version, once, if it hasn't been told — with
+ * the release notes of every version since the one it was last told about.
  *
  * Called by the boot pass for minds running then, and on every later start and wake —
  * so a mind that was stopped or asleep through an upgrade still learns what changed
@@ -174,12 +176,16 @@ export async function notifyMindOfVersion(
     } catch (err) {
       log.warn(`failed to compute template hash for ${tmpl}`, log.errorData(err));
     }
-    if (!releaseNotes.has(currentVersion)) {
-      releaseNotes.set(currentVersion, parseReleaseNotes(currentVersion));
+    // Everything since the version it was last told, not just this one (#1350).
+    if (!releaseNotes.has(told)) {
+      releaseNotes.set(
+        told,
+        formatReleaseNotes(parseReleaseNotesSince(told, currentVersion), told),
+      );
     }
     const message = formatNotification(
       currentVersion,
-      releaseNotes.get(currentVersion) ?? null,
+      releaseNotes.get(told) ?? null,
       shouldSuggestUpgrade(entry, currentHash),
       name,
       autoUpgradePending && readVoluteConfig(mindDir(name))?.upgrades !== "manual",
