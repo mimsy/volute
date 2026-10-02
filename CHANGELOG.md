@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.66.8](https://github.com/mimsy/volute/compare/volute-v0.66.7...volute-v0.66.8) (2026-10-02)
+
+
+### Bug Fixes
+
+* **events:** publish an outbound's row id so a re-publish never shows a send twice ([#1339](https://github.com/mimsy/volute/issues/1339)) ([e92aa66](https://github.com/mimsy/volute/commit/e92aa66a589dd8b4fa6f4894e8e1160da802cfe4))
+* hold crash recovery across skill npm installs, and count overlapping holds ([#1343](https://github.com/mimsy/volute/issues/1343)) ([2bcd23b](https://github.com/mimsy/volute/commit/2bcd23bb672cff035e9ca8db44ffbf81e6aeff4a))
+* key turns by process, and link a turn's trigger exactly or not at all ([#1342](https://github.com/mimsy/volute/issues/1342)) ([78abf6e](https://github.com/mimsy/volute/commit/78abf6ebfa57ab33cdf8b27479422062cca120ee))
+* **pages:** name git status's rebase --continue hint, and say running it still recovers ([#1338](https://github.com/mimsy/volute/issues/1338)) ([d1877f3](https://github.com/mimsy/volute/commit/d1877f3a3b279f24edf02628765586ad3b01ed28))
+* ship CHANGELOG.md and package.json, and read them only at the package root ([#1337](https://github.com/mimsy/volute/issues/1337)) ([e37a198](https://github.com/mimsy/volute/commit/e37a198519bb59ee66e9aa7205a1daf4dd10b949))
+
 ## [0.66.7](https://github.com/mimsy/volute/compare/volute-v0.66.6...volute-v0.66.7) (2026-10-02)
 
 
