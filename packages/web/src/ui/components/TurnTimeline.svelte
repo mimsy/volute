@@ -36,6 +36,7 @@ import {
   type TimelineItem as ToolTimelineItem,
 } from "../lib/tool-groups";
 import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
+import { showsRow, withLiveRows } from "../lib/turn-events";
 import { summaryIconCount, turnRailParts } from "../lib/turn-rail";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
@@ -204,6 +205,7 @@ function setStreaming(turnId: string, events: HistoryMessage[]) {
 }
 
 function appendStreamingEvent(turnId: string, event: HistoryMessage) {
+  if (showsRow(streamingEvents.get(turnId) ?? [], event)) return;
   const events = [...(streamingEvents.get(turnId) ?? []), event];
   streamingEvents.set(turnId, events);
   streamingGroups.set(
@@ -230,7 +232,8 @@ function buildHistoryMessage(
   overrides: Partial<HistoryMessage> = {},
 ): HistoryMessage {
   return {
-    id: nextSyntheticId--,
+    // An event naming its row (an outbound) keeps that id, so a re-publish updates it.
+    id: typeof d.id === "number" ? d.id : nextSyntheticId--,
     mind: (d.mind as string) ?? name ?? "",
     channel: (d.channel as string) ?? "",
     // Live mind-event envelopes still carry the routed thread as `session`.
@@ -346,7 +349,7 @@ async function resync() {
           .then((dbEvents) => {
             // A summary/done landing mid-fetch deletes streaming state; don't resurrect it.
             if (!streamingEvents.has(turnId)) return;
-            setStreaming(turnId, dbEvents);
+            setStreaming(turnId, withLiveRows(dbEvents, streamingEvents.get(turnId)));
           })
           .catch((err) => console.warn("[TurnTimeline] Failed to resync active turn events:", err));
       } else if (streamingEvents.has(turn.id)) {
@@ -410,14 +413,15 @@ function connectSSE() {
       pendingInbounds = [];
       lastEventAt.set(turnId, Date.now());
       // Fetch turn events from DB after a short delay to allow retroactive inbound tagging.
-      // DB events are authoritative — replace synthetic SSE events entirely.
-      // Any SSE events arriving after this .then() runs are appended normally.
+      // DB events are authoritative — replace synthetic SSE events entirely, keeping only
+      // live rows the read missed (withLiveRows). Any SSE events arriving after this .then()
+      // runs are appended normally.
       const turnMind = (d.mind as string) ?? name ?? "";
       new Promise((r) => setTimeout(r, 500))
         .then(() => fetchTurnEvents(turnMind, { turnId }))
         .then((dbEvents) => {
           if (!streamingEvents.has(turnId)) return; // turn already completed
-          setStreaming(turnId, dbEvents);
+          setStreaming(turnId, withLiveRows(dbEvents, streamingEvents.get(turnId)));
         })
         .catch((err) => console.warn("[TurnTimeline] Failed to fetch turn events:", err));
     } else if (eventType === "turn_discarded" && turnId) {
@@ -435,7 +439,9 @@ function connectSSE() {
         const runningId = turn.id;
         fetchTurnEvents(discardedMind, { turnId: runningId })
           .then((dbEvents) => {
-            if (streamingEvents.has(runningId)) setStreaming(runningId, dbEvents);
+            if (streamingEvents.has(runningId)) {
+              setStreaming(runningId, withLiveRows(dbEvents, streamingEvents.get(runningId)));
+            }
           })
           .catch((err) => console.warn("[TurnTimeline] Failed to refetch turn events:", err));
       }

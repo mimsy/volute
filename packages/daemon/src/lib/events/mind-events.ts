@@ -4,10 +4,16 @@ import log from "../util/logger.js";
  * In-process pub-sub for mind activity events. SSE endpoint subscribes per-mind;
  * daemon publishes when events arrive.
  *
- * MindEvent mirrors DaemonEvent (templates/_base/src/lib/daemon-client.ts) + { mind, createdAt }.
+ * MindEvent mirrors DaemonEvent (templates/_base/src/lib/daemon-client.ts)
+ * + { id, mind, createdAt }.
  * Keep these in sync when adding new event fields.
  */
 export type MindEvent = {
+  /**
+   * The event's mind_history row id, where a consumer must recognise a re-publish of the same
+   * row: an outbound is published at send time and again when a turn claims it (#1179).
+   */
+  id?: number;
   mind: string;
   type: string;
   session?: string;

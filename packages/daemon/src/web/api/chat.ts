@@ -362,10 +362,12 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
         messageId: message?.id != null ? String(message.id) : undefined,
       });
       // Published now, with its turn when known. A send whose thread had no turn yet is
-      // published again, with the turn, when its marker links it (linkToolResultToTurn).
+      // published again, with the turn, when its marker links it (linkToolResultToTurn) —
+      // under the same id, so a consumer updates the entry rather than adding a second.
       if (outboundId != null) {
         const mindKey = senderBase ?? senderName;
         publishMindEvent(mindKey, {
+          id: outboundId,
           mind: mindKey,
           type: "outbound",
           channel,

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { HistoryMessage } from "../packages/api/src/types.js";
-import { isEventTriggeredTurn } from "../packages/web/src/ui/lib/turn-events.js";
+import {
+  isEventTriggeredTurn,
+  showsRow,
+  withLiveRows,
+} from "../packages/web/src/ui/lib/turn-events.js";
 
 /**
  * The timeline labels a turn's closing text "reflection · private" when the turn was triggered
@@ -59,5 +63,24 @@ describe("isEventTriggeredTurn", () => {
   it("a turn with no source row at all is not an event turn", () => {
     assert.ok(!isEventTriggeredTurn([row(1, "tool_use"), row(2, "text")]));
     assert.ok(!isEventTriggeredTurn([]));
+  });
+});
+
+describe("live outbound rows (#1179)", () => {
+  it("a re-published outbound the turn already shows is not shown again", () => {
+    const shown = [row(10, "inbound"), row(11, "outbound", { turn_id: "t1" })];
+    assert.equal(showsRow(shown, row(11, "outbound", { turn_id: "t1" })), true);
+    assert.equal(showsRow(shown, row(12, "outbound")), false);
+    assert.equal(showsRow([row(-1, "text")], row(-1, "text")), false, "synthetic ids name no row");
+  });
+
+  it("a fetch keeps the live rows its read missed, and only those", () => {
+    const fetched = [row(10, "inbound"), row(11, "text")];
+    const live = [row(-3, "inbound"), row(11, "text"), row(12, "outbound", { turn_id: "t1" })];
+    assert.deepEqual(
+      withLiveRows(fetched, live).map((e) => e.id),
+      [10, 11, 12],
+    );
+    assert.equal(withLiveRows(fetched, undefined), fetched);
   });
 });
