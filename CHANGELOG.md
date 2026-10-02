@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.66.9](https://github.com/mimsy/volute/compare/volute-v0.66.8...volute-v0.66.9) (2026-10-02)
+
+
+### Bug Fixes
+
+* find bundled assets under Volute's root, and tell minds that start after an upgrade ([#1349](https://github.com/mimsy/volute/issues/1349)) ([cf7e067](https://github.com/mimsy/volute/commit/cf7e067960aab2ccc74afd55f03b4d6bbf996991))
+* give every pooled DB connection a busy timeout, and stop holding transactions across awaits ([#1348](https://github.com/mimsy/volute/issues/1348)) ([1bb4004](https://github.com/mimsy/volute/commit/1bb40043ff460bf75f68c754ef9607395c527c36))
+* **pages:** publish what a mind stages over a stale pick head, and never offer a discarding way out ([#1351](https://github.com/mimsy/volute/issues/1351)) ([f81b1b6](https://github.com/mimsy/volute/commit/f81b1b62c2568ab45c89d87d36d7fe3d8566b7d2))
+* stop telling channel speakers their messages failed because members are stopped ([#1346](https://github.com/mimsy/volute/issues/1346)) ([7ea922b](https://github.com/mimsy/volute/commit/7ea922b38d456156cebd114319c4c204ba23de8a))
+
 ## [0.66.8](https://github.com/mimsy/volute/compare/volute-v0.66.7...volute-v0.66.8) (2026-10-02)
 
 
