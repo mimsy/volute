@@ -1349,6 +1349,9 @@ describe("mind skill operations", () => {
     await assert.rejects(() => updateSkill(mindName, mindDir, "wired"));
     rmSync(hook);
 
+    // #1321: and nothing of the merge is left behind, staged or not.
+    const status = await exec("git", ["status", "--porcelain"], { cwd: mindDir });
+    assert.equal(status.trim(), "", "the merged file is not left uncommitted");
     const skills = await listMindSkills(mindDir);
     const wired = skills.find((sk) => sk.id === "wired");
     assert.equal(wired?.upstream?.version, 1);
@@ -1388,7 +1391,173 @@ describe("mind skill operations", () => {
     // The retry goes through once the git dir is writable again.
     assert.deepEqual(await updateSkill(mindName, mindDir, "wired"), { status: "updated" });
   });
-  // #1299: an imported mind's .upstream.json names a base only its source repo had.
+  // #1321: the base records fine (refs/volute/ is another dir), the merge writes, and then
+  // the commit can't move HEAD — the update must take back everything it wrote.
+  describe("an update whose commit can't move HEAD", () => {
+    const local = () => join(mindDir, "home", ".claude", "skills", "wired", "SKILL.md");
+    const head = async () => (await exec("git", ["rev-parse", "HEAD"], { cwd: mindDir })).trim();
+    let source: string;
+
+    /** Install v1, then publish v2: a changed SKILL.md and a new file. */
+    async function installThenBump() {
+      source = writeWiredSkill("wired", [], []);
+      await importSkillFromDir(source, "author");
+      await installSkill(mindName, mindDir, "wired");
+      writeFileSync(join(source, "SKILL.md"), `${readFileSync(join(source, "SKILL.md"))}v2\n`);
+      writeFileSync(join(source, "extra.md"), "v2\n");
+      await importSkillFromDir(source, "author");
+    }
+
+    /** Run the update with refs/heads read-only, so its commit can't move HEAD. */
+    async function failUpdate() {
+      const refsHeads = join(mindDir, ".git", "refs", "heads");
+      const branch = (
+        await exec("git", ["symbolic-ref", "--short", "HEAD"], { cwd: mindDir })
+      ).trim();
+      // Loose, or the commit would rewrite packed-refs instead and nothing would fail.
+      assert.ok(existsSync(join(refsHeads, branch)), "the branch ref is a loose file");
+      const before = await head();
+      chmodSync(refsHeads, 0o555);
+      try {
+        await assert.rejects(() => updateSkill(mindName, mindDir, "wired"), /lock/);
+      } finally {
+        chmodSync(refsHeads, 0o755);
+      }
+      assert.equal(await head(), before, "no update commit landed");
+    }
+
+    it("leaves the skill exactly as it was", async (t) => {
+      if (process.getuid?.() === 0) return t.skip("a read-only dir doesn't bind root");
+      await installThenBump();
+      const committed = readFileSync(local(), "utf-8");
+      await failUpdate();
+
+      const status = await exec("git", ["status", "--porcelain"], { cwd: mindDir });
+      assert.equal(status.trim(), "", "nothing staged, changed or added");
+      assert.equal(readFileSync(local(), "utf-8"), committed);
+      assert.equal(existsSync(join(dirname(local()), "extra.md")), false);
+      const wired = (await listMindSkills(mindDir)).find((sk) => sk.id === "wired");
+      assert.equal(wired?.upstream?.version, 1);
+      // The retry goes through once HEAD can move again.
+      assert.deepEqual(await updateSkill(mindName, mindDir, "wired"), { status: "updated" });
+      assert.match(readFileSync(local(), "utf-8"), /v2\n$/);
+    });
+
+    it("keeps an edit the mind hadn't committed", async (t) => {
+      if (process.getuid?.() === 0) return t.skip("a read-only dir doesn't bind root");
+      await installThenBump();
+      // Far enough from upstream's change to merge cleanly, so the commit is reached.
+      const edited = readFileSync(local(), "utf-8").replace("description: d", "description: mine");
+      writeFileSync(local(), edited);
+      writeFileSync(join(dirname(local()), "notes.md"), "mine\n");
+      await failUpdate();
+
+      assert.equal(readFileSync(local(), "utf-8"), edited, "the uncommitted edit survives");
+      assert.equal(readFileSync(join(dirname(local()), "notes.md"), "utf-8"), "mine\n");
+      assert.equal(existsSync(join(dirname(local()), "extra.md")), false);
+      const status = await exec("git", ["status", "--porcelain"], { cwd: mindDir });
+      assert.deepEqual(
+        status.trimEnd().split("\n").sort(),
+        [" M home/.claude/skills/wired/SKILL.md", "?? home/.claude/skills/wired/notes.md"],
+        "as uncommitted as it was, and nothing staged",
+      );
+    });
+  });
+  // #1321 review: a failed update takes back all it wrote — not just the skill dir.
+  describe("a failed update's other writes", () => {
+    const skill = () => join(mindDir, "home", ".claude", "skills", "wired");
+    const status = async () =>
+      (await exec("git", ["status", "--porcelain"], { cwd: mindDir })).trimEnd();
+    /** Fail the update's commit with a pre-commit hook, which first runs `script`. */
+    async function failCommit(script = "") {
+      const hook = join(mindDir, ".git", "hooks", "pre-commit");
+      writeFileSync(hook, `#!/bin/sh\n${script}\nexit 1\n`, { mode: 0o755 });
+      try {
+        await assert.rejects(() => updateSkill(mindName, mindDir, "wired"));
+      } finally {
+        rmSync(hook);
+      }
+    }
+
+    it("takes back the hooks, bin and npm dependency the new version added", async () => {
+      // The mind's own package files, committed, with node_modules out of git.
+      writeFileSync(join(mindDir, "package.json"), '{"name":"mind","version":"1.0.0"}\n');
+      writeFileSync(join(mindDir, ".gitignore"), "node_modules/\n");
+      await exec("git", ["add", "-A"], { cwd: mindDir });
+      await exec("git", ["commit", "-m", "package"], { cwd: mindDir });
+      const pkg = join(voluteHome(), "tmp-skill-source", "fake-dep");
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(join(pkg, "package.json"), '{"name":"fake-dep","version":"1.0.0"}\n');
+      await installThenBump(
+        ["  bin: scripts/old.ts", "  hooks:", "    pre-prompt: scripts/hook.sh"],
+        [
+          "  bin: scripts/wire.ts",
+          "  hooks:",
+          "    post-tool-use: scripts/hook.sh",
+          `  npm-dependencies: ${pkg}`,
+        ],
+        ["old.ts", "wire.ts", "hook.sh"],
+      );
+      const oldHook = join(hooksDir(), "pre-prompt", hookShimName("wired"));
+      const oldBin = join(binDir(), "old");
+      assert.ok(existsSync(oldHook) && existsSync(oldBin));
+      const pkgBefore = readFileSync(join(mindDir, "package.json"), "utf-8");
+
+      await failCommit();
+
+      assert.equal(await status(), "", "nothing staged, changed or added in git");
+      assert.equal(readFileSync(join(mindDir, "package.json"), "utf-8"), pkgBefore);
+      assert.equal(existsSync(join(mindDir, "package-lock.json")), false);
+      assert.equal(existsSync(join(hooksDir(), "post-tool-use", hookShimName("wired"))), false);
+      assert.equal(existsSync(join(binDir(), "wire")), false);
+      assert.ok(existsSync(oldHook), "the hook it had is back");
+      assert.ok(existsSync(oldBin), "and its bin");
+    });
+
+    it("keeps what the mind had staged", async () => {
+      await installThenBump([], [`  bin: scripts/wire.ts`], ["wire.ts"]);
+      const md = join(skill(), "SKILL.md");
+      // Far enough from upstream's change to merge cleanly, so the commit is reached.
+      const staged = readFileSync(md, "utf-8").replace("Body", "Staged body");
+      writeFileSync(md, staged);
+      await exec("git", ["add", md], { cwd: mindDir });
+
+      await failCommit();
+
+      assert.equal(await status(), "M  home/.claude/skills/wired/SKILL.md", "still staged");
+      const index = await exec("git", ["show", ":home/.claude/skills/wired/SKILL.md"], {
+        cwd: mindDir,
+      });
+      assert.equal(index, staged, "as it was staged");
+      assert.equal(readFileSync(md, "utf-8"), staged);
+    });
+
+    it("leaves a file the mind changed while it ran, and tells the mind", async () => {
+      await installThenBump([], ["  hooks:", "    pre-prompt: scripts/hook.sh"]);
+      const md = join(skill(), "SKILL.md");
+      const db = await getDb();
+      await db.delete(systemEvents).where(eq(systemEvents.mind, mindName));
+
+      // The mind edits the merged file as the commit runs, and stages it.
+      await failCommit(`printf 'mine\\n' >> ${md} && git add ${md}`);
+
+      assert.match(readFileSync(md, "utf-8"), /mine\n$/, "its edit stands");
+      const index = await exec("git", ["show", ":home/.claude/skills/wired/SKILL.md"], {
+        cwd: mindDir,
+      });
+      assert.equal(index, readFileSync(md, "utf-8"), "staged as the mind staged it");
+      const notices = await db
+        .select()
+        .from(systemEvents)
+        .where(eq(systemEvents.mind, mindName))
+        .all();
+      assert.ok(
+        notices.some((n) => n.body?.includes("home/.claude/skills/wired/SKILL.md")),
+        "the mind hears which file was left",
+      );
+    });
+  });
+  // #1299: an imported mind's .upstream.json names a base only its source repo had.  // #1299: an imported mind's .upstream.json names a base only its source repo had.
   describe("an imported mind's skill", () => {
     const body = (top: string, extra = "") =>
       `---\nname: wired\ndescription: d\n---\n\n${top}\n\n1\n2\n3\n4\n5\n${extra}`;

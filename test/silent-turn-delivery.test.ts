@@ -5,8 +5,20 @@ import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 import { after, afterEach, before, describe, it } from "node:test";
 import { and, eq, inArray } from "drizzle-orm";
-import { createUser, getOrCreateSystemUser } from "../packages/daemon/src/lib/auth.js";
+import {
+  createUser,
+  getOrCreateMindUser,
+  getOrCreateSystemUser,
+} from "../packages/daemon/src/lib/auth.js";
 import { deliverEvent } from "../packages/daemon/src/lib/chat/system-events.js";
+import {
+  initMindManager,
+  tryGetMindManager,
+} from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import {
+  generateMindToken,
+  revokeMindToken,
+} from "../packages/daemon/src/lib/daemon/mind-tokens.js";
 import { initSpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.js";
 import { settleHeld, summarizeTurn } from "../packages/daemon/src/lib/daemon/summarizer.js";
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
@@ -33,19 +45,23 @@ import {
   recordOutbound,
   turnStamp,
 } from "../packages/daemon/src/lib/delivery/message-delivery.js";
+import { createConversation } from "../packages/daemon/src/lib/events/conversations.js";
 import {
   type MindEvent,
   subscribe as subscribeMindEvents,
 } from "../packages/daemon/src/lib/events/mind-events.js";
 import { addMind, addSpirit, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import {
+  conversations,
   deliveryQueue,
+  messages,
   mindHistory,
   summaries,
   systemEvents,
   turns,
   users,
 } from "../packages/daemon/src/lib/schema.js";
+import { invalidateMindUserCache } from "../packages/daemon/src/web/middleware/auth.js";
 import { resolveEffective } from "../packages/daemon/src/web/middleware/effective-principal.js";
 
 /**
@@ -361,6 +377,215 @@ describe("a delivery opens the turn it runs in (#1298)", () => {
     await waitFor(() => db.select().from(summaries).where(eq(summaries.period_key, t2!)).get());
     await db.delete(summaries).where(eq(summaries.period_key, t2!));
     await db.delete(summaries).where(eq(summaries.period_key, t1!));
+  });
+
+  // #1320, lyrb's shape: a silent mind on an `interrupt: true` thread. The interrupter's run
+  // has no turn while it goes — its turn is recorded at its `done` — so what it sends then
+  // carries none. Each send is stamped with the delivery being run, and that delivery's
+  // `done` takes exactly its own: its summary says it replied.
+  it("a run recorded at its done takes exactly what it sent, and isn't summarized as quiet", async () => {
+    await setup();
+    const configDir = resolve(process.env.VOLUTE_HOME!, "minds", MIND, "home/.config");
+    writeFileSync(
+      resolve(configDir, "routes.json"),
+      JSON.stringify({
+        default: "main",
+        gateUnmatched: false,
+        threads: { main: { interrupt: true } },
+      }),
+    );
+    clearConfigCache(MIND);
+    const db = await getDb();
+    const VARIANT = `${MIND}@v`;
+    const rowOf = async (type: string, content: string, mind = MIND) =>
+      (await db
+        .select()
+        .from(mindHistory)
+        .where(
+          and(
+            eq(mindHistory.mind, mind),
+            eq(mindHistory.type, type),
+            eq(mindHistory.content, content),
+          ),
+        )
+        .get())!;
+    if (!tryGetMindManager()) initMindManager();
+    const mindUser = await getOrCreateMindUser(MIND);
+    const human = await createUser(`${MIND}-human`, "pass");
+    const conv = await createConversation({ participantIds: [mindUser.id, human.id] });
+    const token = generateMindToken(MIND);
+    const app = (await import("../packages/daemon/src/web/app.js")).default as unknown as {
+      request: typeof fetch;
+    };
+    /** A send from the thread, through the chat API — what `volute chat send` does. */
+    const send = async (text: string) => {
+      const res = await app.request("http://localhost/api/v1/chat", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Origin: "http://localhost",
+          "Content-Type": "application/json",
+          "X-Volute-Thread": "main",
+        },
+        body: JSON.stringify({ conversationId: conv.id, message: text }),
+      } as RequestInit);
+      assert.equal(res.status, 200, await res.clone().text());
+      const row = await rowOf("outbound", text);
+      return Number(row.message_id);
+    };
+    /** A variant's send from the same thread name, as the chat API records it. */
+    const variantSend = async (text: string) => {
+      const stamp = turnStamp(MIND, "main", VARIANT);
+      await recordOutbound(VARIANT, "@tester", text, stamp);
+    };
+    const deliver = (content: string) =>
+      deliverMessage(MIND, { channel: "@tester", sender: "tester", senderId: null, content });
+
+    // An earlier run's send no turn ever took: stamped with a delivery no `done` here covers.
+    await recordOutbound(MIND, "@tester", "EARLIER", { thread: "main", delivery: "d-earlier" });
+    await deliver("one");
+    const t1 = await waitFor(() => getActiveTurnId(MIND, "main"));
+    await deliver("two");
+    await deliver("three");
+    await waitFor(() => posted.length === 3);
+    assert.equal(posted[1].interrupt, true, "it was sent to interrupt");
+    const [d1, d2, d3] = posted.map((p) => p.deliveryId as string);
+
+    // The interrupted run ends; the interrupter runs with no turn to stamp.
+    await handleMindEvent(MIND, { type: "done", session: "main", messageId: d1, covers: [d1] });
+    assert.equal(getActiveTurnId(MIND, "main"), undefined);
+    await handleMindEvent(MIND, {
+      type: "context",
+      session: "main",
+      content: "pre-prompt",
+      metadata: { source: "dynamic:pre-prompt" },
+    });
+    // A variant on the same thread reports meanwhile: its context is not this run's.
+    await handleMindEvent(
+      MIND,
+      { type: "context", session: "main", content: "variant context" },
+      VARIANT,
+    );
+    const hotel = await send("HOTEL");
+    assert.equal((await rowOf("outbound", "HOTEL")).turn_id, null, "sent with no turn");
+    await variantSend("VARIANT");
+    await handleMindEvent(MIND, {
+      type: "usage",
+      session: "main",
+      messageId: d2,
+      metadata: { input_tokens: 5, output_tokens: 3 },
+    });
+    const { turnId: t2 } = await handleMindEvent(MIND, {
+      type: "done",
+      session: "main",
+      messageId: d2,
+      covers: [d2],
+    });
+    // The run queued behind it sends, and ends.
+    await send("INDIA");
+    const { turnId: t3 } = await handleMindEvent(MIND, {
+      type: "done",
+      session: "main",
+      messageId: d3,
+      covers: [d3],
+    });
+
+    assert.ok(t2 && t2 !== t1, "the interrupter's turn has its own row");
+    assert.ok(t3 && t3 !== t2, "and so does the run after it");
+    assert.equal((await rowOf("inbound", "two")).turn_id, t2);
+    assert.equal((await rowOf("outbound", "HOTEL")).turn_id, t2, "its reply is in it");
+    const sent = await db.select().from(messages).where(eq(messages.id, hotel)).get();
+    assert.equal(sent!.turn_id, t2, "and so is the message it sent");
+    assert.equal((await rowOf("context", "pre-prompt")).turn_id, t2, "and its context");
+    assert.equal((await rowOf("outbound", "INDIA")).turn_id, t3, "the next run's send is its own");
+    assert.equal((await rowOf("outbound", "EARLIER")).turn_id, null, "nothing from before it");
+    assert.equal(
+      (await rowOf("outbound", "VARIANT", VARIANT)).turn_id,
+      null,
+      "nor a variant's send",
+    );
+    assert.equal((await rowOf("context", "variant context")).turn_id, null, "nor its context");
+    const summary = await waitFor(() =>
+      db.select().from(summaries).where(eq(summaries.period_key, t2!)).get(),
+    );
+    assert.doesNotMatch(summary!.content, /no visible output/);
+    await waitFor(() => db.select().from(summaries).where(eq(summaries.period_key, t3!)).get());
+    for (const t of [t1!, t2!, t3!]) await db.delete(summaries).where(eq(summaries.period_key, t));
+    revokeMindToken(MIND);
+    await db.delete(messages).where(eq(messages.conversation_id, conv.id));
+    await db.delete(conversations).where(eq(conversations.id, conv.id));
+    await db.delete(mindHistory).where(eq(mindHistory.mind, VARIANT));
+    await db.delete(users).where(inArray(users.id, [mindUser.id, human.id]));
+    invalidateMindUserCache(MIND);
+  });
+
+  // #1319: one run can consume several deliveries; its `done` covers them all, and its turn
+  // takes what was sent under any of them.
+  it("a run that consumed two deliveries takes the sends stamped with either", async () => {
+    await setup();
+    const db = await getDb();
+    const outbound = async (content: string) =>
+      (await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, MIND), eq(mindHistory.content, content)))
+        .get())!;
+    (dm as any).addOutstanding(MIND, "main", "dA", MIND);
+    (dm as any).addOutstanding(MIND, "main", "dB", MIND);
+    await recordOutbound(MIND, "@tester", "first", turnStamp(MIND, "main"));
+    assert.equal(JSON.parse((await outbound("first")).metadata!).delivery, "dA");
+    await recordOutbound(MIND, "@tester", "second", { thread: "main", delivery: "dB" });
+    const { turnId } = await handleMindEvent(MIND, {
+      type: "done",
+      session: "main",
+      messageId: "dA",
+      covers: ["dA", "dB"],
+    });
+    assert.ok(turnId);
+    assert.equal((await outbound("first")).turn_id, turnId);
+    assert.equal((await outbound("second")).turn_id, turnId);
+    await waitFor(() => db.select().from(summaries).where(eq(summaries.period_key, turnId!)).get());
+    await db.delete(summaries).where(eq(summaries.period_key, turnId!));
+  });
+
+  // A run that consumed a delivery its `done` didn't name (an old template, #1319) leaves it
+  // outstanding, so the next run's send is stamped with it. The next `done` retires every
+  // delivery up to the one it names, the leftover with it, and its turn takes the send —
+  // never the finished run's.
+  it("a send stamped with a leftover delivery goes to the run that sent it", async () => {
+    await setup();
+    const db = await getDb();
+    const outbound = async (content: string) =>
+      (await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, MIND), eq(mindHistory.content, content)))
+        .get())!;
+    (dm as any).addOutstanding(MIND, "main", "d1", MIND);
+    (dm as any).addOutstanding(MIND, "main", "d2", MIND);
+    await recordOutbound(MIND, "@tester", "from one", turnStamp(MIND, "main"));
+    const { turnId: t1 } = await handleMindEvent(MIND, {
+      type: "done",
+      session: "main",
+      messageId: "d1",
+      covers: ["d1"],
+    });
+    (dm as any).addOutstanding(MIND, "main", "d3", MIND);
+    await recordOutbound(MIND, "@tester", "from three", turnStamp(MIND, "main"));
+    assert.equal(JSON.parse((await outbound("from three")).metadata!).delivery, "d2");
+    const { turnId: t3 } = await handleMindEvent(MIND, {
+      type: "done",
+      session: "main",
+      messageId: "d3",
+      covers: ["d3"],
+    });
+    assert.ok(t1 && t3 && t1 !== t3);
+    assert.equal((await outbound("from one")).turn_id, t1);
+    assert.equal((await outbound("from three")).turn_id, t3, "the run that sent it");
+    for (const t of [t1!, t3!]) {
+      await waitFor(() => db.select().from(summaries).where(eq(summaries.period_key, t)).get());
+      await db.delete(summaries).where(eq(summaries.period_key, t));
+    }
   });
 
   it("a quiet turn whose usage lands after its done is held for it, then kept", async () => {

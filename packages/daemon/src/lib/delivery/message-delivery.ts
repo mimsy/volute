@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, type SQL, sql } from "drizzle-orm";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
 import {
@@ -84,8 +84,11 @@ export async function recordInbound(
   return insertedId;
 }
 
-/** The thread an outbound row came from and that thread's turn, as recorded on the row. */
-export type TurnStamp = { turnId?: string; thread?: string };
+/**
+ * The thread an outbound row came from and that thread's turn, as recorded on the row — or,
+ * with no turn, the delivery its sender was running there (`delivery`).
+ */
+export type TurnStamp = { turnId?: string; thread?: string; delivery?: string };
 
 /**
  * The stamp for a send from `thread` (its `X-Volute-Thread`): the thread itself, and its
@@ -95,6 +98,13 @@ export type TurnStamp = { turnId?: string; thread?: string };
  * `mind` is the base name turns are kept under; `sender` is who is sending — the mind or
  * one of its variants. A variant's thread shares its parent's turn key, so the turn is
  * only this send's when `sender` is the process that opened it; otherwise no turn.
+ *
+ * A send with no turn is a `silent` mind's run that nothing opened, whose turn is recorded
+ * only at its `done` (#1320): it is stamped with the delivery the sender is running there,
+ * and that turn takes it (`linkRunToTurn`). That is its oldest delivery no `done` has
+ * covered — read as the previous run's while that run's `done` has yet to be handled, when
+ * the send is left turnless rather than misfiled. A leftover the previous `done` failed to
+ * name is retired, and so taken, by the next `done`: the run that sent under it.
  */
 export function turnStamp(
   mind: string,
@@ -104,7 +114,14 @@ export function turnStamp(
   const t = normalizeThread(thread);
   if (!t) return {};
   const turnId = getActiveTurnOwner(mind, t) === sender ? getActiveTurnId(mind, t) : undefined;
-  return turnId ? { turnId, thread: t } : { thread: t };
+  if (turnId) return { turnId, thread: t };
+  const delivery = tryGetDeliveryManager()?.runningDelivery(mind, t, sender);
+  return delivery ? { thread: t, delivery } : { thread: t };
+}
+
+/** An outbound row's metadata: the delivery it was stamped with (see `turnStamp`). */
+export function outboundMetadata(stamp: TurnStamp): string | null {
+  return stamp.delivery ? JSON.stringify({ delivery: stamp.delivery }) : null;
 }
 
 /**
@@ -135,6 +152,7 @@ export async function recordOutbound(
         turn_id: opts.turnId || null,
         thread: normalizeThread(opts.thread) ?? null,
         message_id: opts.messageId ?? null,
+        metadata: opts.turnId ? null : outboundMetadata(opts),
       })
       .returning({ id: mindHistory.id });
     return result[0]?.id;
@@ -247,8 +265,6 @@ export async function linkToolResultToTurn(
       );
       const row = await db
         .select({
-          channel: mindHistory.channel,
-          content: mindHistory.content,
           message_id: mindHistory.message_id,
           turn_id: mindHistory.turn_id,
           thread: mindHistory.thread,
@@ -261,25 +277,18 @@ export async function linkToolResultToTurn(
         continue;
       }
 
-      let linked = row.turn_id === turnId;
-      let claimed = false;
+      // A send from this same thread with no turn yet is claimed for this one.
       if (row.turn_id == null && row.thread != null && row.thread === ownThread) {
-        const rows = await db
-          .update(mindHistory)
-          .set({ turn_id: turnId })
-          .where(and(own, sql`${mindHistory.turn_id} IS NULL`))
-          .returning({ id: mindHistory.id });
-        claimed = linked = rows.length > 0;
+        if ((await claimOutbound(mind, turnId, own, toolUseEventId)) > 0) continue;
       }
-      if (!linked) {
+      if (row.turn_id !== turnId) {
         dlog.warn(
           `outbound ${outboundId} for ${mind} (turn ${row.turn_id ?? "none"}, thread ${row.thread ?? "none"}) ` +
             `not linked to turn ${turnId} (thread ${ownThread ?? "none"})`,
         );
         continue;
       }
-
-      // The linked message follows the history row, so the two never name different turns.
+      // Already this turn's: its message gets the source event.
       if (row.message_id) {
         await db
           .update(messages)
@@ -288,18 +297,6 @@ export async function linkToolResultToTurn(
             ...(toolUseEventId != null ? { source_event_id: toolUseEventId } : {}),
           })
           .where(eq(messages.id, Number(row.message_id)));
-      }
-
-      // Once, on the claim: the live view can now place the send in its turn.
-      if (claimed) {
-        publishMindEvent(mind, {
-          mind,
-          type: "outbound",
-          channel: row.channel ?? undefined,
-          content: row.content ?? undefined,
-          session: ownThread,
-          turnId,
-        });
       }
     } catch (err) {
       dlog.warn(`failed to link outbound ${outboundId} to turn ${turnId}`, log.errorData(err));
@@ -352,6 +349,83 @@ export async function linkToolResultToTurn(
     } catch (err) {
       dlog.warn(`failed to link activities to turn ${turnId}`, log.errorData(err));
     }
+  }
+}
+
+/**
+ * Claim the outbound rows `where` selects that have no turn yet for `turnId`, in one UPDATE
+ * guarded by `turn_id IS NULL` — a row is never moved off a turn. Their sent messages follow,
+ * so the two never name different turns, and each claimed send is published again, now with
+ * its turn, so the live view can place it (it was published at send time without one).
+ * Returns how many it claimed.
+ */
+async function claimOutbound(
+  mind: string,
+  turnId: string,
+  where: SQL | undefined,
+  sourceEventId?: number,
+): Promise<number> {
+  const db = await getDb();
+  const claimed = await db
+    .update(mindHistory)
+    .set({ turn_id: turnId })
+    .where(and(where, eq(mindHistory.type, "outbound"), isNull(mindHistory.turn_id)))
+    .returning({
+      channel: mindHistory.channel,
+      content: mindHistory.content,
+      message_id: mindHistory.message_id,
+      thread: mindHistory.thread,
+    });
+  const messageIds = claimed.flatMap((r) => (r.message_id ? [Number(r.message_id)] : []));
+  if (messageIds.length > 0) {
+    await db
+      .update(messages)
+      .set({
+        turn_id: turnId,
+        ...(sourceEventId != null ? { source_event_id: sourceEventId } : {}),
+      })
+      .where(inArray(messages.id, messageIds));
+  }
+  for (const r of claimed) {
+    publishMindEvent(mind, {
+      mind,
+      type: "outbound",
+      channel: r.channel ?? undefined,
+      content: r.content ?? undefined,
+      session: r.thread ?? undefined,
+      turnId,
+    });
+  }
+  return claimed.length;
+}
+
+/**
+ * Give the turn a `done` recorded (a `silent` mind's run that nothing opened, #1320) the
+ * sends its run made with no turn to stamp: exactly those `turnStamp` stamped with one of the
+ * deliveries the `done` covers, sent by `process` (sends are recorded under the sender's own
+ * name) from the thread. Never throws.
+ */
+export async function linkRunToTurn(
+  mind: string,
+  process: string,
+  session: string,
+  turnId: string,
+  deliveries: string[],
+): Promise<void> {
+  const thread = normalizeThread(session);
+  if (!thread || deliveries.length === 0) return;
+  try {
+    await claimOutbound(
+      mind,
+      turnId,
+      and(
+        eq(mindHistory.mind, process),
+        eq(mindHistory.thread, thread),
+        inArray(sql`json_extract(${mindHistory.metadata}, '$.delivery')`, deliveries),
+      ),
+    );
+  } catch (err) {
+    dlog.warn(`failed to link run's sends to turn ${turnId}`, log.errorData(err));
   }
 }
 

@@ -12,7 +12,7 @@ import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { getDb } from "../db.js";
 import { getDeliveryManager, tryGetDeliveryManager } from "../delivery/delivery-manager.js";
 import { echoTextToChannel } from "../delivery/echo-text.js";
-import { linkToolResultToTurn } from "../delivery/message-delivery.js";
+import { linkRunToTurn, linkToolResultToTurn } from "../delivery/message-delivery.js";
 import { broadcast } from "../events/activity-events.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
@@ -393,6 +393,8 @@ export async function handleMindEvent(
       done.bornClosed = true;
       await adoptFolded(mind, event.session, process, turnId, done.retired);
       await linkReportsToTurn(mind, event.session, turnId, turnDeliveries(event, done));
+      // And what it sent while it ran with no turn to stamp, before it is judged quiet (#1320).
+      await linkRunToTurn(mind, process, event.session, turnId, turnDeliveries(event, done));
       await adoptInterrupted(mind, event.session, turnId);
     }
   }
@@ -420,6 +422,15 @@ export async function handleMindEvent(
   // (`recordClosedTurn`): look again, so the event lands on it rather than on nothing.
   if (!turnId && !done) turnId = closedTurnFor(mind, event.session, event.messageId);
 
+  // A report naming no delivery, with no turn to land on — a `silent` run's context before
+  // the mind knows which delivery it runs — names the one its process is running, so the
+  // turn recorded at that delivery's `done` takes it (`linkReportsToTurn`, #1320).
+  const messageId =
+    event.messageId ??
+    (turnId || done || !event.session
+      ? undefined
+      : tryGetDeliveryManager()?.runningDelivery(mind, event.session, process));
+
   // Persist to mind_history.
   const db = await getDb();
   let insertedId: number | undefined;
@@ -431,7 +442,7 @@ export async function handleMindEvent(
         type: event.type,
         thread: event.session ?? null,
         channel: event.channel ?? null,
-        message_id: event.messageId ?? null,
+        message_id: messageId ?? null,
         content: cleanContent ?? null,
         metadata: event.metadata ? JSON.stringify(event.metadata) : null,
         turn_id: turnId ?? null,
