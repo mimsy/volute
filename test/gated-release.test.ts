@@ -50,9 +50,12 @@ function writeRoutes(name: string, config: RoutingConfig | object): void {
   clearConfigCache(name);
 }
 
+/** Each mind its own port: a random one collided with an earlier mind's often enough to flake. */
+let nextTestPort = 20000;
+
 function createMind(config: RoutingConfig | object): string {
   const name = mindName();
-  const port = 20000 + Math.floor(Math.random() * 20000);
+  const port = nextTestPort++;
   addMind(name, port);
   writeRoutes(name, config);
   return name;

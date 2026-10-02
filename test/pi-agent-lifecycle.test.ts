@@ -1009,7 +1009,7 @@ describe("pi messages that arrive while a rotation fetches recollection", () => 
       faux.setResponses([answer("a"), answer("b"), answer("c")]);
       const a = send(mind, "main", "alpha hold-here");
       await waitFor(() => existsSync(entered), "A's pre-run");
-      send(mind, "main", "bravo");
+      const b = send(mind, "main", "bravo");
       // B's way into pi's prompt() is all microtasks: unless something parks it, it's there now.
       await new Promise((r) => setImmediate(r));
       assert.ok(
@@ -1019,12 +1019,24 @@ describe("pi messages that arrive while a rotation fetches recollection", () => 
       writeFileSync(go, "");
       await waitFor(() => captured.some((e) => e.path === "recollection"), "A's rotation");
       releaseRotation();
-      // B may ride A's run as a follow-up (one done for the run) or run after it.
+      // B may ride A's run as a follow-up (one done covers both) or run after it.
+      const covered = (id: string) =>
+        (events("done", "main") as (Captured & { covers?: string[] })[]).some(
+          (e) => e.messageId === id || e.covers?.includes(id),
+        );
       await waitFor(
-        () => doneFor(a) && events("text", "main").some((e) => e.content?.includes("b")),
+        () =>
+          covered(a) && covered(b) && events("text", "main").some((e) => e.content?.includes("b")),
         "both answered",
       );
-      await waitFor(() => recollectionInFlight === 0, "rotation finished");
+      // Every run here ends over the limit and rotates once. Wait for each run's rotation,
+      // or B's own (if it ran apart) could land in the next test.
+      await waitFor(
+        () =>
+          captured.filter((e) => e.path === "recollection").length ===
+            events("done", "main").length && recollectionInFlight === 0,
+        "every run's rotation to finish",
+      );
       assert.deepEqual(callsDuringRotation, [], "nothing ran while the session was rotating");
     } finally {
       pca.AgentSession.prototype.prompt = prompt;
