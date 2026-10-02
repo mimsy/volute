@@ -6,6 +6,7 @@ import { readBridgesConfig } from "../bridges/bridges.js";
 import { readEnv, sharedEnvPath } from "../config/env.js";
 import { daemonLoopback, voluteSystemDir } from "../mind/registry.js";
 import log from "../util/logger.js";
+import { resolveWithinBase } from "../util/paths.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { voluteRoot } from "../util/volute-root.js";
 import { ManagerNotReadyError } from "./manager-not-ready.js";
@@ -27,6 +28,10 @@ type TrackedBridge = {
   child: ChildProcess;
   platform: string;
 };
+
+function unknownPlatform(platform: string): Error {
+  return new Error(`Unknown bridge platform: ${platform}`);
+}
 
 export class BridgeManager {
   private bridges = new Map<string, TrackedBridge>();
@@ -86,10 +91,12 @@ export class BridgeManager {
   }
 
   startBridge(platform: string, daemonPort: number): Promise<void> {
+    if (!this.knownPlatform(platform)) return Promise.reject(unknownPlatform(platform));
     return this.serialize(platform, () => this.doStartBridge(platform, daemonPort));
   }
 
   stopBridge(platform: string): Promise<void> {
+    if (!this.knownPlatform(platform)) return Promise.reject(unknownPlatform(platform));
     // Cancelled now as well as when the stop runs: a restart timer firing while this
     // stop waits its turn would otherwise queue a start behind it (#1352).
     this.cancelPendingRestart(platform);
@@ -192,6 +199,15 @@ export class BridgeManager {
     // This child's exit handler is the one owner of its lifecycle: whoever ended it,
     // it untracks this child and its PID file, and only then decides whether it crashed.
     child.on("exit", (code) => {
+      // The leader is gone; anything left in its group (a process it spawned that shrugged
+      // off SIGTERM) goes now, while the group's id still can't have been reused.
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          // ESRCH: nothing left in the group — the clean case
+        }
+      }
       this.live.delete(child);
       const current = this.bridges.get(platform)?.child === child;
       if (current) {
@@ -341,7 +357,16 @@ export class BridgeManager {
   }
 
   private bridgePidPath(platform: string): string {
-    return resolve(voluteSystemDir(), "bridges", `${platform}.pid`);
+    return resolveWithinBase(resolve(voluteSystemDir(), "bridges"), `${platform}.pid`);
+  }
+
+  /**
+   * Only a known platform may be started or stopped: its name becomes a PID file path
+   * that is read, signalled and removed with daemon (root) privileges. An instance seam,
+   * so tests can run fixture platforms.
+   */
+  private knownPlatform(platform: string): boolean {
+    return getBridgeDef(platform) !== null;
   }
 
   private saveBridgePid(platform: string, pid: number): void {

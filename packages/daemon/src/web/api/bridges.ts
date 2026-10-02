@@ -220,6 +220,10 @@ const app = new Hono<AuthEnv>()
   // Disable bridge — admin only
   .delete("/:platform", requireAdmin, async (c) => {
     const platform = c.req.param("platform");
+    // The platform names a PID file the stop reads, signals and removes — as root on a
+    // system install — so only a known one gets that far.
+    if (!getBridgeDef(platform))
+      return c.json({ error: `Unknown bridge platform: ${platform}` }, 400);
     const manager = getBridgeManager();
     await manager.stopBridge(platform);
     removeBridgeConfig(platform);

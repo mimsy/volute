@@ -54,6 +54,13 @@ function writeFixture(name: string, markerPath: string, body: string): string {
   return path;
 }
 
+/** A manager that accepts the tests' fixture platforms, which aren't real bridges. */
+function newBridgeManager(): AnyMgr {
+  const mgr = new BridgeManager() as AnyMgr;
+  mgr.knownPlatform = () => true;
+  return mgr;
+}
+
 function spawnTimes(markerPath: string): number[] {
   if (!existsSync(markerPath)) return [];
   return readFileSync(markerPath, "utf-8")
@@ -87,7 +94,7 @@ describe("crash recovery wiring", () => {
   describe("BridgeManager", () => {
     it("gives up on a bridge that dies immediately, backing off as it goes", async () => {
       const marker = resolve(fixtureDir, "crash-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 300, maxDelay: 2000 });
       mgr.resolveBuiltinBridge = () => writeFixture("crash", marker, "process.exit(1);");
 
@@ -126,7 +133,7 @@ describe("crash recovery wiring", () => {
 
     it("clears the budget once a bridge stays up past the threshold", async () => {
       const marker = resolve(fixtureDir, "healthy-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       const baseDelay = 1000;
       mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay, maxDelay: 2000 });
       mgr.resolveBuiltinBridge = () =>
@@ -159,7 +166,7 @@ describe("crash recovery wiring", () => {
 
     it("does not spend a restart attempt when an operator replaces a running bridge", async () => {
       const marker = resolve(fixtureDir, "replace-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 300, maxDelay: 2000 });
       mgr.resolveBuiltinBridge = () =>
         writeFixture("replace", marker, "setTimeout(() => {}, 10000);");
@@ -198,7 +205,7 @@ describe("crash recovery wiring", () => {
     // a disable used to find nothing to stop and the bridge respawned until the cap.
     it("a stop during crash backoff cancels the pending restart", async () => {
       const marker = resolve(fixtureDir, "disable-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 300, maxDelay: 2000 });
       mgr.resolveBuiltinBridge = () => writeFixture("disable", marker, "process.exit(1);");
 
@@ -223,7 +230,7 @@ describe("crash recovery wiring", () => {
 
     it("a crashed child's exit removes its PID file, and a stop after giving up clears the budget", async () => {
       const marker = resolve(fixtureDir, "gaveup-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.restartTracker = new RestartTracker({ maxAttempts: 1, baseDelay: 300, maxDelay: 2000 });
       mgr.resolveBuiltinBridge = () => writeFixture("gaveup", marker, "process.exit(1);");
       const pidPath = mgr.bridgePidPath("gaveup");
@@ -257,7 +264,7 @@ describe("crash recovery wiring", () => {
     });
 
     it("a superseded restart timer never fires", async () => {
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       let starts = 0;
       mgr.startBridge = async () => {
         starts++;
@@ -283,7 +290,7 @@ describe("crash recovery wiring", () => {
 
     it("a stop queued behind a replacing start is what holds", async () => {
       const marker = resolve(fixtureDir, "race-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.resolveBuiltinBridge = () => slow("race", marker);
       try {
         await mgr.startBridge("race", 1618);
@@ -304,7 +311,7 @@ describe("crash recovery wiring", () => {
 
     it("a stop cancels a crash restart that would fire while it waits its turn", async () => {
       const marker = resolve(fixtureDir, "queued-stop-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.resolveBuiltinBridge = () => slow("queuedstop", marker);
       try {
         await mgr.startBridge("queuedstop", 1618);
@@ -324,7 +331,7 @@ describe("crash recovery wiring", () => {
 
     it("a start queued behind a stop is what holds", async () => {
       const marker = resolve(fixtureDir, "restart-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.resolveBuiltinBridge = () => slow("restart", marker);
       try {
         await mgr.startBridge("restart", 1618);
@@ -343,7 +350,7 @@ describe("crash recovery wiring", () => {
 
     it("a replacing start spawns only once the old bridge has exited", async () => {
       const marker = resolve(fixtureDir, "replace-wait-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.replaceGraceMs = 200;
       mgr.resolveBuiltinBridge = () => stubborn("replacewait", marker);
       try {
@@ -361,7 +368,7 @@ describe("crash recovery wiring", () => {
 
     it("a stop returns only after the stopped bridge's PID file is gone", async () => {
       const marker = resolve(fixtureDir, "pidgone-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.stopGraceMs = 200;
       mgr.resolveBuiltinBridge = () => stubborn("pidgone", marker);
       try {
@@ -378,7 +385,7 @@ describe("crash recovery wiring", () => {
 
     it("a shutdown stops a start already in flight, and refuses a later one", async () => {
       const marker = resolve(fixtureDir, "shutdown-race-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.resolveBuiltinBridge = () => slow("shutdownrace", marker);
       try {
         await mgr.startBridge("shutdownrace", 1618);
@@ -401,7 +408,7 @@ describe("crash recovery wiring", () => {
     });
 
     it("forgets a bridge whose spawn failed outright", async () => {
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.resolveBuiltinBridge = () => writeFixture("nospawn", resolve(fixtureDir, "x.txt"), "");
       const realExecPath = process.execPath;
       try {
@@ -415,7 +422,7 @@ describe("crash recovery wiring", () => {
     });
 
     it("never arms a SIGKILL for a group its SIGTERM couldn't reach", async () => {
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       const child = Object.assign(new EventEmitter(), { pid: 424243 });
       const realKill = process.kill;
       const signals: string[] = [];
@@ -433,7 +440,7 @@ describe("crash recovery wiring", () => {
     });
 
     it("a stop kills a bridge an earlier daemon left running", async () => {
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       const pidPath = mgr.bridgePidPath("leftover");
       mkdirSync(dirname(pidPath), { recursive: true });
       writeFileSync(pidPath, "424244");
@@ -454,7 +461,7 @@ describe("crash recovery wiring", () => {
 
     it("disarms the SIGKILL once a terminated bridge exits", async () => {
       const marker = resolve(fixtureDir, "disarm-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.stopGraceMs = 300;
       mgr.resolveBuiltinBridge = () =>
         writeFixture("disarm", marker, "setInterval(() => {}, 1000);");
@@ -467,6 +474,7 @@ describe("crash recovery wiring", () => {
           return realKill(pid, sig);
         }) as typeof process.kill;
         await mgr.stopBridge("disarm");
+        sigkills.length = 0; // the exit handler's own sweep of the group is expected
         await delay(500);
         assert.deepEqual(sigkills, [], "a group SIGKILL fired after the child had exited");
       } finally {
@@ -477,7 +485,7 @@ describe("crash recovery wiring", () => {
 
     it("leaves the PID file of a stopped child that is still alive to its exit handler", async () => {
       const marker = resolve(fixtureDir, "survivor-spawns.txt");
-      const mgr = new BridgeManager() as AnyMgr;
+      const mgr = newBridgeManager();
       mgr.stopGraceMs = 200;
       mgr.killWaitMs = 200;
       mgr.resolveBuiltinBridge = () =>
@@ -506,6 +514,66 @@ describe("crash recovery wiring", () => {
       }
     });
 
+    it("refuses a platform that isn't a known bridge, before touching any PID file", async () => {
+      const mgr = new BridgeManager() as AnyMgr;
+      // Where `bridges/../evil.pid` would land.
+      const target = resolve(voluteSystemDir(), "evil.pid");
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, "424245");
+      const realKill = process.kill;
+      const kills: number[] = [];
+      process.kill = ((pid: number) => {
+        kills.push(pid);
+        return true;
+      }) as typeof process.kill;
+      try {
+        await assert.rejects(mgr.stopBridge("../evil"), /Unknown bridge platform/);
+        await assert.rejects(mgr.startBridge("../evil", 1618), /Unknown bridge platform/);
+        await assert.rejects(mgr.stopBridge("constructor"), /Unknown bridge platform/);
+      } finally {
+        process.kill = realKill;
+      }
+      assert.deepEqual(kills, []);
+      assert.equal(existsSync(target), true, "a PID file outside bridges/ was removed");
+      // And the path itself is contained, whatever gets past the check.
+      assert.throws(() => mgr.bridgePidPath("../evil"));
+      rmSync(target, { force: true });
+    });
+
+    it("sweeps the group when a bridge exits, so nothing it spawned outlives it", async () => {
+      const marker = resolve(fixtureDir, "sweep-spawns.txt");
+      const grandchildPid = resolve(fixtureDir, "sweep-grandchild.pid");
+      const mgr = newBridgeManager();
+      mgr.resolveBuiltinBridge = () =>
+        writeFixture(
+          "sweep",
+          marker,
+          `const g = require("node:child_process").spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: "ignore" });
+require("node:fs").writeFileSync(${JSON.stringify(grandchildPid)}, String(g.pid));
+setInterval(() => {}, 1000);`,
+        );
+      let gpid = 0;
+      const alive = () => {
+        try {
+          process.kill(gpid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      try {
+        await mgr.startBridge("sweep", 1618);
+        assert.ok(await waitFor(() => existsSync(grandchildPid), 5000));
+        gpid = Number(readFileSync(grandchildPid, "utf-8"));
+        await delay(200); // the grandchild's SIGTERM handler is in place
+        await mgr.stopBridge("sweep");
+        assert.ok(await waitFor(() => !alive(), 2000), "the bridge's grandchild outlived it");
+      } finally {
+        if (gpid && alive()) process.kill(gpid, "SIGKILL");
+        await mgr.stopBridge("sweep");
+      }
+    });
+
     describe("killOrphanBridge", () => {
       const realKill = process.kill;
       after(() => {
@@ -514,7 +582,7 @@ describe("crash recovery wiring", () => {
 
       let orphanPidKept = false;
       async function orphanLogs(kill: (pid: number) => void): Promise<string[]> {
-        const mgr = new BridgeManager() as AnyMgr;
+        const mgr = newBridgeManager();
         const pidPath = mgr.bridgePidPath("orphan");
         mkdirSync(dirname(pidPath), { recursive: true });
         writeFileSync(pidPath, "424242");
@@ -536,7 +604,7 @@ describe("crash recovery wiring", () => {
       const errno = (code: string) => Object.assign(new Error(code), { code });
 
       it("leaves alone a PID file naming a child of ours still alive", async () => {
-        const mgr = new BridgeManager() as AnyMgr;
+        const mgr = newBridgeManager();
         mgr.live.set({ pid: 424242 }, "orphan");
         const pidPath = mgr.bridgePidPath("orphan");
         mkdirSync(dirname(pidPath), { recursive: true });
