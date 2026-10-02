@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import {
   composeTemplate,
@@ -71,8 +71,11 @@ export function hashInfrastructure(composedDir: string, shippedLedger: Buffer | 
   const hash = createHash("sha256");
   for (const file of files) {
     hash.update(file);
-    hash.update("\0");
-    hash.update(readFileSync(resolve(initDir, file)));
+    // The exec bit is part of what ships (`.local/bin/volute` is useless without it),
+    // so a mode-only change reaches existing minds like a content change does (#1274).
+    const path = resolve(initDir, file);
+    hash.update(statSync(path).mode & 0o111 ? "\0x\0" : "\0");
+    hash.update(readFileSync(path));
   }
   hash.update("\0SHIPPED\0");
   if (shippedLedger) hash.update(shippedLedger);

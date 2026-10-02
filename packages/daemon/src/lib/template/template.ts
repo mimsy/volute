@@ -392,7 +392,8 @@ export function mayRefreshInfrastructure(
  *   it. It predates the hook. Copy it in.
  * - **refreshed** — the file is present and byte-identical to some version
  *   Volute has shipped (per `.init/.local/SHIPPED.json`), so the mind never
- *   edited it; it is just an old copy of our own file. Overwrite it.
+ *   edited it; it is just an old copy of our own file. Overwrite it. Likewise
+ *   our current bytes that lost the exec bit they shipped with (#1274).
  * - **withheld** — the file is missing but the ledger says we gave it to this
  *   mind. It was removed on purpose. Leave it gone (#811).
  *
@@ -451,6 +452,11 @@ export function mayRefreshInfrastructure(
  */
 /** Largest `.local/` file the backfill reads back to compare against shipped hashes. */
 const MAX_INIT_BYTES = 1024 * 1024;
+
+/** Whether `src` ships executable and the copy at `dest` is not executable at all. */
+function lostExecBit(src: string, dest: string): boolean {
+  return (statSync(src).mode & 0o111) !== 0 && (lstatSync(dest).mode & 0o111) === 0;
+}
 
 /** lstat-based existence: a dangling symlink "doesn't exist" but is not absent. */
 function lexists(path: string): boolean {
@@ -562,7 +568,12 @@ export async function backfillInitInfrastructure(
       try {
         const onDisk = await readMindFileBytes(homeDir, rel, { owner, maxBytes: MAX_INIT_BYTES });
         if (!onDisk) continue;
-        refreshable = mayRefreshInfrastructure(onDisk, readFileSync(src), shipped[rel]);
+        refreshable =
+          mayRefreshInfrastructure(onDisk, readFileSync(src), shipped[rel]) ||
+          // Our current bytes, but without the exec bit they shipped with — an import
+          // that dropped modes (#1274) leaves `.local/bin/volute` off PATH. The bytes
+          // are Volute's, so restoring the mode takes nothing the mind authored.
+          (onDisk.equals(readFileSync(src)) && lostExecBit(src, dest));
       } catch {
         unreadable.push(rel);
         continue;

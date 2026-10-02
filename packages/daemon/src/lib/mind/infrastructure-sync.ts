@@ -23,27 +23,28 @@ export function infrastructureHashPath(mindName: string): string {
   return resolve(stateDir(mindName), HASH_FILE);
 }
 
-/** The infrastructure hash a mind last had applied, or null when none is recorded. */
-export function readAppliedInfrastructureHash(mindName: string): string | null {
+type HashRecord = { hash?: unknown; unreadableWarned?: unknown };
+
+function readRecord(mindName: string): HashRecord {
   const path = infrastructureHashPath(mindName);
-  if (!existsSync(path)) return null;
+  if (!existsSync(path)) return {};
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as { hash?: unknown };
-    return typeof parsed?.hash === "string" ? parsed.hash : null;
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as HashRecord;
+    return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     // Unreadable reads as "never recorded": the next pass reruns a backfill that
     // adds only what is missing, which is the cheap direction to be wrong in.
-    return null;
+    return {};
   }
 }
 
-/** Record the infrastructure hash just applied — tmp + rename, best-effort. */
-export function writeAppliedInfrastructureHash(mindName: string, hash: string): void {
+/** tmp + rename, best-effort. */
+function writeRecord(mindName: string, record: HashRecord): void {
   const path = infrastructureHashPath(mindName);
   const tmp = `${path}.tmp`;
   try {
     mkdirSync(resolve(path, ".."), { recursive: true });
-    writeFileSync(tmp, `${JSON.stringify({ hash }, null, 2)}\n`);
+    writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`);
     renameSync(tmp, path);
   } catch (err) {
     rmSync(tmp, { force: true });
@@ -51,11 +52,35 @@ export function writeAppliedInfrastructureHash(mindName: string, hash: string): 
   }
 }
 
+/** The infrastructure hash a mind last had applied, or null when none is recorded. */
+export function readAppliedInfrastructureHash(mindName: string): string | null {
+  const { hash } = readRecord(mindName);
+  return typeof hash === "string" ? hash : null;
+}
+
+/** Record the infrastructure hash just applied. */
+export function writeAppliedInfrastructureHash(mindName: string, hash: string): void {
+  writeRecord(mindName, { hash });
+}
+
+/** The infrastructure hash whose unreadable files were last warned about, if any. */
+export function readUnreadableWarnedHash(mindName: string): string | null {
+  const { unreadableWarned } = readRecord(mindName);
+  return typeof unreadableWarned === "string" ? unreadableWarned : null;
+}
+
+/** Record that unreadable files were warned about under `hash`, keeping the applied hash. */
+export function writeUnreadableWarnedHash(mindName: string, hash: string): void {
+  writeRecord(mindName, { ...readRecord(mindName), unreadableWarned: hash });
+}
+
 /** Collaborators of {@link syncMindInfrastructure}, injectable for tests. */
 export type SyncInfrastructureDeps = {
   currentHash: (template: string) => string;
   appliedHash: (name: string) => string | null;
   recordHash: (name: string, hash: string) => void;
+  warnedHash: (name: string) => string | null;
+  recordWarned: (name: string, hash: string) => void;
   backfill: typeof backfillInitInfrastructure;
   chown: (dir: string, name: string) => Promise<void>;
 };
@@ -64,6 +89,8 @@ const defaultDeps: SyncInfrastructureDeps = {
   currentHash: computeInfrastructureHash,
   appliedHash: readAppliedInfrastructureHash,
   recordHash: writeAppliedInfrastructureHash,
+  warnedHash: readUnreadableWarnedHash,
+  recordWarned: writeUnreadableWarnedHash,
   backfill: backfillInitInfrastructure,
   chown: chownMindDir,
 };
@@ -78,7 +105,8 @@ const defaultDeps: SyncInfrastructureDeps = {
  *
  * The hash is recorded only once the whole run has succeeded, so anything short of
  * that is retried at the next start: a backfill that throws, a file it could not read,
- * or a chown that fails. The chown covers `home/.local` whenever the hash was stale,
+ * or a chown that fails. An unreadable file is warned about once per hash, not once
+ * per start. The chown covers `home/.local` whenever the hash was stale,
  * not only when this run wrote something — a retry after a failed chown writes
  * nothing, and gating on writes would record the hash over root-owned hooks the mind
  * could then never edit.
@@ -115,9 +143,16 @@ export async function syncMindInfrastructure(
     const local = resolve(home, ".local");
     if (existsSync(local)) await deps.chown(local, entry.name);
     if (unreadable.length > 0) {
-      ilog.warn(`could not read ${unreadable.length} infrastructure files for ${entry.name}`, {
-        unreadable,
-      });
+      // Retried every start, but warned about once per infrastructure hash: a link or
+      // FIFO the mind planted under `.local/` stays unreadable for good, and a warning
+      // on every start forever says nothing the first one didn't (#1266).
+      const msg = `could not read ${unreadable.length} infrastructure files for ${entry.name}`;
+      if (deps.warnedHash(entry.name) === current) {
+        ilog.debug(msg, { unreadable });
+      } else {
+        ilog.warn(msg, { unreadable });
+        deps.recordWarned(entry.name, current);
+      }
       return;
     }
     deps.recordHash(entry.name, current);

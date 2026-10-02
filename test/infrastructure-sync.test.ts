@@ -1,14 +1,25 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { after, describe, it } from "node:test";
 import {
   readAppliedInfrastructureHash,
+  readUnreadableWarnedHash,
   type SyncInfrastructureDeps,
   syncAllMindInfrastructure,
   syncMindInfrastructure,
   writeAppliedInfrastructureHash,
+  writeUnreadableWarnedHash,
 } from "../packages/daemon/src/lib/mind/infrastructure-sync.js";
 import { seedInitLedger } from "../packages/daemon/src/lib/mind/init-ledger.js";
 import {
@@ -69,6 +80,14 @@ describe("hashInfrastructure", () => {
     assert.notEqual(hashInfrastructure(dir, null), edited);
   });
 
+  it("changes when only a file's exec bit changes", () => {
+    // A mode fix has to reach existing minds like a content fix does (#1274).
+    const dir = fixture();
+    const before = hashInfrastructure(dir, null);
+    chmodSync(resolve(dir, `.init/${NOTICES}`), 0o755);
+    assert.notEqual(hashInfrastructure(dir, null), before);
+  });
+
   it("changes when only the shipped-hash ledger changes", () => {
     // A release that only records an old version as ours makes it refreshable.
     const dir = fixture();
@@ -107,6 +126,9 @@ describe("applied infrastructure hash record", () => {
     assert.equal(readAppliedInfrastructureHash(name), null);
     writeAppliedInfrastructureHash(name, "abc");
     assert.equal(readAppliedInfrastructureHash(name), "abc");
+    writeUnreadableWarnedHash(name, "def");
+    assert.equal(readAppliedInfrastructureHash(name), "abc", "a warning keeps the applied hash");
+    assert.equal(readUnreadableWarnedHash(name), "def");
     writeFileSync(resolve(stateDir(name), "init-infrastructure-hash.json"), "{not json");
     assert.equal(readAppliedInfrastructureHash(name), null);
   });
@@ -130,13 +152,24 @@ describe("syncMindInfrastructure", () => {
   }) {
     let applied = opts.applied;
     let chownFailures = opts.chownFailures ?? 0;
-    const calls = { backfill: 0, chown: [] as string[], recorded: [] as string[] };
+    let warned: string | null = null;
+    const calls = {
+      backfill: 0,
+      chown: [] as string[],
+      recorded: [] as string[],
+      warned: [] as string[],
+    };
     const deps: SyncInfrastructureDeps = {
       currentHash: () => "current",
       appliedHash: () => applied,
       recordHash: (_name, hash) => {
         applied = hash;
         calls.recorded.push(hash);
+      },
+      warnedHash: () => warned,
+      recordWarned: (_name, hash) => {
+        warned = hash;
+        calls.warned.push(hash);
       },
       backfill: async () => {
         calls.backfill++;
@@ -157,7 +190,7 @@ describe("syncMindInfrastructure", () => {
   it("does nothing when the mind already has the current infrastructure", async () => {
     const { deps, calls } = spies({ applied: "current" });
     await syncMindInfrastructure(entry("infra-current"), deps);
-    assert.deepEqual(calls, { backfill: 0, chown: [], recorded: [] });
+    assert.deepEqual(calls, { backfill: 0, chown: [], recorded: [], warned: [] });
   });
 
   it("backfills, chowns home/.local, and records when the hash moved", async () => {
@@ -174,7 +207,7 @@ describe("syncMindInfrastructure", () => {
   it("does not record the hash when the backfill fails, so the next start retries", async () => {
     const { deps, calls } = spies({ applied: "old", throws: true });
     await syncMindInfrastructure(entry("infra-fail"), deps);
-    assert.deepEqual(calls, { backfill: 1, chown: [], recorded: [] });
+    assert.deepEqual(calls, { backfill: 1, chown: [], recorded: [], warned: [] });
   });
 
   it("retries a failed chown on the next run even though nothing new lands", async () => {
@@ -207,6 +240,24 @@ describe("syncMindInfrastructure", () => {
     assert.deepEqual(calls.recorded, []);
   });
 
+  it("retries a permanently unreadable file every start but warns once per hash", async () => {
+    // A FIFO the mind planted under `.local/` never becomes readable (#1266).
+    const e = entry("infra-unreadable-once");
+    const { deps, calls } = spies({
+      applied: "old",
+      result: { ...empty, unreadable: [NOTICES] },
+    });
+    await syncMindInfrastructure(e, deps);
+    await syncMindInfrastructure(e, deps);
+    assert.equal(calls.backfill, 2, "still retried");
+    assert.deepEqual(calls.warned, ["current"], "warned once");
+
+    deps.currentHash = () => "next release";
+    await syncMindInfrastructure(e, deps);
+    assert.deepEqual(calls.warned, ["current", "next release"], "a new hash warns again");
+    assert.deepEqual(calls.recorded, []);
+  });
+
   it("skips a registered mind whose directory is gone", async () => {
     const { deps, calls } = spies({ applied: null });
     const e = entry("infra-gone");
@@ -217,7 +268,7 @@ describe("syncMindInfrastructure", () => {
 });
 
 describe("syncAllMindInfrastructure", () => {
-  const names = ["infra-e2e", "infra-manual", "infra-edited", "infra-stop"];
+  const names = ["infra-e2e", "infra-manual", "infra-edited", "infra-stop", "infra-mode"];
   after(async () => {
     for (const name of names) {
       await removeMind(name);
@@ -287,6 +338,21 @@ describe("syncAllMindInfrastructure", () => {
       readAppliedInfrastructureHash("infra-edited"),
       computeInfrastructureHash("claude"),
     );
+  });
+
+  it("restores the exec bit on Volute's own bytes, and leaves an edited shim alone", async () => {
+    // An import that dropped modes left `.local/bin/volute` 0644 and off PATH (#1274).
+    const home = await createdMind("infra-mode", 49105);
+    const shim = resolve(home, ".local/bin/volute");
+    chmodSync(shim, 0o644);
+    const { refreshed } = await backfillInitInfrastructure(home, "claude", "infra-mode");
+    assert.deepEqual(refreshed, [".local/bin/volute"]);
+    assert.notEqual(statSync(shim).mode & 0o111, 0, "the wrapper must be executable again");
+
+    writeFileSync(shim, "#!/bin/sh\n# the mind's own wrapper\n");
+    chmodSync(shim, 0o644);
+    await backfillInitInfrastructure(home, "claude", "infra-mode");
+    assert.equal(statSync(shim).mode & 0o777, 0o644, "an edited file's mode is the mind's");
   });
 
   it("reports a present file the backfill could not read", async () => {

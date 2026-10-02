@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import {
+  chmodSync,
   cpSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -1423,6 +1426,63 @@ describe("autoUpdateMindSkills", () => {
     rmSync(join(testMindDir, "home", ".local", "bin", "tool"));
     await autoUpdateMindSkills();
     assert.ok(!existsSync(join(testMindDir, "home", ".local", "bin", "tool")));
+  });
+
+  it("makes an exact generated shim executable again, and leaves an edited one alone", async () => {
+    // An import that dropped modes leaves the skill's command off PATH (#1274).
+    const source = createSkillSource("auto-test-skill");
+    mkdirSync(join(source, "scripts"), { recursive: true });
+    writeFileSync(join(source, "scripts", "tool.ts"), "console.log(1)\n");
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: auto-test-skill\ndescription: d\nmetadata:\n  bin: scripts/tool.ts\n---\n\nBody\n",
+    );
+    await importSkillFromDir(source, "volute");
+    await addMind(testMindName, 4999);
+    await installSkill(testMindName, testMindDir, "auto-test-skill");
+    const bin = join(testMindDir, "home", ".local", "bin", "tool");
+    chmodSync(bin, 0o644);
+
+    await autoUpdateMindSkills();
+    assert.equal(statSync(bin).mode & 0o777, 0o755);
+
+    // The mind's own version of the shim is not Volute's to chmod.
+    writeFileSync(bin, "#!/bin/bash\necho mine\n");
+    chmodSync(bin, 0o644);
+    await autoUpdateMindSkills();
+    assert.equal(statSync(bin).mode & 0o777, 0o644);
+  });
+
+  it("does not chmod through a hard link or symlink planted at a shim", async () => {
+    // The daemon is root under isolation: a link at the shim must not let a mind
+    // make some other file executable.
+    const source = createSkillSource("auto-test-skill");
+    mkdirSync(join(source, "scripts"), { recursive: true });
+    writeFileSync(join(source, "scripts", "tool.ts"), "console.log(1)\n");
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: auto-test-skill\ndescription: d\nmetadata:\n  bin: scripts/tool.ts\n---\n\nBody\n",
+    );
+    await importSkillFromDir(source, "volute");
+    await addMind(testMindName, 4999);
+    await installSkill(testMindName, testMindDir, "auto-test-skill");
+    const bin = join(testMindDir, "home", ".local", "bin", "tool");
+    const shim = readFileSync(bin, "utf-8");
+
+    const outside = mkdtempSync(join(tmpdir(), "shim-link-"));
+    try {
+      for (const link of [linkSync, symlinkSync]) {
+        const target = join(outside, link.name);
+        writeFileSync(target, shim, { mode: 0o644 });
+        chmodSync(target, 0o644);
+        rmSync(bin);
+        link(target, bin);
+        await autoUpdateMindSkills();
+        assert.equal(statSync(target).mode & 0o777, 0o644, `${link.name} target left alone`);
+      }
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("skips minds without skills directories", async () => {

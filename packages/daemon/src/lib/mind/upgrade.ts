@@ -14,10 +14,11 @@ import {
   listFiles,
   type TemplateManifest,
 } from "../template/template.js";
-import { computeTemplateHash } from "../template/template-hash.js";
+import { computeInfrastructureHash, computeTemplateHash } from "../template/template-hash.js";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { repairThreadBatchConfig } from "./event-routes.js";
+import { writeAppliedInfrastructureHash } from "./infrastructure-sync.js";
 import { chownMindDir, isIsolationEnabled, mindFileOwner } from "./isolation.js";
 import { beginUpgrade } from "./join-lock.js";
 import { repairMechanicsDoc } from "./mechanics-doc.js";
@@ -606,7 +607,7 @@ async function mergeUpgradeAndRestart(
   // backfillInitInfrastructure throws rather than exiting, so a broken template
   // install is a warning here, not a failed upgrade.
   try {
-    const { added, refreshed, withheld } = await backfillInitInfrastructure(
+    const { added, refreshed, withheld, unreadable } = await backfillInitInfrastructure(
       resolve(dir, "home"),
       template,
       mindName,
@@ -628,6 +629,11 @@ async function mergeUpgradeAndRestart(
       log.debug(`withheld ${withheld.length} infrastructure files ${mindName} removed`, {
         withheld,
       });
+    }
+    // What the daemon-start sync would otherwise redo, as a no-op, on the next start
+    // (#1266). Recorded on the same terms it records them: nothing left unread.
+    if (unreadable.length === 0) {
+      writeAppliedInfrastructureHash(mindName, computeInfrastructureHash(template));
     }
   } catch (err) {
     log.warn(`failed to backfill infrastructure files for ${mindName}`, log.errorData(err));
