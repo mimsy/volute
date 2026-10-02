@@ -253,14 +253,16 @@ async function isRepoValid(dir: string, isolation?: IsolationInfo): Promise<bool
 
 /**
  * Give `path` `mode` through a handle opened without following a link, refusing
- * anything that isn't a `dir`/file the daemon owns.
+ * anything that isn't a `dir`/file the daemon owns. A file with a second name is
+ * refused too: the chmod would reach whatever else that name is.
  */
 function setDaemonMode(path: string, mode: number, dir: boolean): void {
   const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
   const fd = openSync(path, dir ? flags | constants.O_DIRECTORY : flags);
   try {
     const st = fstatSync(fd);
-    if ((dir ? !st.isDirectory() : !st.isFile()) || st.uid !== process.getuid?.()) {
+    const wrongKind = dir ? !st.isDirectory() : !st.isFile() || isMultiplyLinkedFile(st);
+    if (wrongKind || st.uid !== process.getuid?.()) {
       throw new Error(`${path} is not the daemon's own ${dir ? "directory" : "file"}`);
     }
     fchmodSync(fd, mode);

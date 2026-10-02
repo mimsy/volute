@@ -910,6 +910,27 @@ describe("pages collaborative repo", () => {
     assert.match(warn.mock.calls.map((c) => String(c.arguments[0])).join("\n"), /replacing/);
   });
 
+  it("replaces a hard-linked config without touching the file it is linked to", async (t) => {
+    t.mock.method(console, "warn", () => {});
+    await ensurePagesRepo(dataDir);
+    const repo = pagesRepoDir(dataDir);
+    git(repo, "branch", "some-mind");
+    const config = resolve(repo, ".git", "config");
+    // A secret the daemon can read and a mind can't, with config made a second name for it.
+    const secret = resolve(voluteHome(), "test-pages-secret");
+    rmSync(secret, { force: true });
+    writeFileSync(secret, "[core]\n\tbare = false\n", { mode: 0o600 });
+    rmSync(config);
+    linkSync(secret, config);
+
+    await ensurePagesRepo(dataDir);
+
+    assert.equal(statSync(secret).mode & 0o777, 0o600);
+    assert.equal(statSync(secret).nlink, 1);
+    assert.ok(lstatSync(config).isFile());
+    assert.equal(git(repo, "rev-parse", "some-mind"), git(repo, "rev-parse", "main"));
+  });
+
   it("refuses a repo directory that is a link, without wiping where it points", async () => {
     const repo = pagesRepoDir(dataDir);
     const elsewhere = resolve(voluteHome(), "test-pages-repo-elsewhere");
