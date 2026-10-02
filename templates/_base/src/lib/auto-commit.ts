@@ -49,6 +49,8 @@ type Staging = {
   failed: string[];
   /** The failed ones whose git was killed by a signal. */
   killed: Set<string>;
+  /** The failed ones gone from disk and never tracked: nothing there to add, ever. */
+  vanished: Set<string>;
 };
 
 /**
@@ -68,14 +70,18 @@ async function stage(
   const add = (ps: string[]) => git(["--literal-pathspecs", "add", "--", ...ps]);
 
   const all = await add(paths);
-  if (all.code === 0) return { staged: paths, ignored: [], failed: [], killed: new Set() };
-  if (all.killed) return { staged: [], ignored: [], failed: paths, killed: new Set(paths) };
+  const none = new Set<string>();
+  if (all.code === 0)
+    return { staged: paths, ignored: [], failed: [], killed: none, vanished: none };
+  if (all.killed) {
+    return { staged: [], ignored: [], failed: paths, killed: new Set(paths), vanished: none };
+  }
 
   const flagged = await ignoredAmong(paths, git);
   const ignored = paths.filter((p) => flagged.has(p));
   const rest = paths.filter((p) => !flagged.has(p));
   if (rest.length === 0 || (await add(rest)).code === 0) {
-    return { staged: rest, ignored, failed: [], killed: new Set() };
+    return { staged: rest, ignored, failed: [], killed: none, vanished: none };
   }
   const staged: string[] = [];
   const failed: string[] = [];
@@ -88,7 +94,25 @@ async function stage(
       if (one.killed) killed.add(p);
     }
   }
-  return { staged, ignored, failed, killed };
+  return { staged, ignored, failed, killed, vanished: await vanishedAmong(failed, cwd, git) };
+}
+
+/**
+ * Which failed paths are gone from disk and not tracked — written and removed within a
+ * turn, say. A tracked file's deletion is not among them: it stages fine, so a failed
+ * add of one is as worth retrying as any other. If git can't say, none are.
+ */
+async function vanishedAmong(
+  failed: string[],
+  cwd: string,
+  git: (a: string[]) => Promise<Run>,
+): Promise<Set<string>> {
+  const gone = failed.filter((p) => !existsSync(resolve(cwd, p)));
+  if (gone.length === 0) return new Set();
+  const ls = await git(["--literal-pathspecs", "ls-files", "-z", "--", ...gone]);
+  if (ls.code !== 0) return new Set();
+  const tracked = new Set(ls.stdout.split("\0").filter(Boolean));
+  return new Set(gone.filter((p) => !tracked.has(p)));
 }
 
 /**
@@ -168,16 +192,15 @@ function requeue(
   into: Set<string>,
   retried: Set<string>,
   cwd: string,
-  addFailed = false,
+  vanished: (f: string) => boolean = () => false,
 ): string[] {
   const dropped: string[] = [];
   for (const f of files) {
     // Killed first: a killed add of a tracked file's deletion must be retried, though
     // the file is gone — the deletion stages fine.
     if (killed(f)) into.add(f);
-    // A failed add of a file no longer on disk (and not killed) has nothing left to
-    // add, so it would only fail again.
-    else if (addFailed && !existsSync(resolve(cwd, f))) dropped.push(f);
+    // A failed add of a file that's gone and was never tracked would only fail again.
+    else if (vanished(f)) dropped.push(f);
     else if (retried.delete(f)) dropped.push(f);
     else {
       retried.add(f);
@@ -263,11 +286,18 @@ async function commitPending(cwd: string): Promise<void> {
   // must never be named alongside files that really did commit, or the mind is
   // told its work is safe when it isn't (#656).
   if (filesToCommit.length > 0) {
-    const { staged, ignored, failed, killed } = await stage(filesToCommit, cwd);
+    const { staged, ignored, failed, killed, vanished } = await stage(filesToCommit, cwd);
     for (const f of staged) addRetried.delete(f);
     reportUnstaged(
       ignored,
-      requeue(failed, (f) => killed.has(f), pendingFiles, addRetried, cwd, true),
+      requeue(
+        failed,
+        (f) => killed.has(f),
+        pendingFiles,
+        addRetried,
+        cwd,
+        (f) => vanished.has(f),
+      ),
       "or survive a variant join",
     );
     // staged.length check guards against committing under a blank "Update "
@@ -327,7 +357,7 @@ async function commitPending(cwd: string): Promise<void> {
         pendingSharedFiles,
         addRetried,
         cwd,
-        true,
+        (f) => shared.vanished.has(f.slice(sharedPrefix.length)),
       ),
     );
     const changed =

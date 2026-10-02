@@ -548,6 +548,27 @@ exit 0
     }
   });
 
+  it("retries a deletion whose add failed for a passing reason", async () => {
+    const { trackFileChange, flushFileChanges } = await mod();
+    const lock = join(repoDir, ".git", "index.lock");
+    rmSync(join(repoDir, "ab.md"));
+    trackFileChange("ab.md", repoDir);
+    try {
+      writeFileSync(lock, "");
+      try {
+        await flushFileChanges(repoDir); // add fails on the lock, not killed
+      } finally {
+        rmSync(lock, { force: true });
+      }
+      await flushFileChanges(repoDir);
+      assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update ab.md");
+    } finally {
+      writeFileSync(join(repoDir, "ab.md"), "ab");
+      git(["add", "--", "ab.md"], repoDir);
+      git(["commit", "-qm", "restore ab.md"], repoDir);
+    }
+  });
+
   it("counts a kill against only the file whose git was killed", async () => {
     const { trackFileChange, flushFileChanges } = await mod();
     mkdirSync(join(repoDir, "real"), { recursive: true });
