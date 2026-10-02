@@ -1893,15 +1893,20 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       "../packages/daemon/src/lib/bridges/bridges.js"
     );
 
-    // Set up a test bridge config directly
-    setBridgeConfig("test-platform", {
+    // A fake platform is refused outright: its name keys bridges.json and a PID file.
+    const fakeRes = await daemonRequest("/api/v1/bridges/test-platform/mappings");
+    assert.equal(fakeRes.status, 400, await fakeRes.text());
+
+    // A real platform, configured directly and disabled, so no bridge process starts
+    // (or needs a credential) in CI.
+    setBridgeConfig("telegram", {
       enabled: false,
       defaultMind: TEST_MIND,
       channelMappings: {},
     });
 
     // Add mapping via API
-    const mapRes = await daemonRequest("/api/v1/bridges/test-platform/mappings", {
+    const mapRes = await daemonRequest("/api/v1/bridges/telegram/mappings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1912,34 +1917,34 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(mapRes.status, 200, `Map: ${await mapRes.clone().text()}`);
 
     // Read mappings
-    const mappingsRes = await daemonRequest("/api/v1/bridges/test-platform/mappings");
+    const mappingsRes = await daemonRequest("/api/v1/bridges/telegram/mappings");
     assert.equal(mappingsRes.status, 200);
     const mappings = (await mappingsRes.json()) as Record<string, string>;
     assert.equal(mappings["server/general"], "test-bridge-channel");
 
     // Remove mapping
     const unmapRes = await daemonRequest(
-      `/api/v1/bridges/test-platform/mappings/${encodeURIComponent("server/general")}`,
+      `/api/v1/bridges/telegram/mappings/${encodeURIComponent("server/general")}`,
       { method: "DELETE" },
     );
     assert.equal(unmapRes.status, 200);
 
     // Verify removed
-    const afterRes = await daemonRequest("/api/v1/bridges/test-platform/mappings");
+    const afterRes = await daemonRequest("/api/v1/bridges/telegram/mappings");
     const afterMappings = (await afterRes.json()) as Record<string, string>;
     assert.equal(afterMappings["server/general"], undefined);
 
-    // List bridges — should include test-platform
+    // List bridges — should include telegram
     const listRes = await daemonRequest("/api/v1/bridges");
     assert.equal(listRes.status, 200);
     const bridges = (await listRes.json()) as { platform: string; enabled: boolean }[];
     assert.ok(
-      bridges.some((b) => b.platform === "test-platform" && !b.enabled),
-      `Expected test-platform in bridges: ${JSON.stringify(bridges)}`,
+      bridges.some((b) => b.platform === "telegram" && !b.enabled),
+      `Expected telegram in bridges: ${JSON.stringify(bridges)}`,
     );
 
     // Clean up
-    removeBridgeConfig("test-platform");
+    removeBridgeConfig("telegram");
   });
 
   it("bridge inbound: puppet user created, message lands in channel", async () => {
@@ -2089,19 +2094,24 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       "../packages/daemon/src/lib/bridges/bridges.js"
     );
 
-    // Set up a fake bridge
-    setBridgeConfig("test-disable", {
+    // A fake platform is refused before the bridge manager sees it.
+    const fakeRes = await daemonRequest("/api/v1/bridges/test-disable", { method: "DELETE" });
+    assert.equal(fakeRes.status, 400, await fakeRes.text());
+
+    // A real platform's config, written behind the running daemon's back: nothing
+    // starts it, so no bridge process runs or needs a credential in CI.
+    setBridgeConfig("telegram", {
       enabled: true,
       defaultMind: TEST_MIND,
       channelMappings: {},
     });
 
     // Delete it via API
-    const delRes = await daemonRequest("/api/v1/bridges/test-disable", { method: "DELETE" });
+    const delRes = await daemonRequest("/api/v1/bridges/telegram", { method: "DELETE" });
     assert.equal(delRes.status, 200);
 
     // Verify it's gone (getBridgeConfig returns null for missing configs)
-    const config = getBridgeConfig("test-disable");
+    const config = getBridgeConfig("telegram");
     assert.equal(config, null);
   });
 
