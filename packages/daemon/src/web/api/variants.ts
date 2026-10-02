@@ -15,6 +15,7 @@ import {
   joinInProgress,
 } from "../../lib/mind/join-lock.js";
 import { createVariant, mergeVariant } from "../../lib/mind/lifecycle.js";
+import { restartOntoMerge } from "../../lib/mind/merge-restart.js";
 import { findMind, findVariants, mindDir, setMindRunning } from "../../lib/mind/registry.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
 import { validateBranchName } from "../../lib/mind/variants.js";
@@ -313,13 +314,15 @@ const app = new Hono<AuthEnv>()
       let restartWarning = merge.warning;
       const manager = getMindManager();
       try {
-        // A parent waiting out a crash backoff is stopped too: that cancels its pending
-        // restart, which would otherwise race the start below (#1114).
-        if (manager.isUpOrRecovering(mindName)) {
-          await manager.stopMind(mindName);
+        const restarted = await restartOntoMerge(manager, mindName, merge.context);
+        if (restarted === "asleep") {
+          restartWarning = [
+            restartWarning,
+            `${mindName} is asleep; it hears about the join when it wakes.`,
+          ]
+            .filter(Boolean)
+            .join(" ");
         }
-        manager.setPendingContext(mindName, merge.context);
-        await manager.startMind(mindName);
       } catch (e) {
         restartWarning = `Merge succeeded but mind restart failed: ${e instanceof Error ? e.message : String(e)}`;
         log.warn(restartWarning);
