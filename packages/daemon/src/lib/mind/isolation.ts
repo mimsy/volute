@@ -31,6 +31,16 @@ export function isIsolationEnabled(): boolean {
   return process.env.VOLUTE_ISOLATION === "user";
 }
 
+/**
+ * Whether the isolation wrap leaves a supervisor leading the process group it
+ * spawns: Linux's `runuser`, which SIGKILLs its child 2s after it is SIGTERMed
+ * itself — so a graceful stop must signal past it (`terminateGroup`, #1364).
+ * macOS's `sudo` relays a SIGTERM to its command and waits, with no timed kill.
+ */
+export function isolationSupervises(): boolean {
+  return isIsolationEnabled() && process.platform !== "darwin";
+}
+
 /** Username for a mind. Prefix configurable via VOLUTE_USER_PREFIX (default: "mind-"). */
 export function mindUserName(mindName: string): string {
   const err = validateMindName(mindName);

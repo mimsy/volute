@@ -9,6 +9,7 @@ import { getSystemName, readGlobalConfig } from "../config/setup.js";
 import {
   chownMindDir,
   isIsolationEnabled,
+  isolationSupervises,
   lockPrivateSubtrees,
   mindFileOwner,
   wrapForIsolation,
@@ -31,7 +32,7 @@ import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { buildMindBaseEnv, type IsolationMode } from "../util/mind-env.js";
-import { terminateGroup } from "../util/process-group.js";
+import { stopGroup } from "../util/process-group.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
 import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
@@ -187,10 +188,19 @@ export function composeMindEnv(opts: {
   };
 }
 
+/**
+ * Whether a mind spawned under `isolationMode` has a supervisor leading its process
+ * group that a stop must signal past (`terminateGroup`, #1364). Read off the mode
+ * the wrap reported, like the mode the mind is told.
+ */
+export function stopSparesLeader(isolationMode: IsolationMode): boolean {
+  return isolationMode === "user" && isolationSupervises();
+}
+
 type TrackedMind = {
   child: ChildProcess;
   port: number;
-  /** The child is `runuser`, supervising the mind as its OS user — see `terminateGroup`. */
+  /** A supervisor (`runuser`) leads the mind's process group — see `terminateGroup`. */
   supervised: boolean;
 };
 
@@ -303,6 +313,8 @@ export async function buildPendingContextMessage(
 
 export class MindManager {
   private minds = new Map<string, TrackedMind>();
+  /** Where a stop lists a supervised mind's processes; a test points it at a fake. */
+  private procDir = "/proc";
   private stopping = new Set<string>();
   private shuttingDown = false;
   private restartTracker = new RestartTracker();
@@ -658,7 +670,11 @@ export class MindManager {
 
     const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
-    this.minds.set(name, { child, port, supervised: spawnCmd === "runuser" });
+    this.minds.set(name, {
+      child,
+      port,
+      supervised: stopSparesLeader(isolationMode),
+    });
 
     // Pipe output to log file and check for listening
     child.stdout?.pipe(logStream);
@@ -1079,25 +1095,12 @@ export class MindManager {
       const { child } = tracked;
       this.minds.delete(name);
 
-      await new Promise<void>((resolve) => {
-        // Force kill after 5s — but disarm it on a clean exit so a stray
-        // group-SIGKILL can't later fire against a reused pgid.
-        const killTimer = setTimeout(() => {
-          try {
-            process.kill(-child.pid!, "SIGKILL");
-          } catch {}
-          resolve();
-        }, 5000);
-        child.on("exit", () => {
-          clearTimeout(killTimer);
-          resolve();
-        });
-        // Signal the entire process group (node + any children it spawns) — but
-        // past runuser, whose own SIGTERM handling would SIGKILL the mind 2s in.
-        terminateGroup(child.pid!, { spareLeader: tracked.supervised }).catch(() => {
-          clearTimeout(killTimer);
-          resolve();
-        });
+      // SIGTERM the group (past runuser, whose own SIGTERM handling would SIGKILL
+      // the mind 2s in — #1364), give it 5s, then SIGKILL whatever is left.
+      await stopGroup(child, {
+        spareLeader: tracked.supervised,
+        graceMs: 5000,
+        procDir: this.procDir,
       });
 
       this.stopping.delete(name);

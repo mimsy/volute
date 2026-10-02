@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { describe, it } from "node:test";
-import { MindManager } from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import { MindManager, stopSparesLeader } from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import log from "../packages/daemon/src/lib/util/logger.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -101,33 +105,102 @@ describe("MindManager crash-recovery exit guard", () => {
   });
 });
 
-describe("MindManager.stopMind kill timer", () => {
-  it("clears the SIGKILL timer on a clean exit", async () => {
-    await addMind("stopper-test", 4993);
-    const killSignals: string[] = [];
+describe("MindManager.stopMind signals", () => {
+  /** Stop a fake tracked mind with process.kill stubbed; returns what was sent. */
+  async function stopFake(
+    entry: { supervised: boolean },
+    opts: { procDir?: string } = {},
+  ): Promise<[number, string][]> {
+    const name = `stopper-${Math.random().toString(36).slice(2, 8)}`;
+    await addMind(name, 4993);
+    const sent: [number, string][] = [];
     const origKill = process.kill.bind(process);
     // Stub process.kill so the fake pid never touches a real process group.
-    (process as AnyMgr).kill = (_pid: number, sig?: string | number) => {
-      if (typeof sig === "string") killSignals.push(sig);
+    (process as AnyMgr).kill = (pid: number, sig?: string | number) => {
+      if (typeof sig === "string") sent.push([pid, sig]);
       return true;
     };
     try {
       const mgr = new MindManager() as AnyMgr;
+      if (opts.procDir) mgr.procDir = opts.procDir;
       const child = new EventEmitter() as AnyMgr;
-      child.pid = 999999;
-      mgr.minds.set("stopper-test", { child, port: 4993 });
-
-      const p = mgr.stopMind("stopper-test");
-      // Let withLock's microtask run so the exit listener + SIGTERM are wired up.
-      await delay(5);
+      Object.assign(child, { pid: 999999, exitCode: null, signalCode: null });
+      mgr.minds.set(name, { child, port: 4993, ...entry });
+      const p = mgr.stopMind(name);
+      // Let withLock and the group scan run so the SIGTERM is out.
+      await delay(20);
       child.emit("exit", 0);
       await p;
-
-      assert.ok(killSignals.includes("SIGTERM"), "sent SIGTERM to the group");
-      assert.ok(!killSignals.includes("SIGKILL"), "clean exit disarms the SIGKILL timer");
+      await delay(20);
+      return sent;
     } finally {
       (process as AnyMgr).kill = origKill;
-      await removeMind("stopper-test");
+      await removeMind(name);
+    }
+  }
+
+  it("SIGTERMs an unsupervised mind's group, and sweeps it once on a clean exit", async () => {
+    // The sweep goes out at once, never from a timer: a clean exit disarms the
+    // deadline, so no stray group-SIGKILL can later fire against a reused pgid.
+    assert.deepEqual(await stopFake({ supervised: false }), [
+      [-999999, "SIGTERM"],
+      [-999999, "SIGKILL"],
+    ]);
+  });
+
+  it("signals a runuser-supervised mind's processes past runuser (#1364)", async () => {
+    const proc = mkdtempSync(resolve(tmpdir(), "fake-proc-"));
+    try {
+      for (const [pid, comm] of [
+        [999999, "runuser"],
+        [1000000, "node"],
+      ] as const) {
+        mkdirSync(resolve(proc, String(pid)));
+        writeFileSync(
+          resolve(proc, String(pid), "stat"),
+          `${pid} (${comm}) S 1 999999 999999 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 ${pid} 0 0\n`,
+        );
+      }
+      assert.deepEqual(await stopFake({ supervised: true }, { procDir: proc }), [
+        [1000000, "SIGTERM"],
+        [-999999, "SIGKILL"],
+      ]);
+    } finally {
+      rmSync(proc, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the group, and logs it, when a supervised mind can't be listed", async () => {
+    const lines: string[] = [];
+    log.setOutput((line) => lines.push(line));
+    try {
+      const sent = await stopFake({ supervised: true }, { procDir: "/nonexistent-proc" });
+      assert.deepEqual(sent[0], [-999999, "SIGTERM"]);
+      assert.ok(lines.some((l) => l.includes("could not list process group 999999")));
+    } finally {
+      log.setOutput((line) => process.stderr.write(`${line}\n`));
+    }
+  });
+});
+
+describe("stopSparesLeader", () => {
+  const platform = process.platform;
+  const isolation = process.env.VOLUTE_ISOLATION;
+  const on = (p: string) => Object.defineProperty(process, "platform", { value: p });
+
+  it("is true only for user isolation on Linux, where runuser leads the group", () => {
+    try {
+      process.env.VOLUTE_ISOLATION = "user";
+      on("linux");
+      assert.equal(stopSparesLeader("user"), true);
+      assert.equal(stopSparesLeader("sandbox"), false);
+      assert.equal(stopSparesLeader("none"), false);
+      on("darwin"); // sudo relays the SIGTERM and has no timed kill
+      assert.equal(stopSparesLeader("user"), false);
+    } finally {
+      on(platform);
+      if (isolation === undefined) delete process.env.VOLUTE_ISOLATION;
+      else process.env.VOLUTE_ISOLATION = isolation;
     }
   });
 });

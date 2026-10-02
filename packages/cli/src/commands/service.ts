@@ -111,7 +111,8 @@ export async function reloadRewrittenUnit(
  * writes (#874, #1224). Setup is the only thing that ever writes it, so without this a
  * fix to the unit reaches new installs only.
  *
- * Applies only the known migrations (line removals); anything else that differs is
+ * Applies only the known migrations (line removals, and the few additions that only
+ * change how the service stops); anything else that differs is
  * the host's and is shown, not changed. Reloads the definition but never restarts:
  * `volute update` runs this just before its own restart, and a host running it by
  * hand chooses when to interrupt the minds.
@@ -145,16 +146,18 @@ async function reconcile(): Promise<void> {
   }
   if (!plan.rewrite) return;
 
-  console.log(`${installed.path} carries lines this version of volute no longer writes:`);
-  for (const { line, why } of plan.migrated) console.log(`  - ${line}  (${why})`);
+  console.log(`${installed.path} needs these changes for this version of volute:`);
+  for (const { line, why, action } of plan.migrated) {
+    console.log(`  ${action === "add" ? "+" : "-"} ${line}  (${why})`);
+  }
   if (process.getuid?.() !== 0) {
-    console.error("Removing them needs root: sudo volute service reconcile");
+    console.error("Applying them needs root: sudo volute service reconcile");
     process.exit(1);
   }
   writeFileSync(installed.path, plan.rewrite);
   if (installed.kind === "systemd") await reloadRewrittenUnit(installed.path);
   console.log(
-    `Removed them. The change takes effect when the service next restarts: volute restart`,
+    `Applied them. The change takes effect when the service next restarts: volute restart`,
   );
 }
 

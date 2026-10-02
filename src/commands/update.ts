@@ -100,9 +100,9 @@ const cmd = command({
         installed && "text" in installed ? planServiceFile(installed.kind, installed.text) : null;
       if (installed && plan?.status === "reviewed" && plan.rewrite) {
         console.log(
-          `\n${installed.path} carries lines this version of volute no longer writes.\n` +
+          `\n${installed.path} needs changes for this version of volute.\n` +
             "To see them: volute service reconcile\n" +
-            "To remove them and restart: sudo volute service reconcile && volute restart",
+            "To apply them and restart: sudo volute service reconcile && volute restart",
         );
       }
       return;

@@ -83,7 +83,35 @@ describe("planServiceFile (systemd)", () => {
     assert.deepEqual(p.customised, { missing: ["RestartSec=5"], extra: ["RestartSec=10"] });
   });
 
-  it("never adds a line the installed unit lacks", () => {
+  // #1364: under the default control-group KillMode, a stop SIGTERMs each mind's
+  // runuser, which SIGKILLs the mind 2s later — whatever grace the daemon gives it.
+  it("writes KillMode=mixed so a stop's SIGTERM reaches only the daemon", () => {
+    assert.ok(current.split("\n").includes("KillMode=mixed"));
+  });
+
+  it("adds KillMode=mixed to an otherwise-stock pre-#1364 unit", () => {
+    const old = current.replace("KillMode=mixed\n", "");
+    const p = plan(old);
+    assert.equal(p.rewrite, current);
+    assert.deepEqual(p.migrated, [
+      { line: "KillMode=mixed", why: p.migrated[0].why, action: "add" },
+    ]);
+    assert.equal(p.customised, null);
+  });
+
+  it("adds KillMode=mixed after a host's tuned RestartSec too", () => {
+    const tuned = current.replace("RestartSec=5", "RestartSec=10");
+    const p = plan(tuned.replace("KillMode=mixed\n", ""));
+    assert.equal(p.rewrite, tuned);
+  });
+
+  it("leaves a host's own KillMode alone", () => {
+    const p = plan(current.replace("KillMode=mixed", "KillMode=process"));
+    assert.equal(p.rewrite, null);
+    assert.deepEqual(p.customised, { missing: ["KillMode=mixed"], extra: ["KillMode=process"] });
+  });
+
+  it("never adds a line the installed unit lacks beyond the stop-only additions", () => {
     // A unit written without ProtectHome (setup's old homedir() check) keeps running without it.
     const p = plan(
       current

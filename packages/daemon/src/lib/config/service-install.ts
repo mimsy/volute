@@ -203,6 +203,12 @@ const PROTECT_HOME_DIRS = ["/home/", "/root/", "/run/user/"];
  * `--shared=group` silently re-breaks publishing on every system install, which is
  * exactly how this shipped broken. `test/setup.test.ts` pins its absence.
  *
+ * `KillMode=mixed` sends a stop's SIGTERM to the daemon alone, which stops each mind
+ * with its own grace, and SIGKILLs whatever is left once it exits. The default
+ * (`control-group`) SIGTERMs every process in the unit at once — including each
+ * mind's `runuser`, which answers by SIGKILLing its mind 2s later (#1364), so every
+ * `volute restart`/`update`/`down` cut each mind's shutdown to 2s.
+ *
  * Existing installs pick up changes here through `volute service reconcile`, which
  * `volute update` runs before its restart (#874, #1224).
  */
@@ -225,6 +231,7 @@ export function generateSystemUnit(voluteBin: string, port?: number, host?: stri
     "Environment=VOLUTE_ISOLATION=user",
     "Restart=on-failure",
     "RestartSec=5",
+    "KillMode=mixed",
     "ProtectSystem=true",
     `ReadWritePaths=${SYSTEM_DATA_DIR} /minds`,
     "PrivateTmp=yes",
@@ -242,10 +249,11 @@ export function generateSystemUnit(voluteBin: string, port?: number, host?: stri
 
 /**
  * Lines a past release stopped writing, which an existing install should shed.
- * Migrations only ever remove: adding a line to a unit that has run fine without it
- * (a `ProtectHome=yes`, say) risks a daemon that no longer starts, and with it every
- * mind on the host. Anything else that differs from what setup writes now is left
- * for the host to act on — see `planServiceFile`.
+ * Migrations remove: adding a line to a unit that has run fine without it (a
+ * `ProtectHome=yes`, say) risks a daemon that no longer starts, and with it every
+ * mind on the host — `SYSTEMD_ADDITIONS` below holds the narrow exceptions.
+ * Anything else that differs from what setup writes now is left for the host to
+ * act on — see `planServiceFile`.
  */
 const SYSTEMD_MIGRATIONS: { line: RegExp; why: string }[] = [
   {
@@ -255,6 +263,23 @@ const SYSTEMD_MIGRATIONS: { line: RegExp; why: string }[] = [
   {
     line: /^Environment=CLAUDE_CONFIG_DIR=/,
     why: "minds keep their own Claude config under their own HOME (#77)",
+  },
+];
+
+/**
+ * Lines a past release did not write, which an existing install should gain. A
+ * stricter bar than removal, for the reason above: only a line that only changes
+ * how the service *stops* belongs here, never one that could stop it starting. Each
+ * goes in after the first line matching an `after` pattern, tried in order, and is
+ * left out when the unit already sets its directive (`unless`) — a host's own value
+ * is theirs.
+ */
+const SYSTEMD_ADDITIONS: { line: string; unless: RegExp; after: RegExp[]; why: string }[] = [
+  {
+    line: "KillMode=mixed",
+    unless: /^KillMode=/,
+    after: [/^RestartSec=/, /^ExecStart=/],
+    why: "a stop's SIGTERM reaches each mind's runuser, which SIGKILLs the mind 2s later (#1364)",
   },
 ];
 
@@ -306,8 +331,8 @@ export type ServiceFilePlan =
       status: "reviewed";
       /** The file to write, or null when no migration applies. */
       rewrite: string | null;
-      /** Lines the migrations remove, each with the reason. */
-      migrated: { line: string; why: string }[];
+      /** Lines the migrations remove or add, each with the reason. */
+      migrated: { line: string; why: string; action: "remove" | "add" }[];
       /**
        * How the file (after migrations) still differs from what setup writes now, or
        * null when it matches. A difference is the host's customisation — or a change
@@ -340,13 +365,22 @@ export function planServiceFile(kind: ServiceFileKind, installed: string): Servi
       ? generateSystemUnit(args.voluteBin, args.port, args.host)
       : generateSystemPlist(args.voluteBin, { port: args.port, host: args.host });
 
-  const migrated: { line: string; why: string }[] = [];
+  const migrated: { line: string; why: string; action: "remove" | "add" }[] = [];
   const kept: string[] = [];
   for (const line of installed.split("\n")) {
     const migration =
       kind === "systemd" ? SYSTEMD_MIGRATIONS.find((m) => m.line.test(line.trim())) : undefined;
-    if (migration) migrated.push({ line: line.trim(), why: migration.why });
+    if (migration) migrated.push({ line: line.trim(), why: migration.why, action: "remove" });
     else kept.push(line);
+  }
+  for (const addition of kind === "systemd" ? SYSTEMD_ADDITIONS : []) {
+    if (kept.some((l) => addition.unless.test(l.trim()))) continue;
+    const at = addition.after
+      .map((re) => kept.findIndex((l) => re.test(l.trim())))
+      .find((i) => i !== -1);
+    if (at === undefined) continue;
+    kept.splice(at + 1, 0, addition.line);
+    migrated.push({ line: addition.line, why: addition.why, action: "add" });
   }
   const after = kept.join("\n");
   return {

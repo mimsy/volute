@@ -1,6 +1,8 @@
 import { execFile as execFileCb, execFileSync, spawn } from "node:child_process";
-import { wrapForIsolation } from "../mind/isolation.js";
+import { isolationSupervises, wrapForIsolation } from "../mind/isolation.js";
+import log from "./logger.js";
 import { buildMindBaseEnv } from "./mind-env.js";
+import { terminateGroup } from "./process-group.js";
 
 /**
  * Grace between SIGTERM and SIGKILL for a timed-out child's process group —
@@ -91,7 +93,10 @@ export async function exec(
   // scheduled mind script is precisely the mind-authored child #966 is about, and
   // it is the one child here that is *always* mind-authored.
   if (options?.timeout) {
-    return execTimed(wrappedCmd, wrappedArgs, options.timeout, env, options);
+    return execTimed(wrappedCmd, wrappedArgs, options.timeout, env, {
+      ...options,
+      spareLeader: !!options.mindName && isolationSupervises(),
+    });
   }
   return new Promise((resolve, reject) => {
     const child = execFileCb(
@@ -168,7 +173,13 @@ function execTimed(
    * or a mind's lifecycle hook, the mind-authored code #966 exists for.
    */
   env: NodeJS.ProcessEnv,
-  options: { cwd?: string; maxBuffer?: number; stdin?: string | Buffer },
+  options: {
+    cwd?: string;
+    maxBuffer?: number;
+    stdin?: string | Buffer;
+    /** The isolation wrap's `runuser` leads the group — see `terminateGroup`. */
+    spareLeader?: boolean;
+  },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
@@ -236,7 +247,13 @@ function execTimed(
 
     const timer = setTimeout(() => {
       timedOut = true;
-      killGroup("SIGTERM");
+      // Past runuser, which would SIGKILL the script 2s in rather than after the
+      // grace below (#1364). A failure is logged; the SIGKILL still follows.
+      if (pgid) {
+        terminateGroup(pgid, { spareLeader: !!options.spareLeader }).catch((err) =>
+          log.warn(`SIGTERM to timed-out process group ${pgid} failed`, log.errorData(err)),
+        );
+      } else killGroup("SIGTERM");
       killTimer = setTimeout(() => {
         killGroup("SIGKILL");
         settle(

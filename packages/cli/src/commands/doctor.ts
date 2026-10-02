@@ -256,7 +256,7 @@ async function runDiagnostics(): Promise<Diagnostics> {
             ? {
                 label,
                 state: "warn",
-                detail: "carries lines this version removed — run `sudo volute service reconcile`",
+                detail: "needs this version's changes — run `sudo volute service reconcile`",
               }
             : plan.customised
               ? {
