@@ -81,8 +81,21 @@ export async function sendToBridge(
   }
 }
 
+/** How long a bridge whose daemon is gone gets to clean up before it exits anyway. */
+const ORPHAN_EXIT_MS = 5000;
+
+/**
+ * Run `cleanup` and exit on SIGINT/SIGTERM — or when the daemon goes away. The daemon
+ * holds the write end of this process's stdin pipe open for as long as it lives, so its
+ * close means the daemon has exited, however it died (a SIGKILL or OOM included): a
+ * bridge never outlives it still holding the platform token (#1370).
+ */
 export function onShutdown(cleanup: () => void | Promise<void>): void {
-  const handler = () => {
+  let stopping = false;
+  const stop = () => {
+    // A second signal — the next daemon's orphan sweep, a second Ctrl-C — forces it.
+    if (stopping) process.exit(1);
+    stopping = true;
     Promise.resolve(cleanup()).then(
       () => process.exit(0),
       (err) => {
@@ -91,8 +104,20 @@ export function onShutdown(cleanup: () => void | Promise<void>): void {
       },
     );
   };
-  process.on("SIGINT", handler);
-  process.on("SIGTERM", handler);
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+
+  // (A daemon from before #1370 gave bridges /dev/null, which never emits 'close'.)
+  process.stdin.on("error", () => {}); // a read error ends in 'close' too
+  process.stdin.once("close", () => {
+    // stdout and stderr were pipes to the daemon as well: a write to them must not
+    // crash the cleanup. And nobody is left to SIGKILL a cleanup that hangs.
+    process.stdout.on("error", () => {});
+    process.stderr.on("error", () => {});
+    setTimeout(() => process.exit(1), ORPHAN_EXIT_MS).unref();
+    if (!stopping) stop();
+  });
+  process.stdin.resume();
 }
 
 export function splitMessage(text: string, maxLength: number): string[] {

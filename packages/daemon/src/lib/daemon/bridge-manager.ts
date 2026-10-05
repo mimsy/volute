@@ -173,7 +173,9 @@ export class BridgeManager {
     }
 
     const spawnOpts: SpawnOptions = {
-      stdio: ["ignore", "pipe", "pipe"],
+      // stdin is a pipe we never write to or close: the bridge exits on its EOF, which
+      // comes when this process exits, however it dies (#1370).
+      stdio: ["pipe", "pipe", "pipe"],
       detached: true,
       env: {
         ...process.env,
@@ -190,6 +192,9 @@ export class BridgeManager {
       // Failed outright (the runtime vanished, say): no process, and no 'exit' to come.
       throw new Error(`failed to spawn bridge ${platform}`);
     }
+
+    // EPIPE and the like once the bridge is gone; its exit handler is what reacts.
+    child.stdin?.on("error", () => {});
 
     let lastStderr = "";
     child.stdout?.pipe(logStream);
