@@ -910,6 +910,52 @@ export async function upgradeDiff(mindName: string, template?: string): Promise<
 }
 
 /**
+ * Whether the upgrade still has to untrack home/ before merging the template.
+ * It does if anything tracked under home/ is ignored by the mind's .gitignore
+ * or by the incoming template's (a pre-allowlist mind's own file ignores
+ * nothing, so the template's is the one that catches it), or if the template
+ * dropped a home/ path since the merge base — merging that would delete the
+ * mind's copy. Any failure answers yes: migrating is what upgrades always did.
+ */
+async function needsHomeAllowlistMigration(git: ReturnType<typeof mindGitOpts>): Promise<boolean> {
+  try {
+    const ignoredByMind = await gitExec(
+      ["ls-files", "-c", "-i", "--exclude-standard", "--", "home/"],
+      git,
+    );
+    if (ignoredByMind.trim()) return true;
+
+    const templatePatterns = (await gitExec(["show", `${TEMPLATE_BRANCH}:.gitignore`], git))
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+    const ignoredByTemplate = await gitExec(
+      ["ls-files", "-c", "-i", ...templatePatterns.map((p) => `--exclude=${p}`), "--", "home/"],
+      git,
+    );
+    if (ignoredByTemplate.trim()) return true;
+
+    const base = (await gitExec(["merge-base", "HEAD", TEMPLATE_BRANCH], git)).trim();
+    const dropped = await gitExec(
+      [
+        "diff",
+        "--name-only",
+        "--diff-filter=D",
+        "--no-renames",
+        base,
+        TEMPLATE_BRANCH,
+        "--",
+        "home/",
+      ],
+      git,
+    );
+    return dropped.trim() !== "";
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Fresh end-to-end upgrade. Throws on unexpected errors (git failures, unknown template
  * is validated by caller). opts.restart controls whether the mind process is started
  * after the merge (default true, preserving current behavior).
@@ -1008,26 +1054,30 @@ async function runUpgradeCore(
   // resolve by hand, and they return rather than throw.
   try {
     // Prepare home/ allowlist migration: untrack home files so template
-    // branch removal doesn't cause conflicts or deletions
-    await gitExec(["rm", "-r", "--cached", "--ignore-unmatch", "home/"], inWorktree);
-    // Re-add VOLUTE.md so template merge can update it
-    try {
-      await gitExec(["checkout", "HEAD", "--", "home/VOLUTE.md"], inWorktree);
-      await gitExec(["add", "home/VOLUTE.md"], inWorktree);
-    } catch (err) {
-      const msg = String((err as Error)?.message ?? err);
-      if (!msg.includes("did not match")) {
-        log.warn(
-          `unexpected error restoring VOLUTE.md during upgrade for ${mindName}`,
-          log.errorData(err),
-        );
+    // branch removal doesn't cause conflicts or deletions. Only when it would
+    // change something — a mind reads its own git log, and running it on every
+    // upgrade added two commits touching all of home/ each time (#1392).
+    if (await needsHomeAllowlistMigration(inWorktree)) {
+      await gitExec(["rm", "-r", "--cached", "--ignore-unmatch", "home/"], inWorktree);
+      // Re-add VOLUTE.md so template merge can update it
+      try {
+        await gitExec(["checkout", "HEAD", "--", "home/VOLUTE.md"], inWorktree);
+        await gitExec(["add", "home/VOLUTE.md"], inWorktree);
+      } catch (err) {
+        const msg = String((err as Error)?.message ?? err);
+        if (!msg.includes("did not match")) {
+          log.warn(
+            `unexpected error restoring VOLUTE.md during upgrade for ${mindName}`,
+            log.errorData(err),
+          );
+        }
       }
-    }
-    // Commit prep step if there are changes
-    try {
-      await gitExec(["diff", "--cached", "--quiet"], inWorktree);
-    } catch {
-      await gitExec(["commit", "-m", "prepare for home/ allowlist migration"], inWorktree);
+      // Commit prep step if there are changes
+      try {
+        await gitExec(["diff", "--cached", "--quiet"], inWorktree);
+      } catch {
+        await gitExec(["commit", "-m", "prepare for home/ allowlist migration"], inWorktree);
+      }
     }
 
     // Merge template branch
