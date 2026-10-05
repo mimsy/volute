@@ -833,6 +833,15 @@ async function importFromFullArchive(
         llog.error(`git setup failed for imported mind ${name}`, log.errorData(err));
         rmSync(resolve(dest, ".git"), { recursive: true, force: true });
       }
+    } else {
+      // The archive's own history: what the install rewrote is committed, not left dirty
+      // (#1389), as this mind — the archive's .git may name the source mind, or no one.
+      try {
+        await configureGitIdentity(name, mindGitOpts(dest, name));
+        await commitDepsChanges(dest, name, "Update dependencies after import");
+      } catch (err) {
+        llog.warn(`failed to commit dependency changes for ${name}`, log.errorData(err));
+      }
     }
 
     // Give the new history a volute/template base, or the first upgrade merges
@@ -1365,6 +1374,10 @@ export async function createVariant(input: CreateVariantInput): Promise<CreateVa
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, status: 500, error: `npm install failed: ${msg}` };
   }
+  // Committed on the variant branch, or the join's auto-commit sweeps it in unlabelled (#1389).
+  await commitDepsChanges(variantDir, parentName, "Update dependencies after split").catch((err) =>
+    llog.warn(`failed to commit dependency changes for ${variantName}`, log.errorData(err)),
+  );
 
   // Write SOUL.md if provided
   if (input.soul) {
