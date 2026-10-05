@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.66.12](https://github.com/mimsy/volute/compare/volute-v0.66.11...volute-v0.66.12) (2026-10-05)
+
+
+### Bug Fixes
+
+* a stop ends what a mind left running as its OS user, and a stale PID record is signalled only when it is still that mind's server ([#1383](https://github.com/mimsy/volute/issues/1383)) ([498b1c8](https://github.com/mimsy/volute/commit/498b1c8debf989b6e8aed88f1f90d78a3139ce9b))
+
 ## [0.66.11](https://github.com/mimsy/volute/compare/volute-v0.66.10...volute-v0.66.11) (2026-10-05)
 
 
