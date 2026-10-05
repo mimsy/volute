@@ -911,45 +911,37 @@ export async function upgradeDiff(mindName: string, template?: string): Promise<
 
 /**
  * Whether the upgrade still has to untrack home/ before merging the template.
- * It does if anything tracked under home/ is ignored by the mind's .gitignore
- * or by the incoming template's (a pre-allowlist mind's own file ignores
- * nothing, so the template's is the one that catches it), or if the template
- * dropped a home/ path since the merge base — merging that would delete the
- * mind's copy. Any failure answers yes: migrating is what upgrades always did.
+ * Judged against the merge's own result: it does if the merged tree drops a
+ * home/ path the mind tracks (the template once carried it — merging would
+ * delete the mind's copy), or if the merged .gitignore ignores one (a
+ * pre-allowlist mind, or a mind that stopped tracking a file). The mind's own
+ * un-ignores survive the merge, so they count; global excludes are left out.
+ * Any failure — a conflicting merge, a git without merge-tree --write-tree —
+ * answers yes: migrating is what upgrades always did.
  */
 async function needsHomeAllowlistMigration(git: ReturnType<typeof mindGitOpts>): Promise<boolean> {
   try {
-    const ignoredByMind = await gitExec(
-      ["ls-files", "-c", "-i", "--exclude-standard", "--", "home/"],
+    const merged = (await gitExec(["merge-tree", "--write-tree", "HEAD", TEMPLATE_BRANCH], git))
+      .split("\n")[0]
+      .trim();
+
+    const dropped = await gitExec(
+      ["diff", "--name-only", "--diff-filter=D", "--no-renames", "HEAD", merged, "--", "home/"],
       git,
     );
-    if (ignoredByMind.trim()) return true;
+    if (dropped.trim()) return true;
 
-    const templatePatterns = (await gitExec(["show", `${TEMPLATE_BRANCH}:.gitignore`], git))
+    const patterns = (await gitExec(["show", `${merged}:.gitignore`], git))
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line && !line.startsWith("#"));
-    const ignoredByTemplate = await gitExec(
-      ["ls-files", "-c", "-i", ...templatePatterns.map((p) => `--exclude=${p}`), "--", "home/"],
+    // Only these patterns: without --exclude-standard, core.excludesFile and
+    // info/exclude don't apply.
+    const ignored = await gitExec(
+      ["ls-files", "-c", "-i", ...patterns.map((p) => `--exclude=${p}`), "--", "home/"],
       git,
     );
-    if (ignoredByTemplate.trim()) return true;
-
-    const base = (await gitExec(["merge-base", "HEAD", TEMPLATE_BRANCH], git)).trim();
-    const dropped = await gitExec(
-      [
-        "diff",
-        "--name-only",
-        "--diff-filter=D",
-        "--no-renames",
-        base,
-        TEMPLATE_BRANCH,
-        "--",
-        "home/",
-      ],
-      git,
-    );
-    return dropped.trim() !== "";
+    return ignored.trim() !== "";
   } catch {
     return true;
   }

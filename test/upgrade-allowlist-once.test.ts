@@ -176,4 +176,29 @@ describe("the home/ allowlist migration runs only when it changes something (#13
     assert.ok(existsSync(resolve(dir, "home/SOUL.md")));
     assert.ok(trackedHome(dir).includes("home/SOUL.md"));
   });
+
+  it("respects a mind's own un-ignore across upgrades", async () => {
+    const name = `al-projects-${process.pid}`;
+    const dir = layOutMind(name);
+    commitAll(dir);
+    await addMind(name, 4305, undefined, "claude");
+    await upgrade(name);
+    // The mind chose to version its projects too.
+    mkdirSync(resolve(dir, "home/projects"), { recursive: true });
+    writeFileSync(resolve(dir, "home/projects/poem.md"), "a poem\n");
+    writeFileSync(
+      resolve(dir, ".gitignore"),
+      `${git(dir, "show", "HEAD:.gitignore")}!home/projects/\n!home/projects/**\n`,
+    );
+    git(dir, "add", "-A");
+    git(dir, "commit", "-m", "track my projects");
+    assert.ok(trackedHome(dir).includes("home/projects/poem.md"));
+    const before = git(dir, "rev-parse", "HEAD").trim();
+
+    await upgrade(name);
+    await upgrade(name);
+
+    assert.equal(git(dir, "rev-parse", "HEAD").trim(), before);
+    assert.ok(trackedHome(dir).includes("home/projects/poem.md"));
+  });
 });
