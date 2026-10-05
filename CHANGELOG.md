@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.66.13](https://github.com/mimsy/volute/compare/volute-v0.66.12...volute-v0.66.13) (2026-10-05)
+
+
+### Bug Fixes
+
+* bridges exit when the daemon that spawned them dies ([#1390](https://github.com/mimsy/volute/issues/1390)) ([8200dfa](https://github.com/mimsy/volute/commit/8200dfa1fbb8dd851e0c7d61d097a28105587bb0))
+* commit the lockfile an upgrade's or join's npm install rewrites ([#1387](https://github.com/mimsy/volute/issues/1387)) ([a4bbc27](https://github.com/mimsy/volute/commit/a4bbc27b72f7e376c7628d4e68f8d9bff93373fa))
+
 ## [0.66.12](https://github.com/mimsy/volute/compare/volute-v0.66.11...volute-v0.66.12) (2026-10-05)
 
 
