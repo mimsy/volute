@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.66.11](https://github.com/mimsy/volute/compare/volute-v0.66.10...volute-v0.66.11) (2026-10-05)
+
+
+### Bug Fixes
+
+* a stop gives runuser-isolated minds their full shutdown grace, not runuser's 2s ([#1372](https://github.com/mimsy/volute/issues/1372)) ([ef7142e](https://github.com/mimsy/volute/commit/ef7142e55c6859c86c65e669f6e6592c13daa5c8))
+* consume a one-time script schedule before running it, and stop test rigs leaking Docker volumes ([#1375](https://github.com/mimsy/volute/issues/1375)) ([cbec5a7](https://github.com/mimsy/volute/commit/cbec5a705c76b6c11127927f71d8e7a9ae78fed4))
+* remove a stale unknown bridge entry, tell a mind started by its upgrade what changed, and stop the e2e spirit at teardown ([#1367](https://github.com/mimsy/volute/issues/1367)) ([6842808](https://github.com/mimsy/volute/commit/6842808cc307192d05769b34c34ce4a97c3d4f88))
+* **security:** vouch a pages worktree's commondir, and verify a stale bridge PID is ours before signalling it ([#1369](https://github.com/mimsy/volute/issues/1369)) ([ef4aded](https://github.com/mimsy/volute/commit/ef4aded029a3b395c5c7fe8fd45ec7bed6dc4cfa))
+
 ## [0.66.10](https://github.com/mimsy/volute/compare/volute-v0.66.9...volute-v0.66.10) (2026-10-02)
 
 
