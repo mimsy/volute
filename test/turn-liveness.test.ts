@@ -37,7 +37,10 @@ after(() => dm.dispose());
 const MIND = "tl-live";
 const VARIANT = `${MIND}@v`;
 
-describe("a turn beside another process's on its thread", () => {
+// Bounded so a hang fails in seconds instead of stalling pre-push for half an hour: this
+// file has sat at 0% CPU inside the full local suite (#1386). Its hooks are synchronous, so
+// the bound on the tests is the bound on the file.
+describe("a turn beside another process's on its thread", { timeout: 30_000 }, () => {
   it("keeps the indicator and the slot only while that process is running", async () => {
     running.set(MIND, {});
     running.set(VARIANT, {});
