@@ -25,8 +25,17 @@ export type Member = { pid: number; start: string };
 
 export type GroupOpts = { procDir?: string; kill?: Kill };
 
-/** How many `/proc/<pid>/stat` reads a scan has in flight at once. */
+/** How many `/proc` reads a scan has in flight at once. */
 const SCAN_CONCURRENCY = 64;
+
+/** `fn` over `items`, at most {@link SCAN_CONCURRENCY} at a time, results in order. */
+export async function mapBatched<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += SCAN_CONCURRENCY) {
+    out.push(...(await Promise.all(items.slice(i, i + SCAN_CONCURRENCY).map(fn))));
+  }
+  return out;
+}
 
 /** The process is gone: its /proc entry, or the process itself. */
 export function isGone(err: unknown): boolean {
@@ -58,16 +67,11 @@ export type ProcStat = Member & { ppid: number; pgrp: number };
 /** Every process in `/proc`, from its `stat`. Linux only: throws when `/proc` can't be read. */
 export async function scanProcs(procDir = "/proc"): Promise<ProcStat[]> {
   const pids = (await readdir(procDir)).filter((e) => /^\d+$/.test(e)).map(Number);
-  const procs: ProcStat[] = [];
-  for (let i = 0; i < pids.length; i += SCAN_CONCURRENCY) {
-    const batch = pids.slice(i, i + SCAN_CONCURRENCY);
-    const stats = await Promise.all(batch.map((pid) => readStat(procDir, pid)));
-    batch.forEach((pid, j) => {
-      const stat = stats[j];
-      if (stat) procs.push({ pid, ...stat });
-    });
-  }
-  return procs;
+  const stats = await mapBatched(pids, (pid) => readStat(procDir, pid));
+  return pids.flatMap((pid, i) => {
+    const stat = stats[i];
+    return stat ? [{ pid, ...stat }] : [];
+  });
 }
 
 /**

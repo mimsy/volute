@@ -1,6 +1,6 @@
 {
   "port": 4100,
-  "note": "wrapForSandbox output for the server of a mind on port 4100, from sandbox-runtime: macOS sandbox-exec and Linux bwrap",
+  "note": "wrapForSandbox output for the server of a mind on port 4100, from sandbox-runtime. darwin/linux: the spawned argv (bash -c <wrap>). linuxLeader: bwrap's own argv once bash execs it, which stays the group leader. darwinLeader: env, sandbox-exec and bash each exec the next, leaving node.",
   "darwin": [
     "bash",
     "-c",
@@ -10,5 +10,28 @@
     "bash",
     "-c",
     "bwrap --new-session --die-with-parent --ro-bind / / --dev /dev --unshare-pid --unshare-user --cap-drop ALL --cap-add CAP_SETFCAP --proc /proc -- /usr/bin/bash -c '/opt/volute/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/arm64/apply-seccomp /usr/bin/bash -c '\"'\"''\"'\"'\"'\"'\"'\"'\"'\"'/usr/local/bin/node'\"'\"'\"'\"'\"'\"'\"'\"' '\"'\"'\"'\"'\"'\"'\"'\"'--import'\"'\"'\"'\"'\"'\"'\"'\"' '\"'\"'\"'\"'\"'\"'\"'\"'tsx'\"'\"'\"'\"'\"'\"'\"'\"' '\"'\"'\"'\"'\"'\"'\"'\"'src/server.ts'\"'\"'\"'\"'\"'\"'\"'\"' '\"'\"'\"'\"'\"'\"'\"'\"'--port'\"'\"'\"'\"'\"'\"'\"'\"' '\"'\"'\"'\"'\"'\"'\"'\"'4100'\"'\"'\"'\"'\"'\"'\"'\"''\"'\"''"
-  ]
+  ],
+  "linuxLeader": [
+    "bwrap",
+    "--new-session",
+    "--die-with-parent",
+    "--ro-bind",
+    "/",
+    "/",
+    "--dev",
+    "/dev",
+    "--unshare-pid",
+    "--unshare-user",
+    "--cap-drop",
+    "ALL",
+    "--cap-add",
+    "CAP_SETFCAP",
+    "--proc",
+    "/proc",
+    "--",
+    "/usr/bin/bash",
+    "-c",
+    "/opt/volute/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/arm64/apply-seccomp /usr/bin/bash -c ''\"'\"'/usr/local/bin/node'\"'\"' '\"'\"'--import'\"'\"' '\"'\"'tsx'\"'\"' '\"'\"'src/server.ts'\"'\"' '\"'\"'--port'\"'\"' '\"'\"'4100'\"'\"''"
+  ],
+  "darwinLeader": ["/usr/local/bin/node", "--import", "tsx", "src/server.ts", "--port", "4100"]
 }

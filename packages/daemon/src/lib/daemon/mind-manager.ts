@@ -1,6 +1,6 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { getAiConfig, resolveApiKey } from "../ai-service.js";
 import { deliverEvent, MIND_LEVEL_THREAD, recordNotice } from "../chat/system-events.js";
@@ -16,6 +16,7 @@ import {
 import { readMindFile, writeMindFile } from "../mind/mind-file-write.js";
 import {
   findMind,
+  getBaseName,
   isSpiritName,
   mindDir,
   mindTmpDir,
@@ -33,10 +34,11 @@ import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { buildMindBaseEnv, type IsolationMode } from "../util/mind-env.js";
+import { resolveWithinBase } from "../util/paths.js";
 import { isRunuser, killRemainder, stopGroup } from "../util/process-group.js";
 import { type ProcessIdentity, processIdentity } from "../util/process-identity.js";
 import { RotatingLog } from "../util/rotating-log.js";
-import { sweepMindProcesses } from "../util/uid-sweep.js";
+import { ownerMarkReader, sweepMindProcesses } from "../util/uid-sweep.js";
 import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
 import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
 import { ManagerNotReadyError } from "./manager-not-ready.js";
@@ -193,8 +195,11 @@ export function composeMindEnv(opts: {
 
 /** How long a stopping mind gets between SIGTERM and SIGKILL. */
 const STOP_GRACE_MS = 5000;
-/** How long what a stopped mind left running outside its group gets before SIGKILL. */
-const SWEEP_GRACE_MS = 2000;
+/**
+ * A sweep this recent makes the next one for the same mind redundant: a start just
+ * after a stop, a delete just after either (#1374).
+ */
+const RESWEEP_AFTER_MS = 30_000;
 
 type TrackedMind = {
   child: ChildProcess;
@@ -244,42 +249,58 @@ export class MindUnavailableError extends Error {
   }
 }
 
-const MIND_PID_FILE = "mind.pid";
-
-function mindPidPath(name: string): string {
-  return resolve(stateDir(name), MIND_PID_FILE);
-}
-
 /**
- * What `mind.pid` records about a mind's server: its pid, and — from the OS, once read —
- * when it started and in which boot, so a reused pid isn't taken for it. An older daemon
- * wrote the bare pid.
+ * Where the daemon records a mind's server for the next daemon to find (#1366): its pid,
+ * start time and boot. Under the system dir, which no mind can write — a record the
+ * mind could edit could aim the root daemon's signal at any process.
  */
-type MindPidRecord = { pid: number; start: string | null; boot: string | null };
+function mindPidPath(name: string): string {
+  return resolveWithinBase(resolve(voluteSystemDir(), "mind-pids"), `${name}.json`);
+}
 
-function parseMindPid(text: string): MindPidRecord {
-  const str = (v: unknown) => (typeof v === "string" ? v : null);
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("{")) return { pid: parseInt(trimmed, 10), start: null, boot: null };
-  const { pid, start, boot } = JSON.parse(trimmed);
-  return { pid: Number(pid), start: str(start), boot: str(boot) };
+function removeMindPid(name: string): void {
+  try {
+    rmSync(mindPidPath(name), { force: true });
+  } catch (err) {
+    mlog.warn(`failed to remove the PID record for ${name}`, log.errorData(err));
+  }
+}
+
+type MindPidRecord = { pid: number; start: string; boot: string | null };
+
+/** The record, or null when it isn't one this daemon wrote. */
+function parseMindPid(text: string): MindPidRecord | null {
+  try {
+    const { pid, start, boot } = JSON.parse(text);
+    // A pid of 0 or below would signal a whole process group, or every process.
+    if (!Number.isInteger(pid) || pid <= 1) return null;
+    if (typeof start !== "string" || (typeof boot !== "string" && boot !== null)) return null;
+    return { pid, start, boot };
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `argv` runs a mind's `src/server.ts` with `--port <port>`. */
+function runsServer(argv: string[], port: number): boolean {
+  return (
+    argv.some((a) => a === "src/server.ts" || a.endsWith("/src/server.ts")) &&
+    argv.some((a, i) => a === "--port" && argv[i + 1] === String(port))
+  );
 }
 
 /**
- * Whether the process `id` describes is this mind's server: its command line runs
- * `src/server.ts` with `--port` this mind's port (the leader may be runuser, sudo or a
- * sandbox wrapper; the node binary may have moved), and the start time and boot, where
- * recorded, are the ones it had. `mind.pid` sits in the mind's state dir, which the mind
- * can write, so nothing but the pid is taken from it: the port is the registry's.
+ * Whether the process `id` describes is this mind's server: it is the one recorded
+ * (same start time, same boot), and its argv runs `src/server.ts` on this mind's port —
+ * directly, behind runuser or sudo, or shell-quoted inside the one `-c` argument of the
+ * sandbox's `bash -c` or bwrap wrap.
  */
 export function isOurMindServer(port: number, record: MindPidRecord, id: ProcessIdentity): boolean {
-  // The sandbox wraps the server in `bash -c` with every argument shell-quoted, maybe
-  // twice: compare words with the quoting stripped.
-  const words = id.args.replace(/['"\\]/g, "").split(/\s+/);
-  const portAt = words.findIndex((w, i) => w === "--port" && words[i + 1] === String(port));
-  if (!words.includes("src/server.ts") || portAt < 0) return false;
-  if (record.start !== null && record.start !== id.start) return false;
-  return record.boot === null || record.boot === id.boot;
+  if (record.start !== id.start || (record.boot ?? null) !== (id.boot ?? null)) return false;
+  if (runsServer(id.argv, port)) return true;
+  return id.argv.some(
+    (a, i) => id.argv[i - 1] === "-c" && runsServer(a.replace(/['"\\]/g, "").split(/\s+/), port),
+  );
 }
 
 /**
@@ -362,6 +383,9 @@ export class MindManager {
   // the overlap safe: two writers in one tree aren't serialized against each other, nor
   // against starts other than recovery's (#1341).
   private recoveryHolds = new Map<string, number>();
+  // When each mind was last swept for what it left running (#1374), if it hasn't run
+  // since — see `sweepMindUser`.
+  private lastSwept = new Map<string, number>();
   // Delay before retrying a recovery restart that failed outside the mind's own
   // startup (spawn EMFILE/EAGAIN, a registry read) — see `onRecoveryStartFailed`.
   private strainRetryDelayMs = 60_000;
@@ -426,8 +450,8 @@ export class MindManager {
     const port = target.port;
 
     // Stop an orphan server a previous daemon left running.
+    await this.killStaleMind(name, port);
     const owner = await mindFileOwner(baseName);
-    await this.killStaleMind(name, port, owner);
 
     try {
       const res = await fetch(`http://127.0.0.1:${port}/health`, {
@@ -455,7 +479,7 @@ export class MindManager {
     await prepareMindTmp(dir, owner);
     // The same moment for whatever an earlier run left behind outside its process
     // group — a crash, a failed start, an orphan from a previous daemon (#1374).
-    await this.sweepMindUser(name, baseName);
+    await this.sweepMindUser(name, baseName, Date.now() + STOP_GRACE_MS, { unlessRecent: true });
 
     // State dir is created by root — chown so the mind user can write to it.
     // Chown .mind itself, not just .mind/tmp: in a variant worktree .mind is
@@ -686,6 +710,8 @@ export class MindManager {
       baseName,
       supervised,
     });
+    // Running again: what it starts from here on hasn't been swept.
+    this.lastSwept.delete(name);
 
     // Pipe output to log file and check for listening
     child.stdout?.pipe(logStream);
@@ -712,9 +738,9 @@ export class MindManager {
       throw new DaemonShuttingDownError(name);
     }
 
-    // For orphan detection on the next daemon start. Not awaited before the health
-    // wait below attaches its exit listener, so an early exit is seen as one.
-    const pidSaved = this.saveMindPid(name, child, owner);
+    // For orphan detection on the next daemon start. Never awaited: the start's exit
+    // listeners (the health wait's, then crash recovery's) must not wait on it.
+    void this.saveMindPid(name, child);
 
     // Poll /health until the server is ready, or reject on a startup budget timeout
     // or an early child exit/error (e.g. a `tsx` syntax error from a self-edit). Polling
@@ -777,11 +803,9 @@ export class MindManager {
     } catch (err) {
       this.minds.delete(name);
       await stopGroup(child, { spareLeader: supervised, graceMs: STOP_GRACE_MS });
-      await pidSaved;
-      rmSync(mindPidPath(name), { force: true });
+      removeMindPid(name);
       throw err;
     }
-    await pidSaved;
 
     // Set up crash recovery after successful start. A start that lands during a
     // recovery backoff (an operator's) supersedes the pending restart.
@@ -952,6 +976,7 @@ export class MindManager {
     if (!shouldRestart) {
       mlog.error(`${name} crashed ${attempt} times — giving up on restart`);
       await setMindRunning(name, false);
+      await this.sweepStopped(name);
       return;
     }
     mlog.info(
@@ -1109,76 +1134,84 @@ export class MindManager {
   }
 
   /**
-   * Record a freshly spawned server in `mind.pid`: its pid at once, so a crash before its
-   * identity is read still leaves a handle on it, then its start time and boot, so a
-   * later daemon can tell it from a reused pid. Written through the mind-file helpers:
-   * the state dir is the mind's, and a link it planted there must not aim a root write.
+   * Record a freshly spawned server for the next daemon: its pid, start time and boot.
+   * Written only while `child` is still this mind's running server — checked and written
+   * in one synchronous step — so a failed start or a stop, which untrack the child before
+   * removing the record, can't have it written back after them.
    */
-  private async saveMindPid(
-    name: string,
-    child: ChildProcess,
-    owner: { uid: number; gid: number } | null,
-  ): Promise<void> {
+  private async saveMindPid(name: string, child: ChildProcess): Promise<void> {
     if (!child.pid) return;
-    const write = (record: MindPidRecord) =>
-      writeMindFile(stateDir(name), MIND_PID_FILE, JSON.stringify(record), { owner });
+    const id = await this.processIdentity(child.pid);
+    if (!id || this.minds.get(name)?.child !== child) return;
     try {
-      await write({ pid: child.pid, start: null, boot: null });
-      const id = await this.processIdentity(child.pid);
-      // Exited meanwhile: what removes its file has run, or will once this returns.
-      if (!id || child.exitCode !== null || child.signalCode !== null) return;
-      await write({ pid: child.pid, start: id.start, boot: id.boot });
+      const path = mindPidPath(name);
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      const record: MindPidRecord = { pid: child.pid, start: id.start, boot: id.boot };
+      writeFileSync(path, JSON.stringify(record), { mode: 0o600 });
     } catch (err) {
-      mlog.warn(`failed to write PID file for ${name}`, log.errorData(err));
+      mlog.warn(`failed to write PID record for ${name}`, log.errorData(err));
     }
   }
 
   /**
-   * Stop a server an earlier daemon left running, if `mind.pid` still names it. The
+   * Stop a server an earlier daemon left running, if its PID record still names it. The
    * daemon is root under isolation and a pid freed by a crash can be reused by any
    * process, so it's signalled only if it is still this mind's server
-   * ({@link isOurMindServer}); otherwise the file is removed and nothing is signalled
-   * (#1366).
+   * ({@link isOurMindServer}); otherwise the record is removed and nothing is signalled
+   * (#1366). A live orphan the record can't vouch for is still found by its port.
    */
-  private async killStaleMind(
-    name: string,
-    port: number,
-    owner: { uid: number; gid: number } | null,
-  ): Promise<void> {
+  private async killStaleMind(name: string, port: number): Promise<void> {
     try {
-      const file = await readMindFile(stateDir(name), MIND_PID_FILE, { owner });
-      if (!file) return;
-      const record = parseMindPid(file.text);
-      // Never 1: `kill(-1)` signals every process we're allowed to. No identity means the
-      // process is gone (or can't be read): nothing to signal.
-      const pid = record.pid;
-      const id = pid > 1 ? await this.processIdentity(pid) : null;
-      if (id && !isOurMindServer(port, record, id)) {
-        mlog.warn(
-          `not signalling pid ${pid} from ${name}'s PID file: it can't be confirmed as that mind's server`,
-        );
-      } else if (id) {
-        mlog.warn(`killing stale mind process ${pid} for ${name}`);
-        await stopGroup(pid, { spareLeader: await isRunuser(pid), graceMs: STOP_GRACE_MS });
+      const path = mindPidPath(name);
+      let text: string;
+      try {
+        text = readFileSync(path, "utf-8");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw err;
       }
+      const record = parseMindPid(text);
+      // No identity means the process is gone (or can't be read): nothing to signal.
+      const id = record ? await this.processIdentity(record.pid) : null;
+      if (record && id && isOurMindServer(port, record, id)) {
+        mlog.warn(`killing stale mind process ${record.pid} for ${name}`);
+        await stopGroup(record.pid, {
+          spareLeader: await isRunuser(record.pid),
+          graceMs: STOP_GRACE_MS,
+        });
+      } else if (id) {
+        mlog.warn(
+          `not signalling pid ${record?.pid} from ${name}'s PID record: it can't be confirmed as that mind's server`,
+        );
+      }
+      rmSync(path, { force: true });
     } catch (err) {
-      // ENOENT: no state dir yet, so no file — a mind's first start.
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-      mlog.warn(`failed to check stale PID file for ${name}`, log.errorData(err));
+      mlog.warn(`failed to check the stale PID record for ${name}`, log.errorData(err));
     }
-    rmSync(mindPidPath(name), { force: true });
   }
 
   /**
    * End what the mind `name` left running outside its process group — a `nohup … &`
-   * from the Claude CLI's Bash tool runs in a session of its own (#1374) — after a stop,
-   * and before a start (after a crash or a failed start nothing else would). Only under
-   * user isolation, where the OS user belongs to this mind and its variants, and only
-   * processes carrying this mind's own `VOLUTE_MIND` (see `sweepMindProcesses`); never
-   * the spirit's. Linux only.
+   * from the Claude CLI's Bash tool runs in a session of its own (#1374) — on a stop
+   * (alongside the group's own), before a start (after a crash or a failed start nothing
+   * else would), when crash recovery gives up, and on delete. Only under user isolation,
+   * where the OS user belongs to this mind and its variants, and only processes carrying
+   * this mind's own `VOLUTE_MIND` (see `sweepMindProcesses`); never the spirit's. Linux
+   * only. Whatever is still there at `killAt` is SIGKILLed.
    */
-  private async sweepMindUser(name: string, baseName: string): Promise<void> {
-    if (!isIsolationEnabled() || isSpiritName(baseName)) return;
+  private async sweepMindUser(
+    name: string,
+    baseName: string | null,
+    killAt: number,
+    opts: {
+      unlessRecent?: boolean;
+      /** False for a sweep whose scan may have spared what the live server still parents. */
+      record?: boolean;
+    } = {},
+  ): Promise<void> {
+    if (!baseName || !isIsolationEnabled() || isSpiritName(baseName)) return;
+    const last = this.lastSwept.get(name);
+    if (opts.unlessRecent && last !== undefined && Date.now() - last < RESWEEP_AFTER_MS) return;
     let owner: { uid: number; gid: number } | null;
     try {
       owner = await this.mindOwner(baseName);
@@ -1189,10 +1222,39 @@ export class MindManager {
     if (!owner) return;
     const swept = await this.sweepMindProcesses(owner.uid, name, {
       ancestor: process.pid,
-      boundMs: SWEEP_GRACE_MS,
-      readAsOwner: (path) => exec("cat", [path], { mindName: baseName, timeout: 5000 }),
+      killAt,
+      // One read as the mind for every environ root was refused. Untracked: it serves a
+      // stop, and a daemon shutdown must not stop it.
+      markedAsOwner: ownerMarkReader((cmd, args) =>
+        exec(cmd, args, { mindName: baseName, timeout: 5000, track: false }),
+      ),
     });
+    if (opts.record !== false) this.lastSwept.set(name, Date.now());
     if (swept) mlog.info(`stopped ${swept} process(es) ${name} left running`, { mind: name });
+  }
+
+  /** The mind `name` runs as (a variant, its parent); null, and logged, if unreadable. */
+  private async baseNameOf(name: string): Promise<string | null> {
+    try {
+      return await getBaseName(name);
+    } catch (err) {
+      mlog.warn(`could not look up ${name}'s base mind to sweep it`, log.errorData(err));
+      return null;
+    }
+  }
+
+  /**
+   * Sweep a mind that isn't running (see {@link sweepMindUser}): before it is deleted,
+   * or once crash recovery has given up on it. Under the mind's lock, so it can't race a
+   * start; skipped while it runs, and when it was swept moments ago.
+   */
+  async sweepStopped(name: string): Promise<void> {
+    await this.withLock(name, async () => {
+      if (this.minds.has(name)) return;
+      await this.sweepMindUser(name, await this.baseNameOf(name), Date.now() + STOP_GRACE_MS, {
+        unlessRecent: true,
+      });
+    });
   }
 
   private async _stopMind(name: string): Promise<void> {
@@ -1203,6 +1265,8 @@ export class MindManager {
     const wasRecovering = this.cancelRecovery(name);
     if (!tracked && !wasRecovering) return;
 
+    // Whatever it left running outside its group gets the same grace as the group.
+    const killAt = Date.now() + STOP_GRACE_MS;
     if (tracked) {
       this.stopping.add(name);
       const { child } = tracked;
@@ -1210,10 +1274,20 @@ export class MindManager {
 
       // SIGTERM the group (past runuser, whose own SIGTERM handling would SIGKILL
       // the mind 2s in — #1364), give it 5s, then SIGKILL whatever is left.
-      await stopGroup(child, { spareLeader: tracked.supervised, graceMs: STOP_GRACE_MS });
-      await this.sweepMindUser(name, tracked.baseName);
+      // Twice: at once, so what already left the server's tree gets the whole grace, and
+      // again once the server has exited, for what it still parented at the first scan
+      // (descendants of the daemon are spared) and has since been orphaned. Only the
+      // second, which saw no live server, makes a start's sweep redundant.
+      await Promise.all([
+        this.sweepMindUser(name, tracked.baseName, killAt, { record: false }),
+        stopGroup(child, { spareLeader: tracked.supervised, graceMs: STOP_GRACE_MS }).then(() =>
+          this.sweepMindUser(name, tracked.baseName, killAt),
+        ),
+      ]);
 
       this.stopping.delete(name);
+    } else {
+      await this.sweepMindUser(name, await this.baseNameOf(name), killAt);
     }
     revokeMindToken(name);
     try {
@@ -1240,7 +1314,7 @@ export class MindManager {
     }
 
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
-    rmSync(mindPidPath(name), { force: true });
+    removeMindPid(name);
 
     if (!this.shuttingDown) {
       await setMindRunning(name, false);

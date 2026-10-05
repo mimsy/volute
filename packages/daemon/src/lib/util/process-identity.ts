@@ -9,6 +9,12 @@ import { exec } from "./exec.js";
 export type ProcessIdentity = {
   /** Its argv joined with spaces. */
   args: string;
+  /**
+   * Its argv. Linux: the elements of `/proc/<pid>/cmdline`. Elsewhere `ps` gives only the
+   * joined line, so this is that line split on spaces, and an argument holding a space
+   * comes back as several.
+   */
+  argv: string[];
   /** Linux: `/proc/<pid>/stat` field 22 (clock ticks since boot); elsewhere `ps -o lstart=`, to the second. */
   start: string;
   /** Linux: the kernel's boot_id; elsewhere the second `kern.boottime` names. Null if unreadable. */
@@ -37,7 +43,7 @@ let bootId: Promise<string | null> | null = null;
 
 async function readIdentity(pid: number): Promise<ProcessIdentity | null> {
   try {
-    let args: string;
+    let argv: string[];
     let start: string | undefined;
     if (process.platform === "linux") {
       const [stat, cmdline] = await Promise.all([
@@ -46,18 +52,20 @@ async function readIdentity(pid: number): Promise<ProcessIdentity | null> {
       ]);
       // Field 2 (comm) is parenthesised and may hold spaces or parens: count from the last `)`.
       start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
-      args = cmdline.replace(/\0$/, "").split("\0").join(" ");
+      argv = cmdline.replace(/\0$/, "").split("\0");
     } else {
       const ps = (field: string) =>
         exec("ps", ["-o", `${field}=`, "-p", String(pid)], {
           env: FIXED_FORMAT,
           timeout: IDENTITY_TIMEOUT_MS,
         });
+      let args: string;
       [start, args] = (await Promise.all([ps("lstart"), ps("args")])).map((s) => s.trim());
+      argv = args.split(" ");
     }
-    if (!start || !args) return null;
+    if (!start || !argv.join("")) return null;
     bootId ??= readBootId();
-    return { args, start, boot: await bootId };
+    return { args: argv.join(" "), argv, start, boot: await bootId };
   } catch {
     return null;
   }

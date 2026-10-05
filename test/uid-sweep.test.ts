@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, describe, it } from "node:test";
+import { promisify } from "node:util";
 import log from "../packages/daemon/src/lib/util/logger.js";
-import { sweepMindProcesses } from "../packages/daemon/src/lib/util/uid-sweep.js";
+import { ownerMarkReader, sweepMindProcesses } from "../packages/daemon/src/lib/util/uid-sweep.js";
 
 const tempDirs: string[] = [];
 after(() => {
@@ -70,11 +72,11 @@ function recorder(onKill?: (pid: number, sig: string) => void) {
   return { sent, kill };
 }
 
-const opts = (procDir: string, kill: ReturnType<typeof recorder>["kill"], boundMs = 300) => ({
+const opts = (procDir: string, kill: ReturnType<typeof recorder>["kill"], graceMs = 300) => ({
   procDir,
   kill,
   ancestor: DAEMON,
-  boundMs,
+  killAt: Date.now() + graceMs,
 });
 
 const sorted = (sent: [number, string][], sig: string) =>
@@ -128,10 +130,7 @@ describe("sweepMindProcesses", () => {
     assert.equal(sent.length, 1);
   });
 
-  for (const [what, changed] of [
-    ["another uid", { uid: 0, env: [OURS] }],
-    ["no marker", { uid: MIND_UID, env: [] }],
-  ] as const) {
+  for (const [what, changed] of [["another uid", { uid: 0, env: [OURS] }]] as const) {
     it(`does not signal a process that has ${what} by the time it is signalled`, async () => {
       const procDir = fakeProc({
         300: { ppid: 1, pgrp: 300, uid: MIND_UID, env: [OURS] },
@@ -155,22 +154,88 @@ describe("sweepMindProcesses", () => {
   it("reads an environ it may not read directly as the process's owner", {
     skip: process.getuid?.() === 0 && "root reads past the file mode",
   }, async () => {
-    const procDir = fakeProc({ 300: { ppid: 1, pgrp: 300, uid: MIND_UID, env: [OURS] } });
-    chmodSync(resolve(procDir, "300", "environ"), 0);
+    const procDir = fakeProc({
+      300: { ppid: 1, pgrp: 300, uid: MIND_UID, env: [OURS] },
+      301: { ppid: 1, pgrp: 301, uid: MIND_UID, env: [OURS] },
+      302: { ppid: 1, pgrp: 302, uid: MIND_UID, env: ["USER=mind-alice"] },
+    });
+    for (const pid of [300, 301, 302]) chmodSync(resolve(procDir, String(pid), "environ"), 0);
     const direct = recorder();
     assert.equal(await sweepMindProcesses(MIND_UID, MIND, opts(procDir, direct.kill, 0)), 0);
-    const read: string[] = [];
-    const readAsOwner = async (path: string) => {
-      read.push(path);
-      return `${OURS}\0`;
+    // One read as the owner, for every refused environ, answering which hold the marker.
+    const calls: [string[], string][] = [];
+    const markedAsOwner = async (paths: string[], entry: string) => {
+      calls.push([paths, entry]);
+      return paths.filter((p) => !p.includes("/302/"));
     };
     const viaOwner = recorder();
     assert.equal(
-      await sweepMindProcesses(MIND_UID, MIND, { ...opts(procDir, viaOwner.kill, 0), readAsOwner }),
+      await sweepMindProcesses(MIND_UID, MIND, {
+        ...opts(procDir, viaOwner.kill, 0),
+        markedAsOwner,
+      }),
+      2,
+    );
+    assert.deepEqual(sorted(viaOwner.sent, "SIGTERM"), [300, 301]);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(
+      calls[0][0].sort(),
+      [300, 301, 302].map((p) => `${procDir}/${p}/environ`),
+    );
+    assert.equal(calls[0][1], OURS);
+  });
+
+  it("the owner-read finds every marked environ, whatever the last one holds", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "owner-read-"));
+    tempDirs.push(dir);
+    const files = {
+      marked: ["PATH=/bin", OURS],
+      variant: [`${OURS}-v`],
+      prefixed: [`X${OURS}`],
+      unmarked: ["USER=mind-alice"],
+    };
+    const paths = Object.entries(files).map(([f, env]) => {
+      writeFileSync(resolve(dir, f), `${env.join("\0")}\0`);
+      return resolve(dir, f);
+    });
+    // The real script, run here as ourselves rather than wrapped as a mind's user.
+    const run = async (cmd: string, args: string[]) =>
+      (await promisify(execFile)(cmd, args)).stdout;
+    const read = ownerMarkReader(run);
+    assert.deepEqual(await read([...paths, resolve(dir, "missing")], OURS), [paths[0]]);
+  });
+
+  it("a failed owner-read still sweeps what root could read", {
+    skip: process.getuid?.() === 0 && "root reads past the file mode",
+  }, async () => {
+    const procDir = fakeProc({
+      300: { ppid: 1, pgrp: 300, uid: MIND_UID, env: [OURS] },
+      301: { ppid: 1, pgrp: 301, uid: MIND_UID, env: [OURS] },
+    });
+    chmodSync(resolve(procDir, "301", "environ"), 0);
+    const r = recorder();
+    const markedAsOwner = async () => {
+      throw new Error("runuser failed");
+    };
+    assert.equal(
+      await sweepMindProcesses(MIND_UID, MIND, { ...opts(procDir, r.kill, 0), markedAsOwner }),
       1,
     );
-    assert.deepEqual(sorted(viaOwner.sent, "SIGTERM"), [300]);
-    assert.ok(read.every((p) => p === `${procDir}/300/environ`));
+    assert.deepEqual(sorted(r.sent, "SIGTERM"), [300]);
+  });
+
+  it("waits for the SIGKILL until `killAt`, not a bound of its own", async () => {
+    const procDir = fakeProc({ 300: { ppid: 1, pgrp: 300, uid: MIND_UID, env: [OURS] } });
+    const at: [string, number][] = [];
+    const t0 = Date.now();
+    const kill = (_pid: number, sig: string | 0) => {
+      if (sig !== 0) at.push([String(sig), Date.now() - t0]);
+    };
+    await sweepMindProcesses(MIND_UID, MIND, { procDir, kill, ancestor: DAEMON, killAt: t0 + 700 });
+    assert.equal(at[0][0], "SIGTERM");
+    assert.ok(at[0][1] < 300, "the SIGTERM goes out at once");
+    assert.equal(at[1][0], "SIGKILL");
+    assert.ok(at[1][1] >= 650, `the SIGKILL waits for killAt (${at[1][1]}ms)`);
   });
 
   it("refuses root and the daemon's own uid", async () => {
@@ -202,7 +267,7 @@ describe("sweepMindProcesses", () => {
     log.setOutput((line) => logs.push(line));
     try {
       assert.equal(
-        await sweepMindProcesses(MIND_UID, MIND, { ancestor: DAEMON, boundMs: 0, kill }),
+        await sweepMindProcesses(MIND_UID, MIND, { ancestor: DAEMON, killAt: 0, kill }),
         0,
       );
     } finally {
