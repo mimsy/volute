@@ -1342,6 +1342,8 @@ const app = new Hono<AuthEnv>()
       if (manager.isUpOrRecovering(name)) {
         await stopMindFullService(name);
       }
+      // What it left running outside a stop, while its row still names its OS user (#1374).
+      await manager.sweepStopped(name);
       await cleanupVariant(name, entry.parent, parentEntry.dir ?? mindDir(entry.parent), entry.dir);
       invalidateMindUserCache(name);
 
@@ -1362,9 +1364,12 @@ const app = new Hono<AuthEnv>()
       await stopMindFullService(name);
     }
 
-    // Stop and clean up any running variants before deleting parent
+    // Stop and clean up any running variants before deleting parent. What each left
+    // running outside a stop is swept first, while its row still names its OS user (#1374).
+    await manager.sweepStopped(name);
     const variants = await findVariants(name);
     for (const s of variants) {
+      await manager.sweepStopped(s.name);
       if (s.dir) {
         await cleanupVariant(s.name, name, dir, s.dir, { stop: true });
       }

@@ -88,10 +88,21 @@ describe("DELETE /:name on a variant (#650)", () => {
 
   it("cleans up the variant's worktree, branch, and DB row instead of stranding them", async () => {
     const app = createApp();
+    // What the variant left running is swept while its row still names its OS user (#1374).
+    const { getMindManager } = await import("../packages/daemon/src/lib/daemon/mind-manager.js");
+    const manager = getMindManager() as any;
+    const swept: [string, boolean][] = [];
+    const sweepStopped = manager.sweepStopped;
+    manager.sweepStopped = async (n: string) => {
+      swept.push([n, !!(await findMind(n))]);
+    };
     const res = await app.request(`/minds/${variantName}`, {
       method: "DELETE",
       headers: { Cookie: adminCookie },
     });
+
+    manager.sweepStopped = sweepStopped;
+    assert.deepEqual(swept, [[variantName, true]]);
 
     assert.equal(res.status, 200);
     const body = (await res.json()) as { ok?: boolean; variant?: boolean };

@@ -322,6 +322,13 @@ describe("exec's registration", () => {
     await stopTrackedChildren(2_000);
     await assert.rejects(running);
   });
+  it("leaves a child out of the shutdown set when asked (the stop sweep's reads)", async () => {
+    const before = trackedChildren().length;
+    const untimed = exec("sleep", ["0.3"], { track: false });
+    const timed = exec("sleep", ["0.3"], { track: false, timeout: 5_000 });
+    assert.equal(trackedChildren().length, before);
+    await Promise.all([untimed, timed]);
+  });
 });
 
 describe("stopTrackedChildren", () => {

@@ -82,6 +82,11 @@ export async function exec(
      * wrap's own answer, so a shutdown signals past its `runuser` (#1364).
      */
     supervised?: boolean;
+    /**
+     * False for a child that must not be stopped at daemon shutdown: one that serves the
+     * shutdown itself (the stop sweep's reads, `uid-sweep.ts`).
+     */
+    track?: boolean;
   },
 ): Promise<string> {
   const [wrappedCmd, wrappedArgs, supervised] = options?.mindName
@@ -122,7 +127,7 @@ export async function exec(
         }
       },
     );
-    trackChild(child, { group: false, supervised });
+    if (options?.track !== false) trackChild(child, { group: false, supervised });
     if (options?.stdin !== undefined && child.stdin) {
       // Discard stdin stream errors. EPIPE here means the child exited without
       // reading its input, which is legitimate — a hook may not want stdin at all —
@@ -185,6 +190,7 @@ function execTimed(
     stdin?: string | Buffer;
     /** The isolation wrap's `runuser` leads the group — see `terminateGroup`. */
     spareLeader?: boolean;
+    track?: boolean;
   },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -194,7 +200,9 @@ function execTimed(
       detached: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    trackChild(child, { group: true, supervised: !!options.spareLeader });
+    if (options.track !== false) {
+      trackChild(child, { group: true, supervised: !!options.spareLeader });
+    }
 
     let stdout = "";
     let stderr = "";
