@@ -148,6 +148,34 @@ export function isStaleCacheFailure(err: unknown): boolean {
   return /ETARGET|ENOTCACHED|No matching version/i.test(text);
 }
 
+const PACKAGE_FILES = ["package.json", "package-lock.json"];
+
+/**
+ * Commit, as the mind, whatever an install changed in its package files. The install
+ * after a merge can rewrite the lockfile npm was handed — on the first attempt
+ * or on the registry retry — and left uncommitted that is noise in the mind's own
+ * `git status` that its next upgrade or join sweeps into an unrelated auto-commit
+ * (#1385). Only the package files are committed, so anything else staged is left
+ * alone. Returns whether a commit was made.
+ */
+export async function commitDepsChanges(
+  dir: string,
+  mindName: string,
+  message: string,
+): Promise<boolean> {
+  const git = mindGitOpts(dir, mindName);
+  // Only the files that actually changed: a pathspec naming a file that is neither on
+  // disk nor tracked (a mind with no lockfile) fails the whole add.
+  const changed = (await gitExec(["status", "--porcelain", "--", ...PACKAGE_FILES], git))
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => line.slice(3));
+  if (changed.length === 0) return false;
+  await gitExec(["add", "--", ...changed], git);
+  await gitExec(["commit", "-m", message, "--", ...changed], git);
+  return true;
+}
+
 /**
  * True if package.json or package-lock.json changed between fromRef and HEAD.
  * Errs on the side of true (install) if the diff can't be computed.

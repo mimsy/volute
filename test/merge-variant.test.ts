@@ -112,6 +112,43 @@ describe("mergeVariant (#330 unified merge)", () => {
     }
   });
 
+  it("commits the lockfile the post-merge npm install writes (#1385)", async () => {
+    const { baseDir, variantDir, variantName, variantBranch } = setupRepo();
+    try {
+      // A dependency-free package.json: the real npm install that follows the merge
+      // needs no network, and writes a package-lock.json the variant never had.
+      writeFileSync(
+        resolve(variantDir, "package.json"),
+        '{"name":"mv-parent","version":"1.0.0","private":true}\n',
+      );
+      git(variantDir, "add", "-A");
+      git(variantDir, "commit", "-q", "-m", "variant adds package.json");
+
+      const result = await mergeVariant({
+        parentName: "mv-parent",
+        variantName,
+        projectRoot: baseDir,
+        variantDir,
+        variantBranch,
+        verify: false,
+      });
+
+      assert.equal(result.status, "merged");
+      if (result.status !== "merged") return;
+      assert.equal(result.warning, undefined);
+      assert.ok(existsSync(resolve(baseDir, "package-lock.json")), "npm install ran");
+      // Scoped to the package files: this fixture doesn't gitignore .variants/.
+      assert.equal(
+        git(baseDir, "status", "--porcelain", "--", "package.json", "package-lock.json"),
+        "",
+        "the install's changes are committed",
+      );
+      assert.equal(git(baseDir, "log", "-1", "--format=%s"), "Update dependencies after merge");
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
   it("reports a conflict and leaves the variant intact (verify:false)", async () => {
     const { baseDir, variantDir, variantName, variantBranch } = setupRepo();
     try {
