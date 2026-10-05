@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.66.14](https://github.com/mimsy/volute/compare/volute-v0.66.13...volute-v0.66.14) (2026-10-05)
+
+
+### Bug Fixes
+
+* commit the lockfile after import and split installs, drop the dead bridge sdk, and bound the turn-liveness test ([#1394](https://github.com/mimsy/volute/issues/1394)) ([e8bab2b](https://github.com/mimsy/volute/commit/e8bab2b6812f2aeb5cc9f77a03059758d4d0a083))
+* run the home/ allowlist migration only when a mind still needs it ([#1393](https://github.com/mimsy/volute/issues/1393)) ([0f38ba6](https://github.com/mimsy/volute/commit/0f38ba63f76444967fa1f3650ba9099e0a6e3045))
+
 ## [0.66.13](https://github.com/mimsy/volute/compare/volute-v0.66.12...volute-v0.66.13) (2026-10-05)
 
 
