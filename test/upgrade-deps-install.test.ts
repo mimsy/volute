@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { buildPendingContextMessage } from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import {
+  commitDepsChanges,
+  npmInstallAsMind,
+} from "../packages/daemon/src/lib/mind/npm-install.js";
 import {
   type InstallAndRestartDeps,
   installDepsAndRestart,
@@ -60,17 +68,23 @@ type Harness = {
   deps: InstallAndRestartDeps;
   manager: ReturnType<typeof fakeManager>;
   installs: string[];
+  commits: string[];
   hostErrors: HostError[];
 };
 
 function harness(over: Partial<InstallAndRestartDeps> = {}): Harness {
   const manager = fakeManager();
   const installs: string[] = [];
+  const commits: string[] = [];
   const hostErrors: HostError[] = [];
   const deps: InstallAndRestartDeps = {
     installNeeded: async () => true,
     install: async (dir) => {
       installs.push(dir);
+    },
+    commitDeps: async (_dir, _mind, message) => {
+      commits.push(message);
+      return true;
     },
     publishHostError: async (_mind, summary, kind) => {
       hostErrors.push({ summary, kind });
@@ -79,7 +93,7 @@ function harness(over: Partial<InstallAndRestartDeps> = {}): Harness {
     isAsleep: () => false,
     ...over,
   };
-  return { deps, manager, installs, hostErrors };
+  return { deps, manager, installs, commits, hostErrors };
 }
 
 const installFailure = Object.assign(new Error("Command failed: npm install"), {
@@ -208,6 +222,73 @@ describe("installDepsAndRestart", () => {
     assert.ok(depsFailureOf(h), "the context waits on disk for the mind's next start");
     assert.match(String(warning), /npm install failed/);
     assert.deepEqual(h.manager.calls, ["context"], "restart was not requested");
+  });
+});
+
+// GIT_* vars a hook (pre-push) sets would override cwd-based repo discovery.
+const noGitEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")),
+);
+
+// #1385: the install after the merge rewrote package-lock.json, and nothing committed it.
+describe("installDepsAndRestart commits what the install changed", () => {
+  it("commits after a successful install", async () => {
+    const h = harness();
+    await installDepsAndRestart(MIND, DIR, REF, true, h.deps);
+    assert.deepEqual(h.commits, ["Update dependencies after upgrade"]);
+  });
+
+  it("commits nothing after a failed install", async () => {
+    const h = harness(failingInstall);
+    await installDepsAndRestart(MIND, DIR, REF, true, h.deps);
+    assert.deepEqual(h.commits, []);
+  });
+
+  it("does not turn a failed commit into a failed upgrade", async () => {
+    const h = harness({ commitDeps: async () => Promise.reject(new Error("index.lock")) });
+    const warning = await installDepsAndRestart(MIND, DIR, REF, true, h.deps);
+    assert.equal(warning, undefined);
+    assert.deepEqual(h.hostErrors, []);
+    assert.deepEqual(h.manager.calls, ["stop", "context", "start"]);
+  });
+
+  it("leaves a clean tree when the registry retry rewrites the merged lockfile", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "upgrade-lockfile-"));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: dir, encoding: "utf-8", env: noGitEnv });
+    try {
+      git("init", "-q");
+      git("config", "user.name", "t");
+      git("config", "user.email", "t@t");
+      writeFileSync(join(dir, "package.json"), '{"name":"m","version":"1.0.0"}\n');
+      writeFileSync(join(dir, "package-lock.json"), '{"lockfileVersion":3,"from":"merge"}\n');
+      git("add", "-A");
+      git("commit", "-q", "-m", "merge template update");
+      const mergeHead = git("rev-parse", "HEAD").trim();
+
+      // The real npmInstallAsMind, with a runner standing in for npm: the cached
+      // resolve fails (#973), and the registry retry rewrites the lockfile.
+      let attempts = 0;
+      const run = async () => {
+        if (++attempts === 1) throw installFailure;
+        writeFileSync(join(dir, "package-lock.json"), '{"lockfileVersion":3,"from":"npm"}\n');
+      };
+      const h = harness({
+        install: (d, mind) => npmInstallAsMind(d, mind, [], run),
+        commitDeps: commitDepsChanges,
+      });
+
+      const warning = await installDepsAndRestart(MIND, dir, REF, true, h.deps);
+
+      assert.equal(warning, undefined);
+      assert.equal(attempts, 2);
+      assert.equal(git("status", "--porcelain"), "", "the mind's tree is clean");
+      assert.equal(git("rev-parse", "HEAD~1").trim(), mergeHead);
+      assert.equal(git("log", "-1", "--format=%s").trim(), "Update dependencies after upgrade");
+      assert.match(git("show", "HEAD:package-lock.json"), /"from":"npm"/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

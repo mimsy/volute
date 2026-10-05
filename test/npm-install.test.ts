@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { after, before, describe, it } from "node:test";
 import {
+  commitDepsChanges,
   depsChangedSince,
   isStaleCacheFailure,
   lowPriorityArgv,
@@ -103,6 +104,64 @@ describe("depsChangedSince / npmInstallNeeded", () => {
     mkdirSync(join(repoDir, "node_modules"), { recursive: true });
     const head = git(["rev-parse", "HEAD"], repoDir).trim();
     assert.equal(await npmInstallNeeded(repoDir, head, "test-mind"), false);
+  });
+});
+
+// #1385: the install after a merge rewrote the lockfile and left it uncommitted.
+describe("commitDepsChanges", () => {
+  const repoDir = join(tmpDir, "commit-deps");
+
+  before(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+    mkdirSync(repoDir, { recursive: true });
+    git(["init", "-b", "main"], repoDir);
+    git(["config", "user.email", "test@test.com"], repoDir);
+    git(["config", "user.name", "Test"], repoDir);
+    writeFileSync(join(repoDir, "package.json"), '{"name":"t","version":"1.0.0"}\n');
+    writeFileSync(join(repoDir, "package-lock.json"), '{"lockfileVersion":3}\n');
+    writeFileSync(join(repoDir, "README.md"), "hi\n");
+    commit(repoDir, "initial");
+  });
+
+  after(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  it("makes no commit when the install left the package files alone", async () => {
+    const head = git(["rev-parse", "HEAD"], repoDir).trim();
+    assert.equal(await commitDepsChanges(repoDir, "test-mind", "deps"), false);
+    assert.equal(git(["rev-parse", "HEAD"], repoDir).trim(), head);
+  });
+
+  it("commits a rewritten lockfile and leaves anything else staged where it was", async () => {
+    writeFileSync(join(repoDir, "package-lock.json"), '{"lockfileVersion":3,"x":1}\n');
+    writeFileSync(join(repoDir, "README.md"), "staged, not ours\n");
+    git(["add", "README.md"], repoDir);
+
+    assert.equal(await commitDepsChanges(repoDir, "test-mind", "Update deps"), true);
+
+    assert.equal(git(["log", "-1", "--format=%s"], repoDir).trim(), "Update deps");
+    assert.equal(
+      git(["show", "--name-only", "--format=", "HEAD"], repoDir).trim(),
+      "package-lock.json",
+    );
+    assert.equal(git(["status", "--porcelain"], repoDir), "M  README.md\n");
+    git(["commit", "-q", "-m", "readme"], repoDir);
+  });
+
+  it("handles a repo with no lockfile, and commits one the install created", async () => {
+    git(["rm", "-q", "package-lock.json"], repoDir);
+    git(["commit", "-q", "-m", "no lockfile"], repoDir);
+
+    // package.json alone changed: naming the absent lockfile must not fail the commit.
+    writeFileSync(join(repoDir, "package.json"), '{"name":"t","version":"1.0.1"}\n');
+    assert.equal(await commitDepsChanges(repoDir, "test-mind", "Update deps"), true);
+    assert.equal(git(["status", "--porcelain"], repoDir), "");
+
+    writeFileSync(join(repoDir, "package-lock.json"), '{"lockfileVersion":3}\n');
+    assert.equal(await commitDepsChanges(repoDir, "test-mind", "Update deps"), true);
+    assert.equal(git(["status", "--porcelain"], repoDir), "");
+    assert.equal(git(["ls-files", "package-lock.json"], repoDir).trim(), "package-lock.json");
   });
 });
 

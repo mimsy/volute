@@ -61,7 +61,7 @@ import { defaultHeartbeatSchedule, setupDefaultDreaming } from "./default-autono
 import { generateIdentity, publishPublicKey } from "./identity.js";
 import { readInitLedgerFile, seedInitLedger } from "./init-ledger.js";
 import { chownMindDir, createMindUser, ensureVoluteGroup, mindGitOpts } from "./isolation.js";
-import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
+import { commitDepsChanges, npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import {
   addMind,
   addVariant,
@@ -340,6 +340,11 @@ async function mergeVariantHeld(params: MergeVariantParams): Promise<VariantMerg
   if (await npmInstallNeeded(projectRoot, preMergeHead, parentName)) {
     try {
       await npmInstallAsMind(projectRoot, parentName);
+      // As after an upgrade (#1385): what the install rewrote is committed, not left dirty.
+      await commitDepsChanges(projectRoot, parentName, "Update dependencies after merge").catch(
+        (err) =>
+          llog.warn(`failed to commit dependency changes for ${parentName}`, log.errorData(err)),
+      );
     } catch (err) {
       llog.warn(`npm install failed after merge for ${parentName}`, log.errorData(err));
       warning = "npm install failed after merge — mind may have stale dependencies";

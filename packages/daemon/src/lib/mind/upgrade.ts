@@ -26,7 +26,7 @@ import { beginUpgrade } from "./join-lock.js";
 import { repairMechanicsDoc } from "./mechanics-doc.js";
 import { type MergeRestartTarget, restartOntoMerge } from "./merge-restart.js";
 import { writeMindFile } from "./mind-file-write.js";
-import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
+import { commitDepsChanges, npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import { findMind, mindDir, setMindTemplate, setMindTemplateHash } from "./registry.js";
 import { sharesTemplateBase, TEMPLATE_BRANCH } from "./template-branch.js";
 import { cleanupVariant } from "./variant-cleanup.js";
@@ -661,6 +661,8 @@ type RestartTarget = MergeRestartTarget & {
 export type InstallAndRestartDeps = {
   installNeeded: (dir: string, preMergeRef: string, mindName: string) => Promise<boolean>;
   install: (dir: string, mindName: string) => Promise<void>;
+  /** Commits what the install changed in the package files, as the mind. */
+  commitDeps: (dir: string, mindName: string, message: string) => Promise<boolean>;
   /** Host-facing alert: a dashboard row, published the moment the failure happens. */
   publishHostError: (mindName: string, summary: string, kind: string) => Promise<void>;
   getManager: () => RestartTarget;
@@ -671,6 +673,7 @@ export type InstallAndRestartDeps = {
 const defaultInstallAndRestartDeps: InstallAndRestartDeps = {
   installNeeded: npmInstallNeeded,
   install: npmInstallAsMind,
+  commitDeps: commitDepsChanges,
   publishHostError: publishMindError,
   getManager: getMindManager,
 };
@@ -709,8 +712,10 @@ export async function installDepsAndRestart(
   // Skip npm install when the merge didn't touch dependencies — even a no-op
   // install writes enough to freeze slow storage for a minute or more.
   if (await deps.installNeeded(dir, preMergeHead, mindName)) {
+    let installed = false;
     try {
       await deps.install(dir, mindName);
+      installed = true;
     } catch (err) {
       log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
       const detail = installFailureDetail(err);
@@ -726,6 +731,16 @@ export async function installDepsAndRestart(
         `Upgrade merged but npm install failed for ${mindName} — dependencies are stale`,
         "upgrade_deps_failed",
       );
+    }
+    if (installed) {
+      // The install can rewrite the merged lockfile, on either attempt (#1385); commit
+      // it as the mind now, or its tree is left dirty with a change no commit explains,
+      // which its next upgrade sweeps into an unrelated auto-commit.
+      await deps
+        .commitDeps(dir, mindName, "Update dependencies after upgrade")
+        .catch((err) =>
+          log.warn(`failed to commit dependency changes for ${mindName}`, log.errorData(err)),
+        );
     }
   } else {
     log.info(`skipping npm install for ${mindName} — dependencies unchanged by upgrade`);
