@@ -164,6 +164,10 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
           return "Hook failed";
         case "skill_conflict":
           return s("reason") ? `Skill update conflict: ${s("reason")}` : "Skill update conflict";
+        case "skill_retired":
+          return s("reason")
+            ? `Skill no longer shipped: ${s("reason")}`
+            : "Skill no longer shipped";
         default:
           return "Notice";
       }
@@ -186,6 +190,7 @@ export const NOTICE_KINDS = [
   "routes",
   "hook_failed",
   "skill_conflict",
+  "skill_retired",
 ] as const;
 
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
@@ -1329,15 +1334,36 @@ export async function hasEverReceivedEvent(mind: string, type: string): Promise<
       and(
         eq(systemEvents.mind, mind),
         eq(systemEvents.type, type),
-        sql`json_extract(${systemEvents.meta}, '$.expired') IS NULL`,
-        sql`json_extract(${systemEvents.meta}, '$.skipped') IS NULL`,
-        sql`json_extract(${systemEvents.meta}, '$.dropped') IS NULL`,
-        sql`json_extract(${systemEvents.meta}, '$.superseded') IS NULL`,
+        ...DISCARD_MARKERS.map((m) => sql`json_extract(${systemEvents.meta}, ${`$.${m}`}) IS NULL`),
       ),
     )
     .limit(1)
     .get();
   return row != null;
+}
+
+/** The `meta` flags of a row stamped `delivered_at` without reaching the mind. */
+const DISCARD_MARKERS = ["expired", "skipped", "dropped", "superseded"] as const;
+
+/**
+ * Where one event stands: "received" once it reached the mind, "pending" while it waits,
+ * "discarded" when it was stamped delivered without reaching it (see
+ * {@link hasEverReceivedEvent}), "gone" when the row no longer exists — which only the
+ * purge of old delivered rows does.
+ */
+export async function eventReceipt(
+  id: number,
+): Promise<"received" | "pending" | "discarded" | "gone"> {
+  const db = await getDb();
+  const row = await db
+    .select({ delivered: systemEvents.delivered_at, meta: systemEvents.meta })
+    .from(systemEvents)
+    .where(eq(systemEvents.id, id))
+    .get();
+  if (!row) return "gone";
+  if (!row.delivered) return "pending";
+  const meta = parseMeta(row.meta, `event ${id}`);
+  return DISCARD_MARKERS.some((m) => meta[m] != null) ? "discarded" : "received";
 }
 
 /** True if the mind has an undelivered next-turn event with this meta.reason (any thread). */
