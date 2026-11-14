@@ -115,7 +115,7 @@ describe("extension context: spirit resolution", () => {
     try {
       // The mind is registered but not running, so the POST can't land: the row stays
       // pending for its next start, which is the contract for an undeliverable event.
-      const { delivered } = await ctx.deliverEvent("event-ctx-mind", { body: "psamiton replied" });
+      const { delivered } = await ctx.deliverEvent("event-ctx-mind", { body: "someone replied" });
       assert.equal(delivered, false);
 
       const db = await getDb();
@@ -126,7 +126,7 @@ describe("extension context: spirit resolution", () => {
       assert.equal(rows.length, 1);
       assert.equal(rows[0].type, "extension");
       assert.equal(rows[0].delivery, "immediate");
-      assert.equal(rows[0].body, "psamiton replied");
+      assert.equal(rows[0].body, "someone replied");
       assert.deepEqual(JSON.parse(rows[0].meta ?? "{}"), { extension: "test-ctx" });
     } finally {
       await removeMind("event-ctx-mind").catch(() => {});
