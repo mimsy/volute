@@ -64,9 +64,20 @@ const cmd = command({
     const { mindSkillsDir } = await import("@volute/daemon/lib/skills.js");
     const client = getClient();
 
+    // Which skills a sprouted mind gets is the daemon's to say: it is in the system's
+    // config, which a sandboxed mind (and this runs as the mind) can't read, so reading
+    // it here silently came back as the built-in four, without any extension's skills.
+    let standardSkills = getStandardSkillsWithExtensions();
+    try {
+      const listRes = await daemonFetch(urlOf(client.api.v1.skills.defaults.list.$url()));
+      if (listRes.ok) standardSkills = ((await listRes.json()) as { skills: string[] }).skills;
+    } catch {
+      // Keep what could be read locally.
+    }
+
     // Install standard skills from shared pool via daemon, remove orientation
     const failedSkills: string[] = [];
-    for (const skillId of getStandardSkillsWithExtensions()) {
+    for (const skillId of standardSkills) {
       const skillDir = resolve(mindSkillsDir(dir), skillId);
       if (!existsSync(skillDir)) {
         const installRes = await daemonFetch(
