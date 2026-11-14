@@ -261,7 +261,9 @@ export async function startDaemon(opts: {
   // overwrite files belonging to a running daemon.
   let result: Awaited<ReturnType<typeof startServer>>;
   try {
-    result = await startServer({ port, hostname: "0.0.0.0", tls });
+    // Bind where asked (127.0.0.1 unless --host says otherwise). With Tailscale HTTPS the
+    // user-facing listener must be reachable on the tailnet, so that one binds everywhere.
+    result = await startServer({ port, hostname: tls ? "0.0.0.0" : hostname, tls });
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === "EADDRINUSE") {
