@@ -6,14 +6,11 @@ import { afterEach, describe, it } from "node:test";
 import { promisify } from "node:util";
 import { mindEnvPath, writeEnv } from "../packages/daemon/src/lib/config/env.js";
 import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
-import {
-  composeMindEnv,
-  sandboxedToolchainBin,
-  wrapMindServer,
-} from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import { composeMindEnv, wrapMindServer } from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { runMindScript } from "../packages/daemon/src/lib/daemon/mind-script.js";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
 import { SandboxUnavailableError } from "../packages/daemon/src/lib/mind/sandbox.js";
+import { sandboxedToolchainBin } from "../packages/daemon/src/lib/mind/toolchain.js";
 import type { IsolationMode } from "../packages/daemon/src/lib/util/mind-env.js";
 
 /**
