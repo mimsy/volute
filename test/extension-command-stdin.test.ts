@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionCommand } from "@volute/extensions";
-import { toCommandInfo } from "../packages/daemon/src/lib/extensions.js";
+import { commandInput, toCommandInfo } from "../packages/daemon/src/lib/extensions.js";
 import { createCommands as intentionCommands } from "../packages/extensions/intentions/src/commands.js";
 import { createCommands as pageCommands } from "../packages/extensions/pages/src/commands.js";
 
@@ -66,5 +66,47 @@ describe("extension command stdin opt-in", () => {
       "pages comment",
       "pages write",
     ]);
+  });
+});
+
+/**
+ * A `raw` command wraps a parser of its own (repeated flags, flags taking two values),
+ * which declared `args`/`flags` cannot describe: its handler gets the argv whole.
+ */
+describe("raw extension commands", () => {
+  const argv = [
+    "new",
+    "--link",
+    "wiki/a",
+    "--link",
+    "wiki/b",
+    "--quote",
+    "wiki/a",
+    "exact",
+    "body",
+  ];
+
+  it("hands a raw command its whole argv, unparsed", () => {
+    assert.deepEqual(commandInput({ raw: true }, argv), { args: {}, flags: {}, rest: argv });
+  });
+
+  it("still parses a command that does not declare `raw`", () => {
+    const parsed = commandInput(
+      {
+        args: [{ name: "verb", description: "" }],
+        flags: { link: { type: "string", description: "" } },
+      },
+      ["new", "--link", "wiki/a"],
+    );
+    assert.deepEqual(parsed, { args: { verb: "new" }, flags: { link: "wiki/a" }, rest: [] });
+  });
+
+  it("carries `raw` through to the CLI, which must skip its own checking", () => {
+    const info = toCommandInfo({
+      description: "",
+      raw: true,
+      handler: async () => ({ output: "" }),
+    });
+    assert.equal(info.raw, true);
   });
 });

@@ -168,7 +168,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 
 1. **Built-in** — statically imported in `packages/daemon/src/lib/extensions.ts` (`discoverBuiltinExtensions`)
 2. **npm packages** — listed in `~/.volute/system/extensions.json`, loaded via dynamic import (`discoverInstalledExtensions`). Install with `volute extension install <package>`
-3. **Local directories** — placed in `~/.volute/extensions/{dir}/` with an entry point (`src/index.ts`, `src/index.js`, `index.ts`, or `index.js`). Auto-discovered on daemon start (`discoverLocalExtensions`)
+3. **Local directories** — placed in `~/.volute/extensions/{dir}/` with a pre-built JavaScript entry point (`dist/index.js`, `src/index.js`, or `index.js`); the directory may be a symlink to a checkout. Auto-discovered on daemon start (`discoverLocalExtensions`)
 
 **Built-in extension packages:**
 - `packages/extensions/sdk/` (`@volute/extensions`) — shared types and helpers

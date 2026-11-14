@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type {
   ArgDef,
@@ -20,7 +20,11 @@ import {
 } from "../web/middleware/effective-principal.js";
 import { getUser, getUserByUsername } from "./auth.js";
 import { announceToCommons } from "./chat/commons-channel.js";
-import { MIND_LEVEL_THREAD, recordNotice as recordMindNotice } from "./chat/system-events.js";
+import {
+  deliverEvent,
+  MIND_LEVEL_THREAD,
+  recordNotice as recordMindNotice,
+} from "./chat/system-events.js";
 import { getSpiritName, readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { readSystemsConfig } from "./config/systems-config.js";
 import { publishTurnActivity } from "./delivery/message-delivery.js";
@@ -209,6 +213,16 @@ export function parseCommandArgs(
   return { args: namedArgs, flags, rest };
 }
 
+/** What a command's handler is given for an argv: parsed, or whole for a `raw` command. */
+export function commandInput(
+  cmd: Pick<ExtensionCommand, "raw" | "args" | "flags">,
+  rawArgs: string[],
+): ReturnType<typeof parseCommandArgs> {
+  return cmd.raw
+    ? { args: {}, flags: {}, rest: rawArgs }
+    : parseCommandArgs(rawArgs, cmd.args ?? [], cmd.flags ?? {});
+}
+
 export type ExtensionInfo = {
   id: string;
   name: string;
@@ -385,6 +399,24 @@ export async function buildExtensionContext(
         );
       }
     },
+    deliverEvent: async (mindName, event) => {
+      try {
+        if (!(await findMind(mindName))) return { delivered: false };
+        const { delivered } = await deliverEvent(mindName, {
+          type: "extension",
+          body: event.body,
+          meta: { extension: manifest.id },
+          whileSleeping: event.whileSleeping ?? "queue",
+        });
+        return { delivered };
+      } catch (err) {
+        log.warn(
+          `extension ${manifest.id}: failed to deliver event to ${mindName}`,
+          log.errorData(err),
+        );
+        return { delivered: false };
+      }
+    },
     isIsolationEnabled,
     getMindUser: mindUserName,
     containMindPath: async (mindName: string, path: string) => {
@@ -459,7 +491,7 @@ async function loadExtension(
             (caller ??= user
               ? getBaseName(user.username).then((mind) => ({ mind, sender: user.username }))
               : Promise.resolve(undefined));
-          const parsed = parseCommandArgs(body.args ?? [], cmd.args ?? [], cmd.flags ?? {});
+          const parsed = commandInput(cmd, body.args ?? []);
           const result = await cmd.handler(parsed, {
             ...context,
             privileged,
@@ -715,16 +747,23 @@ function validateManifest(manifest: unknown, source: string): manifest is Extens
   return true;
 }
 
-async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
+export async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
   const baseDir = extensionsBaseDir();
   if (!existsSync(baseDir)) return [];
 
   const manifests: ExtensionManifest[] = [];
   let entries: string[];
   try {
-    entries = readdirSync(baseDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && d.name !== "_npm")
-      .map((d) => d.name);
+    // statSync, not the dirent: an extension under development is a symlink to its
+    // checkout, and a dirent reports a symlink as not a directory.
+    entries = readdirSync(baseDir).filter((name) => {
+      if (name === "_npm") return false;
+      try {
+        return statSync(resolve(baseDir, name)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
   } catch (err) {
     log.error("failed to read local extensions directory", log.errorData(err));
     return [];
@@ -733,7 +772,11 @@ async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
   for (const dir of entries) {
     const extDir = resolve(baseDir, dir);
     // Look for a .js entry point (local extensions must be pre-built)
-    const candidates = [resolve(extDir, "src", "index.js"), resolve(extDir, "index.js")];
+    const candidates = [
+      resolve(extDir, "dist", "index.js"),
+      resolve(extDir, "src", "index.js"),
+      resolve(extDir, "index.js"),
+    ];
     const entryPoint = candidates.find((p) => existsSync(p));
     if (!entryPoint) continue;
 
