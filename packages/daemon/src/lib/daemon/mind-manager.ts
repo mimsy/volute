@@ -140,6 +140,29 @@ export async function wrapMindServer(
 }
 
 /**
+ * On macOS, `/usr/bin/git` (and make, clang, …) is a shim that asks `xcrun` where the
+ * real tool is, and xcrun writes a lookup cache under the user's temp dir. A sandboxed
+ * mind can't write there, so every git it runs prints `xcrun_db … Operation not
+ * permitted` before working: harmless, but it reads as failure on every command. The
+ * tools themselves sit in the developer directory's `usr/bin`; ahead of `/usr/bin` on
+ * the mind's PATH, they are found without the shim. Empty off macOS, unsandboxed, or
+ * with no developer tools installed.
+ */
+export function sandboxedToolchainBin(
+  isolationMode: IsolationMode,
+  platform: NodeJS.Platform = process.platform,
+  exists: (path: string) => boolean = existsSync,
+): string {
+  if (platform !== "darwin" || isolationMode !== "sandbox") return "";
+  return (
+    [
+      "/Library/Developer/CommandLineTools/usr/bin",
+      "/Applications/Xcode.app/Contents/Developer/usr/bin",
+    ].find((dir) => exists(resolve(dir, "git"))) ?? ""
+  );
+}
+
+/**
  * The full environment a mind process is spawned with.
  *
  * Extracted from `_startMind` so the *wiring* is testable, not just the pieces.
@@ -164,7 +187,8 @@ export function composeMindEnv(opts: {
   const { name, baseName, dir, port, mindToken, isolationMode } = opts;
   // Prepend mind's .local/bin to PATH for skill commands and volute wrapper
   const mindLocalBin = resolve(dir, "home", ".local", "bin");
-  const currentPath = process.env.PATH ?? "";
+  const toolchain = sandboxedToolchainBin(isolationMode);
+  const currentPath = [toolchain, process.env.PATH ?? ""].filter(Boolean).join(":");
   return {
     ...buildMindBaseEnv(),
     ...loadMergedEnv(name),

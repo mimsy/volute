@@ -6,7 +6,11 @@ import { afterEach, describe, it } from "node:test";
 import { promisify } from "node:util";
 import { mindEnvPath, writeEnv } from "../packages/daemon/src/lib/config/env.js";
 import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
-import { composeMindEnv, wrapMindServer } from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import {
+  composeMindEnv,
+  sandboxedToolchainBin,
+  wrapMindServer,
+} from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { runMindScript } from "../packages/daemon/src/lib/daemon/mind-script.js";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
 import { SandboxUnavailableError } from "../packages/daemon/src/lib/mind/sandbox.js";
@@ -22,6 +26,48 @@ import type { IsolationMode } from "../packages/daemon/src/lib/util/mind-env.js"
 
 const HOOK_PATH = resolve(process.cwd(), "templates/_base/.init/.local/hooks/startup-context.ts");
 const execFileAsync = promisify(execFile);
+
+/**
+ * macOS's /usr/bin/git is a shim over xcrun, which writes a cache a sandboxed mind
+ * can't: every git printed `xcrun_db … Operation not permitted` before working. The
+ * real tools go ahead of the shim on a sandboxed mind's PATH, and nowhere else.
+ */
+describe("a sandboxed mind's developer tools on macOS", () => {
+  const clt = "/Library/Developer/CommandLineTools/usr/bin";
+  const xcode = "/Applications/Xcode.app/Contents/Developer/usr/bin";
+  const has =
+    (...dirs: string[]) =>
+    (path: string) =>
+      dirs.some((d) => path === `${d}/git`);
+
+  it("prefers the command line tools, then Xcode's", () => {
+    assert.equal(sandboxedToolchainBin("sandbox", "darwin", has(clt, xcode)), clt);
+    assert.equal(sandboxedToolchainBin("sandbox", "darwin", has(xcode)), xcode);
+  });
+
+  it("is nothing off macOS, outside the sandbox, or with no tools installed", () => {
+    assert.equal(sandboxedToolchainBin("sandbox", "linux", has(clt)), "");
+    assert.equal(sandboxedToolchainBin("none", "darwin", has(clt)), "");
+    assert.equal(sandboxedToolchainBin("user", "darwin", has(clt)), "");
+    assert.equal(sandboxedToolchainBin("sandbox", "darwin", has()), "");
+  });
+
+  it("goes after the mind's own bin and before the host's PATH", () => {
+    const env = composeMindEnv({
+      name: "toolchain-mind",
+      baseName: "toolchain-mind",
+      dir: "/tmp/toolchain-mind",
+      port: 4196,
+      mindToken: "tok",
+      isolationMode: "sandbox",
+    });
+    const dirs = (env.PATH ?? "").split(":");
+    assert.equal(dirs[0], "/tmp/toolchain-mind/home/.local/bin");
+    const tool = sandboxedToolchainBin("sandbox");
+    if (tool) assert.equal(dirs[1], tool);
+    else assert.notEqual(dirs[1], clt);
+  });
+});
 
 describe("composeMindEnv isolation mode", () => {
   const mindName = `env-368-${process.pid}`;
