@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionCommand } from "@volute/extensions";
-import { commandInput, toCommandInfo } from "../packages/daemon/src/lib/extensions.js";
+import {
+  clipNotice,
+  commandInput,
+  NOTICE_MAX,
+  toCommandInfo,
+} from "../packages/daemon/src/lib/extensions.js";
 import { createCommands as intentionCommands } from "../packages/extensions/intentions/src/commands.js";
 import { createCommands as pageCommands } from "../packages/extensions/pages/src/commands.js";
 
@@ -108,5 +113,24 @@ describe("raw extension commands", () => {
       handler: async () => ({ output: "" }),
     });
     assert.equal(info.raw, true);
+  });
+});
+
+describe("an extension's notice", () => {
+  it("is left alone when it fits", () => {
+    assert.equal(clipNotice("a comment on your note"), "a comment on your note");
+  });
+
+  it("is cut at a word and marked, never mid-word", () => {
+    const long = `${"word ".repeat(120)}ending`;
+    const cut = clipNotice(long);
+    assert.ok(cut.length <= NOTICE_MAX);
+    assert.match(cut, /word…$/);
+  });
+
+  it("is cut hard when there is no word to cut at", () => {
+    const cut = clipNotice("x".repeat(900));
+    assert.equal(cut.length, NOTICE_MAX);
+    assert.ok(cut.endsWith("…"));
   });
 });

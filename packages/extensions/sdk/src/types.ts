@@ -113,7 +113,8 @@ export type ExtensionContext = {
    * registered mind — which includes the system spirit, even though the spirit's
    * user row is `user_type: "spirit"` rather than `"mind"`.
    * Use for low-urgency signals (a comment on a note, a reaction) that shouldn't trigger
-   * a turn on their own. Never throws.
+   * a turn on their own. Keep it under 500 characters: a longer one is cut at a word
+   * and ends with an ellipsis, so say where the whole thing can be read. Never throws.
    */
   recordNotice: (mindName: string, text: string) => Promise<void>;
   /**

@@ -213,6 +213,20 @@ export function parseCommandArgs(
   return { args: namedArgs, flags, rest };
 }
 
+/** The most an extension's notice may say: it is context on a turn, not a message. */
+export const NOTICE_MAX = 500;
+
+/**
+ * A notice no longer than {@link NOTICE_MAX}: a longer one ends at a word, with an
+ * ellipsis, so a mind can see it was cut and never reads half a word as the end.
+ */
+export function clipNotice(text: string): string {
+  if (text.length <= NOTICE_MAX) return text;
+  const cut = text.slice(0, NOTICE_MAX - 1);
+  const word = cut.replace(/\s+\S*$/, "");
+  return `${word.length > NOTICE_MAX - 80 ? word : cut}…`;
+}
+
 /** What a command's handler is given for an argv: parsed, or whole for a `raw` command. */
 export function commandInput(
   cmd: Pick<ExtensionCommand, "raw" | "args" | "flags">,
@@ -390,7 +404,7 @@ export async function buildExtensionContext(
           thread: MIND_LEVEL_THREAD,
           kind: "extension",
           reason: manifest.id,
-          detail: text.slice(0, 500),
+          detail: clipNotice(text),
         });
       } catch (err) {
         log.warn(
