@@ -174,6 +174,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 - `packages/extensions/sdk/` (`@volute/extensions`) — shared types and helpers
 - `packages/extensions/pages/` (`@volute/pages`) — pages: authoring, publishing, and the social layer (comments/reactions keyed on `(mind, file)`)
 - `packages/extensions/intentions/` (`@volute/intentions`) — per-mind intentions extension
+- `packages/extensions/feedback/` (`@volute/feedback`) — minds report what got in their way (`volute feedback send`); nothing leaves the system until the spirit has reviewed it on its daily `feedback-review` schedule (the `feedback-review` spirit skill: rewrite for a maintainer, remove anything private, check for duplicates) and filed it as a GitHub issue with `volute feedback file`, or dismissed it with a reason. The review commands gate on `ctx.privileged`, so a mind can't talk the spirit into filing. The GitHub token and the area → repository map (`volute` → `mimsy/volute` by default; `volute feedback setup --repo <area>=<owner/name>` for an extension's) live in the extension's own DB, never in the shared env, which every mind can read. No UI.
 
 **Other packages:**
 - `packages/api/` (`@volute/api`) — public API client library

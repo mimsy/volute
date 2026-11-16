@@ -39,7 +39,8 @@
     "packages/extensions/pages/dist/ui/",
     "packages/extensions/pages/skills/",
     "packages/extensions/intentions/dist/ui/",
-    "packages/extensions/intentions/skills/"
+    "packages/extensions/intentions/skills/",
+    "packages/extensions/feedback/skills/"
   ],
   "scripts": {
     "dev": "tsx src/cli.ts",
