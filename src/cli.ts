@@ -255,7 +255,9 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
           }
 
           // Command help: --help on a specific subcommand
-          if (wantsHelp && subcommand in ext.commands) {
+          // A `raw` command's --help is its own parser's to answer: the metadata here
+          // has none of its subcommands or flags.
+          if (wantsHelp && subcommand in ext.commands && !ext.commands[subcommand].raw) {
             const meta = ext.commands[subcommand];
             const argParts = (meta.args ?? []).map((a) =>
               a.required ? `<${a.name}>` : `[${a.name}]`,

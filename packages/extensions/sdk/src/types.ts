@@ -295,7 +295,8 @@ export type ExtensionCommand = {
    * and the handler receives the whole argv in `rest`, with `args` and `flags` empty.
    * For a command that hands its arguments on to another parser (a wrapped CLI with
    * repeated or multi-value flags), which the declared `args`/`flags` cannot describe.
-   * The extension layer's own `--mind` is still lifted out first.
+   * The extension layer's own `--mind` is still lifted out first; `--help` is passed on
+   * too, since only the handler knows what the command takes.
    */
   raw?: boolean;
   examples?: string[];

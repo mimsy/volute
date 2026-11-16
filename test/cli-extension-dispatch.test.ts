@@ -223,4 +223,12 @@ describe("a raw extension command is dispatched with its argv as written", () =>
     assert.deepEqual(dispatched[0].body.args, argv);
     assert.equal(dispatched[0].body.mind, "iris");
   });
+
+  // The CLI's own help for it would be a bare "Usage: volute vault threads".
+  it("hands --help to the command's own parser", async () => {
+    dispatched = [];
+    const r = await runCli(["vault", "threads", "reply", "--help"]);
+    assert.equal(r.code, 0, `expected exit 0, got ${r.code}. stderr: ${r.stderr}`);
+    assert.deepEqual(dispatched[0].body.args, ["reply", "--help"]);
+  });
 });
