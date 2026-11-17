@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -415,9 +416,22 @@ export async function nextPort(): Promise<number> {
   const usedPorts = new Set(rows.map((r) => r.port));
   const basePort = parseInt(process.env.VOLUTE_BASE_PORT || "4100", 10);
   let port = basePort;
-  while (usedPorts.has(port)) port++;
+  // Skip ports something else is listening on as well as our own: another Volute system
+  // on this machine allocates from the same base, and its minds hold theirs.
+  while (port <= 65535 && (usedPorts.has(port) || !(await portIsFree(port)))) port++;
   if (port > 65535) throw new Error("No available ports — all ports 4100-65535 are allocated");
   return port;
+}
+
+function portIsFree(port: number): Promise<boolean> {
+  return new Promise((done) => {
+    const probe = createServer();
+    probe.once("error", () => done(false));
+    probe.once("listening", () => probe.close(() => done(true)));
+    // The wildcard address, as a mind's server binds: a loopback-only probe can succeed
+    // beside a wildcard listener.
+    probe.listen(port);
+  });
 }
 
 /** Map a server bind hostname to the appropriate loopback for internal connections. */

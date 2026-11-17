@@ -27,6 +27,7 @@ import {
 } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { prepareMindTmp } from "../mind/tmp-reaper.js";
+import { sandboxedToolchainBin } from "../mind/toolchain.js";
 import { syncMindZshenv, wantsDaemonZshenv } from "../mind/zshenv.js";
 import { getPrompt } from "../prompts.js";
 import { exec } from "../util/exec.js";
@@ -164,7 +165,8 @@ export function composeMindEnv(opts: {
   const { name, baseName, dir, port, mindToken, isolationMode } = opts;
   // Prepend mind's .local/bin to PATH for skill commands and volute wrapper
   const mindLocalBin = resolve(dir, "home", ".local", "bin");
-  const currentPath = process.env.PATH ?? "";
+  const toolchain = sandboxedToolchainBin(isolationMode);
+  const currentPath = [toolchain, process.env.PATH ?? ""].filter(Boolean).join(":");
   return {
     ...buildMindBaseEnv(),
     ...loadMergedEnv(name),

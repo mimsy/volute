@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import {
   daemonLogReport,
@@ -19,6 +22,7 @@ import {
   STOP_GRACE_TIMEOUT,
   SYSTEM_LAUNCHD_PLIST_PATH,
   SYSTEM_SERVICE_PATH,
+  serviceHomeOf,
   USER_SYSTEMD_UNIT,
 } from "../packages/daemon/src/lib/config/service-mode.js";
 
@@ -99,6 +103,41 @@ describe("resolveServiceMode", () => {
 
   it("returns 'manual' when nothing is installed", () => {
     assert.equal(resolveServiceMode(linuxProbes()), "manual");
+  });
+
+  it("is manual for a second system: a service installed for another home is not ours", () => {
+    const installed = {
+      fileExists: (p: string) => p === SYSTEM_LAUNCHD_PLIST_PATH,
+      platform: "darwin" as const,
+      serviceHome: () => "/var/lib/volute",
+    };
+    assert.equal(resolveServiceMode(linuxProbes({ ...installed, home: "/tmp/other" })), "manual");
+    assert.equal(
+      resolveServiceMode(linuxProbes({ ...installed, home: "/var/lib/volute/" })),
+      "system-launchd",
+    );
+    // No VOLUTE_HOME at all: the installed service is the only system there is.
+    assert.equal(resolveServiceMode(linuxProbes(installed)), "system-launchd");
+  });
+
+  it("reads the home a service file runs in", () => {
+    const dir = mkdtempSync(join(tmpdir(), "svc-home-"));
+    try {
+      const plist = join(dir, "d.plist");
+      writeFileSync(
+        plist,
+        "<dict><key>VOLUTE_HOME</key>\n  <string>/var/lib/volute</string></dict>",
+      );
+      assert.equal(serviceHomeOf(plist), "/var/lib/volute");
+      const unit = join(dir, "volute.service");
+      writeFileSync(unit, "[Service]\nEnvironment=VOLUTE_HOME=/srv/volute\nExecStart=volute up\n");
+      assert.equal(serviceHomeOf(unit), "/srv/volute");
+      const bare = join(dir, "bare.service");
+      writeFileSync(bare, "[Service]\nExecStart=volute up\n");
+      assert.equal(serviceHomeOf(bare), resolve(homedir(), ".volute"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("detects launchd modes only on darwin", () => {

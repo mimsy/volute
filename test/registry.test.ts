@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:net";
 import { afterEach, describe, it } from "node:test";
 import {
   addMind,
@@ -46,6 +47,17 @@ describe("registry", () => {
     await addVariant(`${testMind}-v1`, testMind, 4101, "/fake/v1", "v1");
     const port = await nextPort();
     assert.ok(port >= 4102, `Expected port >= 4102, got ${port}`);
+  });
+
+  it("nextPort skips a port something else is listening on", async () => {
+    const first = await nextPort();
+    const squatter = createServer();
+    await new Promise<void>((done) => squatter.listen(first, done));
+    try {
+      assert.ok((await nextPort()) > first, "a port in use must not be handed out");
+    } finally {
+      await new Promise<void>((done) => squatter.close(() => done()));
+    }
   });
 
   it("validateMindName accepts valid names", () => {

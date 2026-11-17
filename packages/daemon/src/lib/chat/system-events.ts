@@ -140,6 +140,8 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
       return "File offered";
     case "webhook":
       return s("source") ? `Webhook: ${s("source")}` : "Webhook";
+    case "extension":
+      return s("extension") ? `From ${s("extension")}` : "Extension";
     case "notice":
       switch (s("subtype")) {
         case "crash":
@@ -554,9 +556,11 @@ export function eventMatchKey(type: string, meta: Record<string, unknown>): stri
       ? str("scheduleId")
       : type === "webhook"
         ? str("source")
-        : type === "notice" || type === "lifecycle"
-          ? str("subtype")
-          : undefined;
+        : type === "extension"
+          ? str("extension")
+          : type === "notice" || type === "lifecycle"
+            ? str("subtype")
+            : undefined;
   return disc ? `${type}:${disc}` : type;
 }
 
@@ -823,7 +827,14 @@ const NO_REPLAY_TYPES = new Set(["sleep"]);
  * `next-turn` events (every {@link recordNotice}) are unaffected by construction — they
  * return before the delivery branch and are drained as context on whatever turn runs next.
  */
-const HELD_EVENT_TYPES = new Set(["schedule", "webhook", "file-share", "channel", "version"]);
+const HELD_EVENT_TYPES = new Set([
+  "schedule",
+  "webhook",
+  "extension",
+  "file-share",
+  "channel",
+  "version",
+]);
 
 /**
  * Whether a spend cap is currently holding this mind's inbound traffic, and why.

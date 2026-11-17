@@ -156,11 +156,11 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 - `routes(ctx)` — Hono app mounted at `/api/ext/{id}/` (authenticated); `publicRoutes?(ctx)` at `/ext/{id}/public/` (no auth)
 - `ui.assetsDir?` — built UI assets served at `/ext/{id}/`; `ui.systemSection?` (singular, with `urlPatterns` for system-level routing); `ui.mindSections?` (array); `ui.feedSource?`
 - `skillsDir?` — directory of skills synced on load; `standardSkill?` adds them to the default skill set
-- `mindDoc?` — mind-facing markdown served from `GET /api/extensions/mind-docs` and injected into session-start context by the `startup-context.ts` hook (it is *not* written into VOLUTE.md); `commands?` — extension-provided CLI subcommands
+- `mindDoc?` — mind-facing markdown served from `GET /api/extensions/mind-docs` and injected into session-start context by the `startup-context.ts` hook (it is *not* written into VOLUTE.md); `commands?` — extension-provided CLI subcommands (`raw: true` hands a command its argv unparsed, for wrapping another CLI)
 - `initDb?(db)` — per-extension SQLite DB at `~/.volute/system/extension-data/{id}/data.db`
 - `onDaemonStart?()`, `onSpiritReady?(ctx)`, `onDaemonStop?()`, `onMindStart?(name, ctx)`, `onMindStop?(name)` — lifecycle hooks. Spirit-dependent bootstrap belongs in `onSpiritReady`: `onDaemonStart` runs before the spirit exists on a fresh install
 
-**Extension context** (passed to `routes()`/`publicRoutes()`): `db`, `dataDir`, `authMiddleware`, `requireSelf`, `resolveUser(c)`, `getUser`/`getUserByUsername`/`getMindUser`, `publishActivity(event)`, `announceToCommons`, `recordNotice`, `getMindDir(name)`, `isIsolationEnabled`, `getSystemsConfig()`.
+**Extension context** (passed to `routes()`/`publicRoutes()`): `db`, `dataDir`, `authMiddleware`, `requireSelf`, `resolveUser(c)`, `getUser`/`getUserByUsername`/`getMindUser`, `publishActivity(event)`, `announceToCommons`, `recordNotice` (waits for the mind's next turn), `deliverEvent` (starts one), `getMindDir(name)`, `isIsolationEnabled`, `getSystemsConfig()`.
 
 **Extension UI** — standalone Svelte apps built with Vite, served as static assets at `/ext/{id}/`, rendered in iframes by the main app. Uses hash routing internally; communicates navigation to parent via `window.parent.postMessage({ type: "navigate", path })`. Extensions can import shared UI components from `@volute/ui` (add `"@volute/ui": "*"` to dependencies). Theme is shared via auto-generated `ext-theme.css` (built from `@volute/ui`'s `theme.css` + `base.css`).
 
@@ -168,7 +168,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 
 1. **Built-in** — statically imported in `packages/daemon/src/lib/extensions.ts` (`discoverBuiltinExtensions`)
 2. **npm packages** — listed in `~/.volute/system/extensions.json`, loaded via dynamic import (`discoverInstalledExtensions`). Install with `volute extension install <package>`
-3. **Local directories** — placed in `~/.volute/extensions/{dir}/` with an entry point (`src/index.ts`, `src/index.js`, `index.ts`, or `index.js`). Auto-discovered on daemon start (`discoverLocalExtensions`)
+3. **Local directories** — placed in `~/.volute/extensions/{dir}/` with a pre-built JavaScript entry point (`dist/index.js`, `src/index.js`, or `index.js`); the directory may be a symlink to a checkout. Auto-discovered on daemon start (`discoverLocalExtensions`)
 
 **Built-in extension packages:**
 - `packages/extensions/sdk/` (`@volute/extensions`) — shared types and helpers

@@ -39,6 +39,12 @@ const EXT_COMMANDS = {
   // The intentions extension declares a `mind` flag of its own: "show another mind's
   // active intentions". It must reach the handler instead of being eaten as the acting
   // identity, or a declared, --help-advertised flag can never be used.
+  // A raw command passes its argv on to a parser of its own.
+  vault: {
+    commands: {
+      threads: { description: "Threads in the vault", raw: true },
+    },
+  },
   intentions: {
     commands: {
       list: {
@@ -203,5 +209,26 @@ describe("chat read surfaces the server's reason, not a bare status", () => {
     const r = await runCli(["chat", "read", "#system", "--before", "-5", "--mind", "mimsy"]);
     assert.equal(r.code, 1, `expected exit 1, got ${r.code}. stderr: ${r.stderr}`);
     assert.match(r.stderr, /must be a non-negative integer/);
+  });
+});
+
+describe("a raw extension command is dispatched with its argv as written", () => {
+  it("passes repeated and undeclared flags through, lifting only --mind", async () => {
+    dispatched = [];
+    const argv = ["new", "--link", "wiki/a", "--link", "wiki/b", "--tag", "question", "a body"];
+    const r = await runCli(["vault", "threads", ...argv, "--mind", "iris"]);
+    assert.equal(r.code, 0, `expected exit 0, got ${r.code}. stderr: ${r.stderr}`);
+    assert.equal(dispatched.length, 1);
+    assert.equal(dispatched[0].path, "/api/ext/vault/commands/threads");
+    assert.deepEqual(dispatched[0].body.args, argv);
+    assert.equal(dispatched[0].body.mind, "iris");
+  });
+
+  // The CLI's own help for it would be a bare "Usage: volute vault threads".
+  it("hands --help to the command's own parser", async () => {
+    dispatched = [];
+    const r = await runCli(["vault", "threads", "reply", "--help"]);
+    assert.equal(r.code, 0, `expected exit 0, got ${r.code}. stderr: ${r.stderr}`);
+    assert.deepEqual(dispatched[0].body.args, ["reply", "--help"]);
   });
 });
