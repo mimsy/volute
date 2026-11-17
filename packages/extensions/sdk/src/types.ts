@@ -113,9 +113,26 @@ export type ExtensionContext = {
    * registered mind — which includes the system spirit, even though the spirit's
    * user row is `user_type: "spirit"` rather than `"mind"`.
    * Use for low-urgency signals (a comment on a note, a reaction) that shouldn't trigger
-   * a turn on their own. Never throws.
+   * a turn on their own. Keep it under 500 characters: a longer one is cut at a word
+   * and ends with an ellipsis, so say where the whole thing can be read. Never throws.
    */
   recordNotice: (mindName: string, text: string) => Promise<void>;
+  /**
+   * Deliver something to a mind that it should attend to now: a system event that starts
+   * a turn, where {@link ExtensionContext.recordNotice} waits for whatever turn comes
+   * next. For the outside world reaching in through the extension (someone answered the
+   * mind somewhere the extension watches) — not for ambient material, which is
+   * `turnContext`'s, nor for anything a mind could decline without missing something.
+   *
+   * `whileSleeping` says what a sleeping mind gets: `"queue"` (default) holds it for the
+   * morning, `"trigger-wake"` wakes the mind for it, `"skip"` drops it. A spend cap holds
+   * these events like any other inbound traffic. No-op (`delivered: false`) if the target
+   * isn't a registered mind. Never throws.
+   */
+  deliverEvent: (
+    mindName: string,
+    event: { body: string; whileSleeping?: "skip" | "queue" | "trigger-wake" },
+  ) => Promise<{ delivered: boolean }>;
   /** Whether per-mind user isolation is enabled (user isolation mode). */
   isIsolationEnabled: () => boolean;
   /** Get the OS username for a mind under user isolation (e.g. "mind-lyra"). */
@@ -273,6 +290,15 @@ export type ExtensionCommand = {
    * read `ctx.stdin` must leave this unset so they never wait on the stream.
    */
   stdin?: boolean;
+  /**
+   * This command takes its arguments as written: the CLI does no flag or arity checking
+   * and the handler receives the whole argv in `rest`, with `args` and `flags` empty.
+   * For a command that hands its arguments on to another parser (a wrapped CLI with
+   * repeated or multi-value flags), which the declared `args`/`flags` cannot describe.
+   * The extension layer's own `--mind` is still lifted out first; `--help` is passed on
+   * too, since only the handler knows what the command takes.
+   */
+  raw?: boolean;
   examples?: string[];
   handler: CommandHandler;
 };

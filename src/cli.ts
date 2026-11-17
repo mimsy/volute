@@ -255,7 +255,9 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
           }
 
           // Command help: --help on a specific subcommand
-          if (wantsHelp && subcommand in ext.commands) {
+          // A `raw` command's --help is its own parser's to answer: the metadata here
+          // has none of its subcommands or flags.
+          if (wantsHelp && subcommand in ext.commands && !ext.commands[subcommand].raw) {
             const meta = ext.commands[subcommand];
             const argParts = (meta.args ?? []).map((a) =>
               a.required ? `<${a.name}>` : `[${a.name}]`,
@@ -327,9 +329,13 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
           // same strict parser every built-in command goes through. Extension args used to
           // reach the handler unchecked: an unknown flag was dropped with a daemon-side
           // log line the caller never saw, and an extra positional vanished (#907).
-          const { enforceArity, parseArgs } = await import("@volute/cli/lib/parse-args.js");
-          const { positional } = parseArgs(cmdArgs, flagDefs);
-          enforceArity(positional, meta.args ?? []);
+          // A `raw` command hands its argv on to a parser of its own, so there is
+          // nothing here to check it against.
+          if (!meta.raw) {
+            const { enforceArity, parseArgs } = await import("@volute/cli/lib/parse-args.js");
+            const { positional } = parseArgs(cmdArgs, flagDefs);
+            enforceArity(positional, meta.args ?? []);
+          }
           // Only commands that declare `stdin` have their input read. Reading it for
           // every command hung the CLI forever whenever the caller's stdin was a pipe
           // nobody closes — an agent's shell tool, cron, `ssh host cmd` (#872).

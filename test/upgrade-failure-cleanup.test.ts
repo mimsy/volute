@@ -170,6 +170,8 @@ describe("daemon git in a mind's repo runs as the mind (#961, #1284)", () => {
     // named and fsmonitor pinned off (#1059), and sharesTemplateBase's read-only
     // rev-parse/merge-base. Nothing there commits, checks out or refreshes the index.
     "mind/archive.ts": "host-side CLI export, read-only and pinned",
+    // Looks on disk for where the git binary is, to put it on a mind's PATH.
+    "mind/toolchain.ts": "names the git binary, runs nothing",
   };
 
   // The cwd options in scanned files that are not git, counted, and why. Anything else

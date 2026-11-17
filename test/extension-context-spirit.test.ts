@@ -109,6 +109,38 @@ describe("extension context: spirit resolution", () => {
     assert.equal(rows.length, 0);
   });
 
+  it("delivers a turn-causing event, marked as the extension's", async () => {
+    const ctx = await buildExtensionContext(manifest, dataDir, noopMw);
+    await addMind("event-ctx-mind", 4997);
+    try {
+      // The mind is registered but not running, so the POST can't land: the row stays
+      // pending for its next start, which is the contract for an undeliverable event.
+      const { delivered } = await ctx.deliverEvent("event-ctx-mind", { body: "someone replied" });
+      assert.equal(delivered, false);
+
+      const db = await getDb();
+      const rows = await db
+        .select()
+        .from(systemEvents)
+        .where(eq(systemEvents.mind, "event-ctx-mind"));
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].type, "extension");
+      assert.equal(rows[0].delivery, "immediate");
+      assert.equal(rows[0].body, "someone replied");
+      assert.deepEqual(JSON.parse(rows[0].meta ?? "{}"), { extension: "test-ctx" });
+    } finally {
+      await removeMind("event-ctx-mind").catch(() => {});
+    }
+  });
+
+  it("delivers nothing to a name that is not a registered mind", async () => {
+    const ctx = await buildExtensionContext(manifest, dataDir, noopMw);
+    assert.deepEqual(await ctx.deliverEvent("no-such-mind", { body: "x" }), { delivered: false });
+    const db = await getDb();
+    const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, "no-such-mind"));
+    assert.equal(rows.length, 0);
+  });
+
   // End-to-end for the bug that left the intentions review lifecycle with no
   // ignition: with the real context and a real spirit registration, the daily
   // review schedule must actually land in the spirit's config.

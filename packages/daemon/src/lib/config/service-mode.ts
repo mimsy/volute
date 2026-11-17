@@ -62,6 +62,28 @@ export interface ServiceModeProbes {
    */
   systemdManaged: (scope: "system" | "user") => boolean;
   platform: NodeJS.Platform;
+  /** This process's `VOLUTE_HOME`, when one is set. */
+  home?: string;
+  /** The `VOLUTE_HOME` a service file runs its daemon with (the default home if it names none). */
+  serviceHome?: (path: string) => string;
+}
+
+/**
+ * The home an installed service file runs its daemon in: the `VOLUTE_HOME` it sets, as a
+ * launchd plist (`<key>VOLUTE_HOME</key><string>…</string>`) or a systemd unit
+ * (`Environment=VOLUTE_HOME=…`) writes it, else the default home.
+ */
+export function serviceHomeOf(path: string): string {
+  let text = "";
+  try {
+    text = readFileSync(path, "utf-8");
+  } catch {
+    // Unreadable: treat as the default home, the same as a file that names none.
+  }
+  const match =
+    text.match(/<key>VOLUTE_HOME<\/key>\s*<string>([^<]+)<\/string>/) ??
+    text.match(/^Environment="?VOLUTE_HOME=([^"\n]+)"?$/m);
+  return resolve(match ? match[1].trim() : resolve(homedir(), ".volute"));
 }
 
 function systemctlSucceeds(args: string[]): boolean {
@@ -83,23 +105,30 @@ function systemdManaged(scope: "system" | "user"): boolean {
 
 /** Pure service-mode decision; `getServiceMode` supplies the real host probes. */
 export function resolveServiceMode(probes: ServiceModeProbes): ServiceMode {
+  // An installed service is this system's only if it runs in this system's home. A
+  // second system on the machine (its own VOLUTE_HOME) is manual, whatever is installed:
+  // otherwise its `up` and `down` would start and stop the other system's daemon.
+  const ours = (path: string) =>
+    probes.fileExists(path) &&
+    (!probes.home || !probes.serviceHome || probes.serviceHome(path) === resolve(probes.home));
+
   // System-level systemd service
-  if (probes.fileExists(SYSTEM_SERVICE_PATH) && probes.systemdManaged("system")) {
+  if (ours(SYSTEM_SERVICE_PATH) && probes.systemdManaged("system")) {
     return "system";
   }
 
   // User-level systemd service
-  if (probes.fileExists(USER_SYSTEMD_UNIT) && probes.systemdManaged("user")) {
+  if (ours(USER_SYSTEMD_UNIT) && probes.systemdManaged("user")) {
     return "user-systemd";
   }
 
   // System-level macOS LaunchDaemon
-  if (probes.platform === "darwin" && probes.fileExists(SYSTEM_LAUNCHD_PLIST_PATH)) {
+  if (probes.platform === "darwin" && ours(SYSTEM_LAUNCHD_PLIST_PATH)) {
     return "system-launchd";
   }
 
   // macOS launchd
-  if (probes.platform === "darwin" && probes.fileExists(LAUNCHD_PLIST_PATH)) {
+  if (probes.platform === "darwin" && ours(LAUNCHD_PLIST_PATH)) {
     return "user-launchd";
   }
 
@@ -111,6 +140,8 @@ export function getServiceMode(): ServiceMode {
     fileExists: existsSync,
     systemdManaged,
     platform: process.platform,
+    home: process.env.VOLUTE_HOME,
+    serviceHome: serviceHomeOf,
   });
 }
 
