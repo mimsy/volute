@@ -23,10 +23,10 @@ export function markRecovered(msg: SDKUserMessage): SDKUserMessage {
   // MAX_CONSECUTIVE_ROTATIONS) — don't stack the note on each pass.
   const first = blocks[0];
   if (first && "type" in first && first.type === "text" && first.text === RECOVERED_MESSAGE_NOTE) {
-    return { ...msg, message: { ...msg.message, content: blocks } };
+    return { ...msg, message: { role: "user", content: blocks } };
   }
   const marker = { type: "text" as const, text: RECOVERED_MESSAGE_NOTE };
-  return { ...msg, message: { ...msg.message, content: [marker, ...blocks] } };
+  return { ...msg, message: { role: "user", content: [marker, ...blocks] } };
 }
 
 /**
