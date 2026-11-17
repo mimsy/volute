@@ -7,6 +7,7 @@ import {
   NOTICE_MAX,
   toCommandInfo,
 } from "../packages/daemon/src/lib/extensions.js";
+import { createCommands as feedbackCommands } from "../packages/extensions/feedback/src/commands.js";
 import { createCommands as intentionCommands } from "../packages/extensions/intentions/src/commands.js";
 import { createCommands as pageCommands } from "../packages/extensions/pages/src/commands.js";
 
@@ -41,6 +42,7 @@ describe("extension command stdin opt-in", () => {
   for (const [ext, commands] of [
     ["pages", pageCommands()],
     ["intentions", intentionCommands()],
+    ["feedback", feedbackCommands()],
   ] as const) {
     it(`${ext}: declares stdin on exactly the handlers that read it`, () => {
       for (const [name, cmd] of Object.entries(commands)) {

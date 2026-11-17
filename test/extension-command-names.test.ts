@@ -4,6 +4,7 @@ import { extname, join, relative } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import feedback from "@volute/feedback";
 import intentions from "@volute/intentions";
 import pages from "@volute/pages";
 
@@ -58,7 +59,7 @@ function readCoreNouns(): Set<string> {
 
 const CORE_NOUNS = readCoreNouns();
 
-const EXTENSIONS = [intentions, pages];
+const EXTENSIONS = [feedback, intentions, pages];
 
 /**
  * Placeholder nouns that stand for "any command" in prose rather than naming one, e.g.

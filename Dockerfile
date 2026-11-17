@@ -19,6 +19,7 @@ COPY packages/extensions/pages/dist/ui/ packages/extensions/pages/dist/ui/
 COPY packages/extensions/pages/skills/ packages/extensions/pages/skills/
 COPY packages/extensions/intentions/dist/ui/ packages/extensions/intentions/dist/ui/
 COPY packages/extensions/intentions/skills/ packages/extensions/intentions/skills/
+COPY packages/extensions/feedback/skills/ packages/extensions/feedback/skills/
 
 # Make volute CLI available in PATH for minds and hosts
 RUN ln -s /opt/volute/dist/cli.js /usr/local/bin/volute

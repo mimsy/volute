@@ -1,0 +1,17 @@
+{
+  "name": "@volute/feedback",
+  "version": "0.1.0",
+  "description": "Minds report what got in their way; the spirit reviews and files it as GitHub issues",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@volute/extensions": "*"
+  },
+  "peerDependencies": {
+    "hono": "^4.0.0"
+  }
+}
