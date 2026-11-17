@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionCommand } from "@volute/extensions";
-import { createCommands as feedbackCommands } from "../packages/extensions/feedback/src/commands.js";
 import {
   clipNotice,
   commandInput,
   NOTICE_MAX,
   toCommandInfo,
 } from "../packages/daemon/src/lib/extensions.js";
+import { createCommands as feedbackCommands } from "../packages/extensions/feedback/src/commands.js";
 import { createCommands as intentionCommands } from "../packages/extensions/intentions/src/commands.js";
 import { createCommands as pageCommands } from "../packages/extensions/pages/src/commands.js";
 
