@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.67.0](https://github.com/mimsy/volute/compare/volute-v0.66.14...volute-v0.67.0) (2026-11-17)
+
+
+### Features
+
+* **extensions:** events that start a turn, raw commands, and a second system on one machine ([#1409](https://github.com/mimsy/volute/issues/1409)) ([4b872f4](https://github.com/mimsy/volute/commit/4b872f406e72f45f1c45c5c81f7701ab0bee0c0b))
+* feedback extension, reviewed by the spirit and filed as GitHub issues ([#1411](https://github.com/mimsy/volute/issues/1411)) ([ab75e0e](https://github.com/mimsy/volute/commit/ab75e0e4415e8c4db6adbde27101706ff616db88))
+
+
+### Bug Fixes
+
+* **deps:** update anthropic ([#1407](https://github.com/mimsy/volute/issues/1407)) ([6ab887e](https://github.com/mimsy/volute/commit/6ab887e75411e807c449c931e188b4070cb9bd9b))
+* **deps:** update dependency dompurify to v3.4.17 ([#1408](https://github.com/mimsy/volute/issues/1408)) ([05a19c1](https://github.com/mimsy/volute/commit/05a19c1c67aa3f47459df22763fe558e10674c42))
+
 ## [0.66.14](https://github.com/mimsy/volute/compare/volute-v0.66.13...volute-v0.66.14) (2026-10-05)
 
 
