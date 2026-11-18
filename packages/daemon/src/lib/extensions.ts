@@ -45,10 +45,10 @@ import {
   voluteSystemDir,
 } from "./mind/registry.js";
 import {
-  getSharedSkill,
   listSharedSkills,
   removeSharedSkill,
   retireSharedSkill,
+  retireWithDroppedBuiltinExtension,
   syncExtensionSkills,
 } from "./skills.js";
 import { hostNpmEnv } from "./util/host-npm-env.js";
@@ -450,6 +450,7 @@ async function loadExtension(
   manifest: ExtensionManifest,
   app: Hono,
   authMw: MiddlewareHandler,
+  builtin: boolean,
 ): Promise<void> {
   if (!VALID_EXTENSION_ID.test(manifest.id)) {
     log.error(`invalid extension ID "${manifest.id}", skipping (must match ${VALID_EXTENSION_ID})`);
@@ -605,9 +606,16 @@ async function loadExtension(
     app.get(prefix, serveExtAssets);
   }
 
-  // Sync skills if declared, retiring any it no longer ships
+  // Sync skills if declared, retiring any it no longer ships. Its routes are mounted by
+  // now: a skills failure is logged, never a failed load.
   const skillsDir = resolveSkillsDir(manifest);
-  if (skillsDir) await syncExtensionSkills(manifest.id, manifest.version, skillsDir);
+  if (skillsDir) {
+    try {
+      await syncExtensionSkills(manifest.id, manifest.version, skillsDir, { builtin });
+    } catch (err) {
+      log.error(`failed to sync skills for extension ${manifest.id}`, log.errorData(err));
+    }
+  }
 
   if (manifest.standardSkill && !manifest.skillsDir) {
     log.warn(`extension ${manifest.id}: standardSkill is true but no skillsDir declared`);
@@ -656,12 +664,16 @@ function resolveSkillsDir(manifest: ExtensionManifest): string | null {
   return null;
 }
 
+/** Every extension this Volute ships built in — loaded, failed or disabled alike. */
+let builtinExtensionIds = new Set<string>();
+
 async function discoverBuiltinExtensions(disabledIds: Set<string>): Promise<ExtensionManifest[]> {
   const builtins: { id: string; load: () => Promise<ExtensionManifest> }[] = [
     { id: "pages", load: async () => (await import("@volute/pages")).default },
     { id: "intentions", load: async () => (await import("@volute/intentions")).default },
     { id: "feedback", load: async () => (await import("@volute/feedback")).default },
   ];
+  builtinExtensionIds = new Set(builtins.map((b) => b.id));
   const results: ExtensionManifest[] = [];
   for (const { id, load } of builtins) {
     if (disabledIds.has(id)) continue;
@@ -812,13 +824,13 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
     }
 
     try {
-      await loadExtension(manifest, app, authMw);
+      await loadExtension(manifest, app, authMw, entry.source === "builtin");
     } catch (err) {
       log.error(`failed to load extension: ${manifest.id}`, log.errorData(err));
     }
   }
 
-  await pruneOrphanedExtensionSkills();
+  await pruneOrphanedExtensionSkills(builtinExtensionIds);
 
   // Discovery endpoint for CLI dynamic dispatch
   app.get("/api/v1/extensions/commands", (c) => {
@@ -1045,8 +1057,11 @@ export async function uninstallNpmExtension(pkg: string): Promise<void> {
  * skill under its own name. Only the first kind is considered, and only when its
  * extension is neither loaded nor merely disabled — a disabled extension is meant
  * to come back, so its skills stay put.
+ *
+ * A skill that came with a built-in extension no longer among `builtinIds` — this
+ * Volute's built-ins — is retired from minds too, on the skill ledger's evidence (#971).
  */
-async function pruneOrphanedExtensionSkills(): Promise<void> {
+export async function pruneOrphanedExtensionSkills(builtinIds: Set<string>): Promise<void> {
   try {
     const present = new Set(discovered.map((e) => e.manifest.id));
     const skills = await listSharedSkills();
@@ -1054,9 +1069,17 @@ async function pruneOrphanedExtensionSkills(): Promise<void> {
       if (!skill.author?.startsWith("ext:")) continue;
       const extId = skill.author.slice("ext:".length);
       if (present.has(extId)) continue;
-      // Removed from the pool, not retired (#971): an extension whose package failed to import
-      // reads as absent here too, and that must not uninstall minds' copies of its skills.
+      // Retired (#971) only when it came with a built-in extension this Volute no longer
+      // ships at all. Otherwise only removed from the pool: an extension whose package failed
+      // to import reads as absent here too, and that must not uninstall minds' copies.
       try {
+        if (
+          !builtinIds.has(extId) &&
+          (await retireWithDroppedBuiltinExtension(skill.id, skill.author))
+        ) {
+          log.info(`retired skill "${skill.id}" with built-in extension ${extId}`);
+          continue;
+        }
         await removeSharedSkill(skill.id);
         log.info(`removed orphaned skill "${skill.id}" from absent extension ${extId}`);
       } catch (err) {
@@ -1089,10 +1112,6 @@ async function cleanupExtensionSkills(pkg: string): Promise<void> {
       try {
         if (await retireSharedSkill(skillId, `ext:${manifest.id}`)) {
           log.info(`retired skill "${skillId}" from extension ${pkg}`);
-        } else if ((await getSharedSkill(skillId))?.author === `ext:${manifest.id}`) {
-          // Shipped before the skill ledger recorded it: out of the pool, minds' copies kept.
-          await removeSharedSkill(skillId);
-          log.info(`removed skill "${skillId}" from extension ${pkg}`);
         }
       } catch (err) {
         log.warn(`failed to remove skill "${skillId}" for extension ${pkg}`, log.errorData(err));
