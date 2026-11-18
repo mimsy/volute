@@ -253,12 +253,18 @@ export const RENDER_TIMEOUTS = { timers: 20_000, atLoad: 10_000 };
  */
 let previewSeq = 0;
 
-function run(cmd: string, args: string[], timeoutMs: number): Promise<void> {
+/** Run the browser; resolves with its stderr, and a rejection carries it as `stderr`. */
+function run(cmd: string, args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolvePromise, reject) => {
-    execFile(cmd, args, { timeout: timeoutMs, env: { ...process.env, HOME: "/tmp" } }, (err) => {
-      if (err) reject(err);
-      else resolvePromise();
-    });
+    execFile(
+      cmd,
+      args,
+      { timeout: timeoutMs, env: { ...process.env, HOME: "/tmp" } },
+      (err, _stdout, stderr) => {
+        if (err) reject(Object.assign(err, { stderr: String(stderr) }));
+        else resolvePromise(String(stderr));
+      },
+    );
   });
 }
 
@@ -446,10 +452,16 @@ export async function renderPreview(opts: {
     // waits on many frames or on elapsed frame time still shoots early.
     const started = Date.now();
     let firstError: unknown = null;
+    let firstStderr = "";
     try {
-      await run(browser, args(userDataDir, ["--virtual-time-budget=5000"]), RENDER_TIMEOUTS.timers);
+      firstStderr = await run(
+        browser,
+        args(userDataDir, ["--virtual-time-budget=5000"]),
+        RENDER_TIMEOUTS.timers,
+      );
     } catch (err) {
       firstError = err;
+      firstStderr = (err as { stderr?: string }).stderr ?? "";
     }
     // Virtual time stands still while a request is open, so a page holding one open
     // — a dead https host, a slow API — never spends its budget, and the browser is
@@ -462,11 +474,19 @@ export async function renderPreview(opts: {
       (firstError as { killed?: boolean } | null)?.killed === true ||
       (!existsSync(stagedPng) && Date.now() - started >= RENDER_TIMEOUTS.timers);
     if (stalled) {
+      // For the host: without this, all a host sees is previews that take 20 s.
+      // The browser's own last words are the only account of why.
+      console.warn(
+        `[pages] virtual-time render of ${opts.file} stalled after ${Date.now() - started}ms ` +
+          `(${browser}); retrying at load. Browser stderr (tail):\n${firstStderr.slice(-2000)}`,
+      );
       try {
         await run(browser, args(`${userDataDir}-load`, []), RENDER_TIMEOUTS.atLoad);
         note =
-          "Your page kept a network request open, so this was taken as the page " +
-          "finished loading — before any timers ran.";
+          "Running your page's timers didn't finish, so this was taken as the page " +
+          "finished loading, before any of them ran — anything drawn after a delay " +
+          "isn't in it. A request the page leaves open can cause that; so can the " +
+          "browser on this host.";
       } catch (err) {
         failure = renderFailed(err);
       }

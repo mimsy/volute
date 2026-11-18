@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -723,7 +724,8 @@ describe("renderPreview lets timers run before the shot", () => {
         // Before virtual time, a page holding a request open shot fine at load; it
         // must not now get nothing at all.
         assert.ok(!("error" in result), "error" in result ? result.error : "");
-        assert.match(result.note ?? "", /kept a network request open/);
+        // Says what happened, not a cause it never established.
+        assert.match(result.note ?? "", /timers didn't finish/);
         const launches = readFileSync(log, "utf-8").trim().split("\n");
         assert.equal(launches.length, 2);
         assert.doesNotMatch(launches[1], /--virtual-time-budget/);
@@ -760,19 +762,44 @@ requestAnimationFrame(() => { ctx.fillStyle = "#f00"; ctx.fillRect(0, 0, 400, 30
 </script></body>`,
     );
     process.env.VOLUTE_CHROMIUM = REAL_BROWSER as string;
-    const result = await renderPreview({
-      mindDir,
-      mindName: "testmind",
-      ownership: NO_ISOLATION,
-      file: "game.html",
-    });
-    assert.ok(!("error" in result), "error" in result ? result.error : "");
+    // This only fails on some hosts' browsers, so a failure has to carry what
+    // happened there: timing, whether the at-load fallback fired, the browser and
+    // its version, and its own stderr (which renderPreview logs on a stall).
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...a: unknown[]) => warnings.push(a.map(String).join(" "));
+    const started = Date.now();
+    let result: Awaited<ReturnType<typeof renderPreview>>;
+    try {
+      result = await renderPreview({
+        mindDir,
+        mindName: "testmind",
+        ownership: NO_ISOLATION,
+        file: "game.html",
+      });
+    } finally {
+      console.warn = warn;
+    }
+    const version = await new Promise<string>((r) =>
+      execFile(REAL_BROWSER as string, ["--version"], (_e, out) => r(String(out).trim())),
+    );
+    const diagnosis = [
+      `browser: ${REAL_BROWSER} (${version})`,
+      `render took ${Date.now() - started}ms`,
+      `result: ${JSON.stringify(result)}`,
+      ...warnings,
+    ].join("\n");
+    assert.ok(!("error" in result), diagnosis);
     const { default: sharp } = await import("sharp");
     const { data, info } = await sharp(result.pngPath)
       .extract({ left: 100, top: 100, width: 1, height: 1 })
       .raw()
       .toBuffer({ resolveWithObject: true });
     assert.equal(info.channels >= 3, true);
-    assert.deepEqual([data[0], data[1], data[2]], [255, 0, 0], "the canvas drew before the shot");
+    assert.deepEqual(
+      [data[0], data[1], data[2]],
+      [255, 0, 0],
+      `the canvas drew before the shot\n${diagnosis}`,
+    );
   });
 });
