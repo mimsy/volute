@@ -471,6 +471,7 @@ export async function renderPreview(opts: {
       // for this one.
       rmSync(stagedPng, { force: true });
       const started = Date.now();
+      const requestsBefore = server.requests();
       let stderr = "";
       try {
         stderr = await run(
@@ -492,7 +493,9 @@ export async function renderPreview(opts: {
       // own last words are the only account of why.
       console.warn(
         `[pages] virtual-time render of ${opts.file} stalled after ${Date.now() - started}ms ` +
-          `(${browser}, attempt ${attempt + 1}); ${attempt === 0 ? "retrying" : "falling back to a shot at load"}. ` +
+          `(${browser}, attempt ${attempt + 1}); the page server saw ` +
+          `${server.requests() - requestsBefore} request(s) from it; ` +
+          `${attempt === 0 ? "retrying" : "falling back to a shot at load"}. ` +
           `Browser stderr (tail):\n${stderr.slice(-2000)}`,
       );
     }

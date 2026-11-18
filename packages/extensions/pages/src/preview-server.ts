@@ -75,6 +75,8 @@ export type PreviewServer = {
   token: string;
   /** Stop listening and drop every connection. Safe to call more than once. */
   close: () => Promise<void>;
+  /** Requests received so far — whether a browser got as far as asking. */
+  requests: () => number;
 };
 
 /**
@@ -88,7 +90,9 @@ export async function startPreviewServer(root: string, token: string): Promise<P
   const realRoot = realpathSync(root);
   const prefix = `/${token}/`;
 
+  let requests = 0;
   const server = createServer((req, res) => {
+    requests++;
     void serve(realRoot, prefix, req.url ?? "/", res).catch(() => {
       // A socket that died mid-write is the client's business, not ours. Nothing
       // here may throw into the server's error handler and take the render down.
@@ -123,7 +127,7 @@ export async function startPreviewServer(root: string, token: string): Promise<P
     throw new Error("preview server did not bind a port");
   }
 
-  return { port: address.port, token, close: () => closeServer(server) };
+  return { port: address.port, token, close: () => closeServer(server), requests: () => requests };
 }
 
 /** Build the URL a browser should be pointed at for `relPath` under `root`. */

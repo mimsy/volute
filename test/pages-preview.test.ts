@@ -753,6 +753,9 @@ describe("renderPreview lets timers run before the shot", () => {
       process.env.VOLUTE_CHROMIUM = writeArgvStub(mindDir, log, shape);
       const prev = { ...RENDER_TIMEOUTS };
       RENDER_TIMEOUTS.timers = 500;
+      const warnings: string[] = [];
+      const warn = console.warn;
+      console.warn = (...a: unknown[]) => warnings.push(a.map(String).join(" "));
       try {
         const result = await renderPreview({
           mindDir,
@@ -760,6 +763,13 @@ describe("renderPreview lets timers run before the shot", () => {
           ownership: NO_ISOLATION,
           file: "index.html",
         });
+        console.warn = warn;
+        // Each stall is logged for the host, with whether the browser ever asked
+        // for the page — the line between a browser that hung starting and a page
+        // whose timers never ran out. This stub never fetches.
+        const stalls = warnings.filter((w) => w.includes("stalled after"));
+        assert.equal(stalls.length, 2);
+        for (const w of stalls) assert.match(w, /the page server saw 0 request\(s\)/);
         // Before virtual time, a page holding a request open shot fine at load; it
         // must not now get nothing at all.
         assert.ok(!("error" in result), "error" in result ? result.error : "");
@@ -777,6 +787,7 @@ describe("renderPreview lets timers run before the shot", () => {
         // The stalled launches' half-written image is not what the mind got.
         assert.equal(readFileSync(result.pngPath, "utf-8"), "PNG");
       } finally {
+        console.warn = warn;
         Object.assign(RENDER_TIMEOUTS, prev);
       }
     });
@@ -818,7 +829,7 @@ describe("renderPreview lets timers run before the shot", () => {
 const REAL_BROWSER = resolveBrowser();
 
 describe("renderPreview with a real browser", { skip: !REAL_BROWSER && "no browser" }, () => {
-  it("captures a canvas that first draws after a timer, not the blank before it", async () => {
+  it("captures a canvas that first draws after a timer, not the blank before it", async (t) => {
     // The shape of a game whose first frame comes after a load delay. Taken at the
     // load event, as the shot was, this was a black rectangle — a mind's logic
     // tests could pass over a screen that never drew.
@@ -860,6 +871,12 @@ requestAnimationFrame(() => { ctx.fillStyle = "#f00"; ctx.fillRect(0, 0, 400, 30
       `result: ${JSON.stringify(result)}`,
       ...warnings,
     ].join("\n");
+    // On a pass too, not only in a failure message: a stall the retry recovered
+    // is the evidence of why the browser hangs, and a pass would otherwise drop it.
+    if (warnings.length > 0) {
+      for (const line of diagnosis.split("\n")) t.diagnostic(line);
+      console.log(`[pages-preview real-browser diagnostics]\n${diagnosis}`);
+    }
     assert.ok(!("error" in result), diagnosis);
     const { default: sharp } = await import("sharp");
     const { data, info } = await sharp(result.pngPath)
