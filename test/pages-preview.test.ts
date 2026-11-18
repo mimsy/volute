@@ -25,6 +25,7 @@ import {
   NO_BROWSER_ALERT_KIND,
   noBrowserAlertText,
   noBrowserMindError,
+  PRIVATE_BROWSER_FLAGS,
   RENDER_TIMEOUTS,
   renderPreview,
   resolveBrowser,
@@ -721,6 +722,10 @@ describe("renderPreview lets timers run before the shot", () => {
     const launches = readFileSync(log, "utf-8").trim().split("\n");
     assert.equal(launches.length, 1);
     assert.match(launches[0], /--virtual-time-budget=5000/);
+    // Root's browser does not phone out on every preview.
+    for (const flag of PRIVATE_BROWSER_FLAGS) {
+      assert.ok(launches[0].split(" ").includes(flag), `missing ${flag}`);
+    }
   });
 
   it("never hands over the image a stalled launch half-wrote", async () => {

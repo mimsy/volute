@@ -248,6 +248,21 @@ export function _resetNoBrowserAlertForTest(): void {
 export const RENDER_TIMEOUTS = { timers: 10_000, atLoad: 10_000 };
 
 /**
+ * Switches that stop the browser's own background traffic and first-run work. In
+ * Chrome's words: disable "several subsystems which run network requests in the
+ * background"; component updates; syncing to a Google Account; default apps; the
+ * first-run flow; and metrics reporting (recorded, never sent).
+ */
+export const PRIVATE_BROWSER_FLAGS = [
+  "--disable-background-networking",
+  "--disable-component-update",
+  "--disable-sync",
+  "--disable-default-apps",
+  "--no-first-run",
+  "--metrics-recording-only",
+];
+
+/**
  * Per-invocation counter for temp-path uniqueness. process.pid is the daemon's
  * pid — constant across every preview — so two concurrent renders (two minds, or
  * one mind twice) would collide on the chromium user-data-dir singleton lock and
@@ -436,6 +451,13 @@ export async function renderPreview(opts: {
       "--disable-dev-shm-usage",
       "--hide-scrollbars",
       "--force-color-profile=srgb",
+      // A preview is a picture of one page, and on a system install the browser
+      // taking it is root's. Without these, every render also fetched a variations
+      // seed and component/extension updates from Google (seen in a net-log). Each
+      // is a documented Chrome switch, standard for headless automation. A few
+      // requests remain (a time check, a signed-in-accounts probe); no switch here
+      // claims to stop those.
+      ...PRIVATE_BROWSER_FLAGS,
       `--user-data-dir=${userDataDir}`,
       ...extra,
       // Fixed viewport: the chromium CLI has no reliable full-page --screenshot
