@@ -11,7 +11,7 @@ import { resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 
 // Match the project's engines requirement
-const NODE_VERSION = "24.2.0";
+const NODE_VERSION = "24.22.3";
 const RIPGREP_VERSION = "14.1.1";
 const ARCH = process.arch === "x64" ? "x64" : "arm64";
 const PLATFORM = process.platform;
