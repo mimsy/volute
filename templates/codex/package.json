@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/tokenizer": "^0.0.4",
-    "@openai/codex-sdk": "^0.158.0",
+    "@openai/codex-sdk": "^0.170.0",
     "tsx": "^4.23.15"
   },
   "devDependencies": {
