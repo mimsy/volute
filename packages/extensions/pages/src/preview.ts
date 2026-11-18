@@ -239,10 +239,13 @@ export function _resetNoBrowserAlertForTest(): void {
 }
 
 /**
- * Wall-clock limits for the two render attempts, together the 30s one render had
- * before. Mutable only so tests need not wait them out.
+ * Wall-clock limits per browser launch: up to two with virtual time, then one at
+ * load — together the 30 s one render had before. A virtual-time render measured
+ * 0.8–2.9 s on ordinary hosts and CI, and 6.8 s at worst with one CPU and four busy
+ * loops beside it; 10 s clears that with room for a slower board, and a stall
+ * costs 10 s instead of 20. Mutable only so tests need not wait them out.
  */
-export const RENDER_TIMEOUTS = { timers: 20_000, atLoad: 10_000 };
+export const RENDER_TIMEOUTS = { timers: 10_000, atLoad: 10_000 };
 
 /**
  * Per-invocation counter for temp-path uniqueness. process.pid is the daemon's
@@ -450,36 +453,53 @@ export async function renderPreview(opts: {
     // page's first seconds of timers before the shot, at no wall-clock cost while
     // the page is idle. requestAnimationFrame is not driven by it: a loop that
     // waits on many frames or on elapsed frame time still shoots early.
-    const started = Date.now();
-    let firstError: unknown = null;
-    let firstStderr = "";
-    try {
-      firstStderr = await run(
-        browser,
-        args(userDataDir, ["--virtual-time-budget=5000"]),
-        RENDER_TIMEOUTS.timers,
-      );
-    } catch (err) {
-      firstError = err;
-      firstStderr = (err as { stderr?: string }).stderr ?? "";
-    }
-    // Virtual time stands still while a request is open, so a page holding one open
-    // — a dead https host, a slow API — never spends its budget, and the browser is
-    // stopped at the timeout with no shot. Chrome exits 0 on that SIGTERM, so "no
-    // image, and the whole timeout used" is the sign as much as `killed` is. Before
-    // virtual time such a page shot fine at load, so it gets that shot rather than
-    // nothing, and is told why. A fresh profile: the stopped browser's lock may
-    // still be in the old one.
-    const stalled =
-      (firstError as { killed?: boolean } | null)?.killed === true ||
-      (!existsSync(stagedPng) && Date.now() - started >= RENDER_TIMEOUTS.timers);
-    if (stalled) {
-      // For the host: without this, all a host sees is previews that take 20 s.
-      // The browser's own last words are the only account of why.
+    //
+    // A virtual-time render can stall: the browser is stopped at the limit with no
+    // shot. Chrome exits 0 on that SIGTERM, so "the whole limit used" is the sign as
+    // much as `killed` is — and whatever image it left is not trusted. Two causes are known and they want
+    // different answers. Some stalls are the browser's own and intermittent (CI's
+    // Chrome 157: 2.9 s on one run, a 20 s stall on the next, same commit), and a
+    // second try usually clears them. Others are the page's: virtual time stands
+    // still while a request is open, so a page holding one stalls every time. So:
+    // one retry, then a shot at load — which is what such a page got before virtual
+    // time existed — with a note that says what happened, not why.
+    let stalls = 0;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // A fresh profile and no leftover image per attempt: the stopped browser's
+      // lock may still be in its profile, and a shot it half-wrote must not pass
+      // for this one.
+      rmSync(stagedPng, { force: true });
+      const started = Date.now();
+      let stderr = "";
+      try {
+        stderr = await run(
+          browser,
+          args(`${userDataDir}-${attempt}`, ["--virtual-time-budget=5000"]),
+          RENDER_TIMEOUTS.timers,
+        );
+      } catch (err) {
+        lastError = err;
+        stderr = (err as { stderr?: string }).stderr ?? "";
+      }
+      const stalled =
+        (lastError as { killed?: boolean } | null)?.killed === true ||
+        Date.now() - started >= RENDER_TIMEOUTS.timers;
+      if (!stalled) break;
+      lastError = null;
+      stalls++;
+      // For the host: without this, all a host sees is slow previews. The browser's
+      // own last words are the only account of why.
       console.warn(
         `[pages] virtual-time render of ${opts.file} stalled after ${Date.now() - started}ms ` +
-          `(${browser}); retrying at load. Browser stderr (tail):\n${firstStderr.slice(-2000)}`,
+          `(${browser}, attempt ${attempt + 1}); ${attempt === 0 ? "retrying" : "falling back to a shot at load"}. ` +
+          `Browser stderr (tail):\n${stderr.slice(-2000)}`,
       );
+    }
+    if (lastError) {
+      failure = renderFailed(lastError);
+    } else if (stalls === 2) {
+      rmSync(stagedPng, { force: true });
       try {
         await run(browser, args(`${userDataDir}-load`, []), RENDER_TIMEOUTS.atLoad);
         note =
@@ -490,8 +510,6 @@ export async function renderPreview(opts: {
       } catch (err) {
         failure = renderFailed(err);
       }
-    } else if (firstError) {
-      failure = renderFailed(firstError);
     }
 
     if (!failure) {
@@ -520,8 +538,9 @@ export async function renderPreview(opts: {
     await server?.close();
     if (tempHtml) rmSync(tempHtml, { force: true });
     rmSync(stageDir, { recursive: true, force: true });
-    rmSync(userDataDir, { recursive: true, force: true });
-    rmSync(`${userDataDir}-load`, { recursive: true, force: true });
+    for (const suffix of ["0", "1", "load"]) {
+      rmSync(`${userDataDir}-${suffix}`, { recursive: true, force: true });
+    }
   }
 
   // Before the error return, not after it. A render that failed is the run that

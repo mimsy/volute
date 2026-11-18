@@ -657,29 +657,45 @@ describe("renderPreview scratch-file cleanup", () => {
 });
 
 /**
- * A stub that logs each launch's argv, one line per launch. With `hangOnTimers` it
- * stands in for a page holding a request open: under virtual time it never
- * finishes, so the renderer has to kill it.
+ * A stub that logs each launch's argv, one line per launch. With `hang` it stands
+ * in for a stalled virtual-time render: it leaves a half-written image where the
+ * shot goes, then never finishes, so the renderer has to stop it. Real Chrome exits
+ * 0 on the timeout's SIGTERM (`exits-0`), so `killed` is not set; a process that
+ * dies of the signal is the other shape. With `once`, only the first
+ * virtual-time launch stalls — an intermittent hang, as CI's Chrome showed.
  */
-function writeArgvStub(dir: string, log: string, hangOnTimers: false | "dies" | "exits-0"): string {
+function writeArgvStub(
+  dir: string,
+  log: string,
+  hang: false | "dies" | "exits-0",
+  once = false,
+  noShotAfter = false,
+): string {
   const path = resolve(dir, `argv-stub-${stubSeq++}.sh`);
+  const marker = `${log}.stalled`;
   writeFileSync(
     path,
     [
       "#!/bin/sh",
       `printf '%s\\n' "$*" >> '${log}'`,
-      "out=",
+      "out=; vt=",
       'for a in "$@"; do',
       '  case "$a" in',
       `    --screenshot=*) out=$(printf %s "$a" | sed 's/^--screenshot=//') ;;`,
-      // Real Chrome exits 0 on the timeout's SIGTERM, so `killed` is not set;
-      // a process that dies of the signal is the other shape.
-      ...(hangOnTimers === "dies" ? ["    --virtual-time-budget=*) exec sleep 30 ;;"] : []),
-      ...(hangOnTimers === "exits-0"
-        ? ["    --virtual-time-budget=*) trap 'exit 0' TERM; sleep 30 & wait; exit 0 ;;"]
-        : []),
+      "    --virtual-time-budget=*) vt=1 ;;",
       "  esac",
       "done",
+      ...(hang
+        ? [
+            `if [ -n "$vt" ]${once ? ` && [ ! -e '${marker}' ]` : ""}; then`,
+            `  touch '${marker}'`,
+            '  printf HALF > "$out"',
+            hang === "dies" ? "  exec sleep 30" : "  trap 'exit 0' TERM; sleep 30 & wait; exit 0",
+            "fi",
+          ]
+        : []),
+      // A browser that exits cleanly without a shot, after the stalled one.
+      ...(noShotAfter ? ["exit 0"] : []),
       '[ -n "$out" ] && printf PNG > "$out"',
       "exit 0",
       "",
@@ -707,6 +723,29 @@ describe("renderPreview lets timers run before the shot", () => {
     assert.match(launches[0], /--virtual-time-budget=5000/);
   });
 
+  it("never hands over the image a stalled launch half-wrote", async () => {
+    writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
+    const log = resolve(mindDir, "argv.log");
+    process.env.VOLUTE_CHROMIUM = writeArgvStub(mindDir, log, "exits-0", true, true);
+    const prev = { ...RENDER_TIMEOUTS };
+    RENDER_TIMEOUTS.timers = 500;
+    try {
+      const result = await renderPreview({
+        mindDir,
+        mindName: "testmind",
+        ownership: NO_ISOLATION,
+        file: "index.html",
+      });
+      assert.deepEqual(
+        "error" in result && result.error,
+        "The browser ran but produced no image.",
+        "a retry that drew nothing must not be passed off with the stalled launch's leftovers",
+      );
+    } finally {
+      Object.assign(RENDER_TIMEOUTS, prev);
+    }
+  });
+
   for (const shape of ["exits-0", "dies"] as const) {
     it(`falls back to a shot at load when virtual time never runs out (${shape}), and says so`, async () => {
       writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
@@ -726,12 +765,44 @@ describe("renderPreview lets timers run before the shot", () => {
         assert.ok(!("error" in result), "error" in result ? result.error : "");
         // Says what happened, not a cause it never established.
         assert.match(result.note ?? "", /timers didn't finish/);
+        // Two tries with virtual time, then one at load.
+        const launches = readFileSync(log, "utf-8").trim().split("\n");
+        assert.equal(launches.length, 3);
+        assert.match(launches[0], /--virtual-time-budget/);
+        assert.match(launches[1], /--virtual-time-budget/);
+        assert.doesNotMatch(launches[2], /--virtual-time-budget/);
+        // A fresh profile for every launch: a stopped one may still hold its lock.
+        const profiles = new Set(launches.map((l) => l.match(/--user-data-dir=(\S+)/)?.[1]));
+        assert.equal(profiles.size, 3);
+        // The stalled launches' half-written image is not what the mind got.
+        assert.equal(readFileSync(result.pngPath, "utf-8"), "PNG");
+      } finally {
+        Object.assign(RENDER_TIMEOUTS, prev);
+      }
+    });
+
+    it(`retries a stall once and keeps the timers when it clears (${shape})`, async () => {
+      writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
+      const log = resolve(mindDir, "argv.log");
+      process.env.VOLUTE_CHROMIUM = writeArgvStub(mindDir, log, shape, true);
+      const prev = { ...RENDER_TIMEOUTS };
+      RENDER_TIMEOUTS.timers = 500;
+      try {
+        const result = await renderPreview({
+          mindDir,
+          mindName: "testmind",
+          ownership: NO_ISOLATION,
+          file: "index.html",
+        });
+        // An intermittent hang costs one short wait, not the timers: no note, and
+        // no shot at load.
+        assert.ok(!("error" in result), "error" in result ? result.error : "");
+        assert.equal(result.note, null);
         const launches = readFileSync(log, "utf-8").trim().split("\n");
         assert.equal(launches.length, 2);
-        assert.doesNotMatch(launches[1], /--virtual-time-budget/);
-        // A fresh profile for the second launch: the killed one may hold the lock.
-        const profile = (l: string) => l.match(/--user-data-dir=(\S+)/)?.[1];
-        assert.notEqual(profile(launches[0]), profile(launches[1]));
+        assert.match(launches[1], /--virtual-time-budget/);
+        // Not the first launch's half-written image.
+        assert.equal(readFileSync(result.pngPath, "utf-8"), "PNG");
       } finally {
         Object.assign(RENDER_TIMEOUTS, prev);
       }
