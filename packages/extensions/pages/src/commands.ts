@@ -322,6 +322,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           output: [
             `Rendered pages/${file} → ${result.rel}`,
             "Open that image to see how your page looks in a browser, then revise and preview again.",
+            ...(result.note ? [result.note] : []),
             ...note,
           ].join("\n"),
         };
