@@ -1,13 +1,14 @@
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
-import log from "./logger.js";
 
 /** Load a Map<string, number> from a JSON file. Returns empty map on error. */
 export function loadJsonMap(path: string): Map<string, number> {
@@ -51,25 +52,30 @@ export function clearJsonMap(path: string, map: Map<string, number>): void {
   }
 }
 
-/**
- * Read a JSON file, or undefined when it is absent. Anything else that goes wrong (a
- * corrupt file, an unreadable one) is logged against `label` and also reads as undefined.
- */
-export function readJsonFile(path: string, label: string): unknown {
+/** Read a JSON file, or undefined when it is absent. Anything else (corrupt, unreadable) throws. */
+export function readJsonFile(path: string): unknown {
+  let text: string;
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
+    text = readFileSync(path, "utf-8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.warn(`failed to read ${label}`, log.errorData(err));
-    }
-    return undefined;
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
   }
+  return JSON.parse(text);
 }
 
-/** Written to a temp file and renamed over, so a crash leaves the old file or the new. */
+/**
+ * Written to a temp file of its own and renamed over, so a crash leaves the old file or the
+ * new, and two writers never share a temp file. Throws; the temp file is removed first.
+ */
 export function writeJsonAtomic(path: string, data: unknown): void {
-  const tmp = `${path}.tmp`;
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`);
-  renameSync(tmp, path);
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`);
+    renameSync(tmp, path);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
 }

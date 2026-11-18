@@ -19,6 +19,7 @@ import {
   hasSystemAuthority,
 } from "../web/middleware/effective-principal.js";
 import { getUser, getUserByUsername } from "./auth.js";
+import { BUILTIN_EXTENSION_IDS } from "./builtin-extensions.js";
 import { announceToCommons } from "./chat/commons-channel.js";
 import {
   deliverEvent,
@@ -664,16 +665,12 @@ function resolveSkillsDir(manifest: ExtensionManifest): string | null {
   return null;
 }
 
-/** Every extension this Volute ships built in — loaded, failed or disabled alike. */
-let builtinExtensionIds = new Set<string>();
-
 async function discoverBuiltinExtensions(disabledIds: Set<string>): Promise<ExtensionManifest[]> {
   const builtins: { id: string; load: () => Promise<ExtensionManifest> }[] = [
     { id: "pages", load: async () => (await import("@volute/pages")).default },
     { id: "intentions", load: async () => (await import("@volute/intentions")).default },
     { id: "feedback", load: async () => (await import("@volute/feedback")).default },
   ];
-  builtinExtensionIds = new Set(builtins.map((b) => b.id));
   const results: ExtensionManifest[] = [];
   for (const { id, load } of builtins) {
     if (disabledIds.has(id)) continue;
@@ -830,7 +827,7 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
     }
   }
 
-  await pruneOrphanedExtensionSkills(builtinExtensionIds);
+  await pruneOrphanedExtensionSkills(new Set(BUILTIN_EXTENSION_IDS));
 
   // Discovery endpoint for CLI dynamic dispatch
   app.get("/api/v1/extensions/commands", (c) => {

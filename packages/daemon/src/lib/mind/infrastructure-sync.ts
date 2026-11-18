@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { backfillInitInfrastructure } from "../template/template.js";
 import { computeInfrastructureHash } from "../template/template-hash.js";
+import { writeJsonAtomic } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { chownMindDir } from "./isolation.js";
 import { type MindEntry, mindDir, readRegistry, stateDir } from "./registry.js";
@@ -40,14 +41,9 @@ function readRecord(mindName: string): HashRecord {
 
 /** tmp + rename, best-effort. */
 function writeRecord(mindName: string, record: HashRecord): void {
-  const path = infrastructureHashPath(mindName);
-  const tmp = `${path}.tmp`;
   try {
-    mkdirSync(resolve(path, ".."), { recursive: true });
-    writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`);
-    renameSync(tmp, path);
+    writeJsonAtomic(infrastructureHashPath(mindName), record);
   } catch (err) {
-    rmSync(tmp, { force: true });
     ilog.warn(`failed to record the infrastructure hash for ${mindName}`, log.errorData(err));
   }
 }

@@ -22,6 +22,7 @@ import { rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
+import { BUILTIN_EXTENSION_IDS, builtinExtensionSkillsDir } from "./builtin-extensions.js";
 import { eventReceipt, MIND_LEVEL_THREAD, recordNotice } from "./chat/system-events.js";
 import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { withRecoveryHold } from "./daemon/mind-manager.js";
@@ -227,7 +228,7 @@ export async function getSharedSkill(id: string): Promise<SharedSkill | undefine
 export async function importSkillFromDir(
   sourceDir: string,
   author: string,
-  opts: { untrusted?: boolean; minVersion?: number } = {},
+  opts: { untrusted?: boolean; minVersion?: number; takeOver?: boolean } = {},
 ): Promise<SharedSkill> {
   const skillMdPath = join(sourceDir, "SKILL.md");
   if (!existsSync(skillMdPath)) {
@@ -246,6 +247,12 @@ export async function importSkillFromDir(
   }
   validateSkillId(id);
 
+  // A retired id stays Volute's: minds still hold copies that follow it by id, and another
+  // author's skill under it would read to them as its next version.
+  if (opts.untrusted && isRetiredId(id)) {
+    throw new Error(`"${id}" is the name of a skill Volute retired; publish it under another name`);
+  }
+
   const db = await getDb();
   const existing = await db.select().from(sharedSkills).where(eq(sharedSkills.id, id)).get();
 
@@ -261,10 +268,11 @@ export async function importSkillFromDir(
   // is the trusted spirit) may RECLAIM an id currently squatted by a mind. A
   // mind could otherwise pre-register an id Volute later ships as a built-in,
   // permanently poisoning it: the sync would throw and fail open, and every
-  // installer would get the squatter's code.
+  // installer would get the squatter's code. `takeOver` lets a protected caller take one from
+  // another protected author: a skill Volute moved between its own sources.
   if (existing && existing.author !== author) {
     const existingProtected = isProtectedAuthor(existing.author);
-    const reclaim = isProtectedAuthor(author) && !existingProtected;
+    const reclaim = isProtectedAuthor(author) && (!existingProtected || opts.takeOver === true);
     if (!reclaim) {
       throw new Error(
         existingProtected
@@ -1155,12 +1163,20 @@ async function uninstallSkillLocked(mindName: string, dir: string, skillId: stri
   // The skill's own paths and nothing else the mind has changed or staged: the commit is
   // built in a scratch index — HEAD without them — before anything is removed, so a commit
   // that fails (the mind's pre-commit hook, its signing setup) leaves the skill as it was.
-  // Only what the repo tracks goes in it; a skill it never tracked needs no commit at all.
+  // Only what HEAD has goes in it; a skill HEAD never had needs no commit at all.
   const bin = skillMd ? parseSkillMd(skillMd.text).bin : null;
   const skillPath = join(relSkillsPath(dir), skillId);
   const paths = [skillPath, ...skillShimPaths(dir, skillId, bin)];
-  const tracked = await git([...PLUMBING, "ls-files", "--", ...paths]);
-  if (tracked.trim()) {
+  const committed = await git([
+    ...PLUMBING,
+    "ls-tree",
+    "-r",
+    "--name-only",
+    "HEAD",
+    "--",
+    ...paths,
+  ]);
+  if (committed.trim()) {
     await ensureCommitIdentity(dir, mindName);
     await withScratchIndex(dir, mindName, async (env) => {
       await mindGit(dir, mindName, [...PLUMBING, "read-tree", "HEAD"], { env });
@@ -1172,9 +1188,9 @@ async function uninstallSkillLocked(mindName: string, dir: string, skillId: stri
       );
       await mindGit(dir, mindName, ["commit", "-q", "-m", `Uninstall skill: ${skillId}`], { env });
     });
-    // The mind's index drops them too, as HEAD now has them: gone.
-    await git([...PLUMBING, "reset", "-q", "--", ...paths]);
   }
+  // The mind's index drops them too — as HEAD has them now: gone — staged or not.
+  await git([...PLUMBING, "reset", "-q", "--", ...paths]);
 
   removeHookShims(dir, skillId);
   if (bin) removeBinShim(dir, bin);
@@ -2276,16 +2292,10 @@ export async function syncExtensionSkills(
 }
 
 /**
- * Ids a sync found already held by another of Volute's own sources this run (a skill moved
- * from a built-in into an extension, say): when the holder stops shipping one, it is handed
- * over — left for the other source to import — rather than retired from minds.
- */
-const contested = new Set<string>();
-
-/**
  * Import what `dir` ships into the pool as `author` — only when content has changed (via
  * hash comparison) — then retire what `author` once shipped and no longer does
- * ({@link retireUnshipped}).
+ * ({@link retireUnshipped}). An unreadable ledger still syncs, but records and retires
+ * nothing: overwriting it would lose every retirement it holds.
  */
 async function syncSkillsFrom(
   dir: string,
@@ -2295,7 +2305,15 @@ async function syncSkillsFrom(
 ): Promise<void> {
   const shipped = shippedSkillIds(dir);
   if (!shipped) return;
-  const { lastVersion } = readSkillLedger();
+  let ledger: SkillLedger | null = null;
+  try {
+    ledger = readSkillLedger();
+  } catch (err) {
+    log.error("the skill ledger is unreadable; retiring nothing until it is fixed", {
+      path: skillLedgerPath(),
+      ...log.errorData(err),
+    });
+  }
   /** What this author ships and holds the pool row for, by the hash of what it ships. */
   const offered = new Map<string, string | null>();
   for (const id of shipped) {
@@ -2303,11 +2321,19 @@ async function syncSkillsFrom(
     try {
       const hash = hashSkillDir(sourceDir);
       const row = await getSharedSkill(id);
+      // Another of Volute's own sources holds it. Taken over only when the ledger says that
+      // source shipped it and its files show it no longer does — the skill moved here.
+      // Otherwise the import would refuse every start: the holder keeps it.
+      let takeOver = false;
       if (row && row.author !== author && isProtectedAuthor(row.author)) {
-        // The import would refuse, every start. The holder keeps it until it stops shipping it.
-        contested.add(id);
-        log.warn(`skill ${id} ships with ${author} but the pool has it from ${row.author}`);
-        continue;
+        takeOver =
+          ledger?.shipped[id]?.author === row.author &&
+          isVoluteSource(row.author) &&
+          !voluteShippers(id).includes(row.author);
+        if (!takeOver) {
+          log.warn(`skill ${id} ships with ${author} but the pool has it from ${row.author}`);
+          continue;
+        }
       }
       offered.set(id, hash);
       // Skip only when the shared pool already has this content on disk AND the DB row
@@ -2319,15 +2345,43 @@ async function syncSkillsFrom(
         continue;
       }
       // A skill back in the pool numbers on from where it left, so minds' copies update.
-      await importSkillFromDir(sourceDir, author, { minVersion: (lastVersion[id] ?? 0) + 1 });
-      log.info(`synced skill ${id} (${author})`);
+      const minVersion = (ledger?.lastVersion[id] ?? 0) + 1;
+      await importSkillFromDir(sourceDir, author, { minVersion, takeOver });
+      log.info(
+        `synced skill ${id} (${author})${takeOver ? `, taken over from ${row?.author}` : ""}`,
+      );
     } catch (err) {
       // Still offered: a failed import must not read as a retirement.
       if (!offered.has(id)) offered.set(id, null);
       log.error(`failed to sync skill ${id} (${author})`, log.errorData(err));
     }
   }
-  await retireUnshipped(author, versions, shipped, offered, builtinExtension);
+  if (ledger) await retireUnshipped(author, versions, shipped, offered, builtinExtension);
+}
+
+/** Whether `author` is one of Volute's own sources whose files {@link voluteShippers} reads. */
+function isVoluteSource(author: string): boolean {
+  return author === "volute" || BUILTIN_EXTENSION_IDS.some((id) => author === `ext:${id}`);
+}
+
+/**
+ * Which of Volute's own sources ship `id` in this install, read from their files rather than
+ * from what loaded: the built-in skills dir (`volute`) and every built-in extension's
+ * (`ext:<id>`), loaded, disabled or failed alike. A skill one of them ships is never
+ * retired — when it moves between them, the new source takes it over.
+ */
+function voluteShippers(id: string): string[] {
+  const ships = (dir: string | null) => dir !== null && existsSync(join(dir, id, "SKILL.md"));
+  let root: string | null = null;
+  try {
+    root = findSkillsRoot();
+  } catch {}
+  return [
+    ...(ships(root) ? ["volute"] : []),
+    ...BUILTIN_EXTENSION_IDS.filter((ext) => ships(builtinExtensionSkillsDir(ext))).map(
+      (ext) => `ext:${ext}`,
+    ),
+  ];
 }
 
 // --- Retiring skills Volute stops shipping (#971) ---
@@ -2364,8 +2418,9 @@ export function shippedSkillIds(dir: string): Set<string> | null {
  * - `retired[id]`: a skill taken out of the pool because it stopped shipping, with the
  *   hashes it shipped under, which {@link retireUnshippedMindSkills} then deals with in
  *   each mind: only a copy that is one of those is Volute's to uninstall.
- * - `lastVersion[id]`: the pool version a skill Volute shipped had when it left the pool,
- *   which a sync that brings it back numbers on from.
+ * - `lastVersion[id]`: the pool version a skill Volute shipped had when it was retired,
+ *   which a sync that brings it back numbers on from. Until then the id is reserved: no
+ *   mind or upload can publish under it.
  *
  * Built-ins dropped before the ledger existed are in none of these, and are left to a
  * host to remove by hand (#971).
@@ -2386,9 +2441,16 @@ function skillLedgerPath(): string {
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
 
+/**
+ * The ledger, empty when there is none yet. Throws when it is there but unreadable: read as
+ * empty, the next write would replace every record in it.
+ */
 function readSkillLedger(): SkillLedger {
   const ledger: SkillLedger = { shipped: {}, retired: {}, lastVersion: {} };
-  const data = readJsonFile(skillLedgerPath(), "the skill ledger") as any;
+  const data = readJsonFile(skillLedgerPath()) as any;
+  if (data !== undefined && (typeof data !== "object" || data === null || Array.isArray(data))) {
+    throw new Error(`${skillLedgerPath()} is not a skill ledger`);
+  }
   for (const [id, e] of Object.entries(data?.shipped ?? {}) as [string, any][]) {
     if (typeof e?.author === "string" && Array.isArray(e?.versions)) {
       ledger.shipped[id] = {
@@ -2414,6 +2476,15 @@ function writeSkillLedger(ledger: SkillLedger): void {
   writeJsonAtomic(skillLedgerPath(), ledger);
 }
 
+/** Whether `id` names a skill Volute retired. An unreadable ledger can't say, so: no. */
+function isRetiredId(id: string): boolean {
+  try {
+    return id in readSkillLedger().retired;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Whether `current` is strictly past `recorded`: no component lower, at least one higher.
  * A downgrade — or a dev checkout at the version that last shipped the skill — is not.
@@ -2427,8 +2498,8 @@ function isPast(current: string[], recorded: string[]): boolean {
 /**
  * Record what `author` offers now at `versions`, then retire each pool row it authored that
  * it once shipped and no longer does — only when the running versions are strictly past
- * the ones that last shipped it, so a downgrade never retires anything. A row another of
- * Volute's sources has asked for this run is handed over instead.
+ * the ones that last shipped it, so a downgrade never retires anything — and never while
+ * another of Volute's own sources ships it ({@link retireSharedSkill}).
  */
 async function retireUnshipped(
   author: string,
@@ -2469,12 +2540,7 @@ async function retireUnshipped(
     if (skill.author !== author || shipped.has(skill.id) || was?.author !== author) continue;
     if (!isPast(versions, was.versions)) continue;
     try {
-      if (contested.has(skill.id)) {
-        await handOverSharedSkill(skill.id, author);
-        log.info(
-          `handed over skill ${skill.id}: no longer shipped by ${author}, shipped elsewhere`,
-        );
-      } else if (await retireSharedSkill(skill.id, author)) {
+      if (await retireSharedSkill(skill.id, author)) {
         log.info(`retired skill no longer shipped by ${author}: ${skill.id}`);
       }
     } catch (err) {
@@ -2486,15 +2552,17 @@ async function retireUnshipped(
 /**
  * Take a skill out of the pool as retired, so {@link retireUnshippedMindSkills} deals with
  * minds' copies — only when the pool holds it under `author` and the ledger says `author`
- * shipped it. Recorded before the removal, so a removal is never invisible to minds; a
- * removal that fails puts the record back, so the evidence isn't lost with it. Returns
- * whether it retired it.
+ * shipped it, and never while another of Volute's own sources ships it ({@link voluteShippers}):
+ * that one takes it over instead. Recorded before the removal, so a removal is never
+ * invisible to minds; a removal that fails puts the record back, so the evidence isn't lost
+ * with it. Returns whether it retired it.
  */
 export async function retireSharedSkill(id: string, author: string): Promise<boolean> {
   const row = await getSharedSkill(id);
   const ledger = readSkillLedger();
   const was = ledger.shipped[id];
   if (row?.author !== author || was?.author !== author) return false;
+  if (voluteShippers(id).some((other) => other !== author)) return false;
   // No longer shipped: a later pool skill under this id (the spirit's, under its default
   // "volute") is never mistaken for this one.
   delete ledger.shipped[id];
@@ -2513,20 +2581,6 @@ export async function retireSharedSkill(id: string, author: string): Promise<boo
     throw err;
   }
   return true;
-}
-
-/**
- * Take a skill out of the pool for another of Volute's sources to bring back, minds' copies
- * untouched: its next sync imports it, numbering on from here, and they update to it.
- */
-async function handOverSharedSkill(id: string, author: string): Promise<void> {
-  const row = await getSharedSkill(id);
-  if (row?.author !== author) return;
-  await removeSharedSkill(id);
-  const ledger = readSkillLedger();
-  delete ledger.shipped[id];
-  ledger.lastVersion[id] = row.version;
-  writeSkillLedger(ledger);
 }
 
 /**
@@ -2652,10 +2706,14 @@ async function shippedCopyVerdict(
   return shimsUnmodified(mindName, dir, skillId, declared) ? "unmodified" : "edited";
 }
 
-const retiredNotice = (skillId: string, verdict: "edited" | "unknown") =>
+/** Who stopped shipping a skill, by the author it was retired under. */
+const shippedBy = (author: string) =>
+  author.startsWith("ext:") ? `by the ${author.slice("ext:".length)} extension` : "with Volute";
+
+const retiredNotice = (skillId: string, author: string, verdict: "edited" | "unknown") =>
   verdict === "edited"
-    ? `${skillId} is no longer shipped with Volute. Your edited copy stays yours; it may call things that no longer exist.`
-    : `${skillId} is no longer shipped with Volute. Volute couldn't confirm your copy is unchanged from what it shipped, so it stays yours; it may call things that no longer exist.`;
+    ? `${skillId} is no longer shipped ${shippedBy(author)}. Your edited copy stays yours; it may call things that no longer exist.`
+    : `${skillId} is no longer shipped ${shippedBy(author)}. Volute couldn't confirm your copy is unchanged from what was shipped, so it stays yours; it may call things that no longer exist.`;
 
 /**
  * A mind's record of the retired skills it has been dealt with for — uninstalled, or told
@@ -2667,8 +2725,15 @@ function mindRetirementsPath(mindName: string): string {
   return resolve(stateDir(mindName), "retired-skills.json");
 }
 
+/** The record, or an empty one when there is none — or it can't be read: then at worst a
+ * notice is given twice. */
 function readMindRetirements(mindName: string): MindRetirements {
-  const data = readJsonFile(mindRetirementsPath(mindName), `retired skills for ${mindName}`) as any;
+  let data: any;
+  try {
+    data = readJsonFile(mindRetirementsPath(mindName));
+  } catch (err) {
+    log.warn(`failed to read retired skills for ${mindName}`, log.errorData(err));
+  }
   const notices: Record<string, number> = {};
   for (const [id, eventId] of Object.entries(data?.notices ?? {})) {
     if (typeof eventId === "number") notices[id] = eventId;
@@ -2688,9 +2753,11 @@ function readMindRetirements(mindName: string): MindRetirements {
  * start.
  */
 export async function retireUnshippedMindSkills(): Promise<void> {
-  const pool = new Set((await listSharedSkills()).map((s) => s.id));
+  const pool = new Map((await listSharedSkills()).map((s) => [s.id, s.author]));
   const ledger = readSkillLedger();
-  const back = Object.keys(ledger.retired).filter((id) => pool.has(id));
+  // Back in the pool from one of Volute's own sources: shipping again. (Nobody else can
+  // publish under a retired id.)
+  const back = Object.keys(ledger.retired).filter((id) => isProtectedAuthor(pool.get(id) ?? ""));
   if (back.length > 0) {
     for (const id of back) delete ledger.retired[id];
     try {
@@ -2702,27 +2769,28 @@ export async function retireUnshippedMindSkills(): Promise<void> {
   const retired = new Map(Object.entries(ledger.retired));
 
   for (const mind of await readRegistry()) {
-    const record = readMindRetirements(mind.name);
-    const handled = new Set(record.handled.filter((id) => retired.has(id)));
-    const notices = Object.fromEntries(
-      Object.entries(record.notices).filter(([id]) => retired.has(id)),
-    );
-    const save = () =>
-      writeJsonAtomic(mindRetirementsPath(mind.name), { handled: [...handled].sort(), notices });
-    if (handled.size !== record.handled.length) save();
-    if (retired.size === 0) continue;
-
-    const dir = mind.dir ?? mindDir(mind.name);
-    const skillsDir = mindSkillsDir(dir);
-    if (!existsSync(skillsDir)) continue;
-    const due = () =>
-      readdirSync(skillsDir, { withFileTypes: true }).flatMap((entry) => {
-        if (!entry.isDirectory()) return [];
-        const upstream = readUpstream(join(skillsDir, entry.name));
-        if (!upstream || !retired.has(upstream.source) || handled.has(upstream.source)) return [];
-        return [{ id: entry.name, source: upstream.source, upstream }];
-      });
+    // One mind's failure — its state dir unwritable, say — is its own: the rest go on.
     try {
+      const record = readMindRetirements(mind.name);
+      const handled = new Set(record.handled.filter((id) => retired.has(id)));
+      const notices = Object.fromEntries(
+        Object.entries(record.notices).filter(([id]) => retired.has(id)),
+      );
+      const save = () =>
+        writeJsonAtomic(mindRetirementsPath(mind.name), { handled: [...handled].sort(), notices });
+      if (handled.size !== record.handled.length) save();
+      if (retired.size === 0) continue;
+
+      const dir = mind.dir ?? mindDir(mind.name);
+      const skillsDir = mindSkillsDir(dir);
+      if (!existsSync(skillsDir)) continue;
+      const due = () =>
+        readdirSync(skillsDir, { withFileTypes: true }).flatMap((entry) => {
+          if (!entry.isDirectory()) return [];
+          const upstream = readUpstream(join(skillsDir, entry.name));
+          if (!upstream || !retired.has(upstream.source) || handled.has(upstream.source)) return [];
+          return [{ id: entry.name, source: upstream.source, upstream }];
+        });
       // Read-only first: a mind with nothing retired takes no lock and no git.
       if (due().length === 0) continue;
       await withSkillsLock(mind.name, async () => {
@@ -2746,7 +2814,7 @@ export async function retireUnshippedMindSkills(): Promise<void> {
                   thread: MIND_LEVEL_THREAD,
                   kind: "skill_retired",
                   reason: id,
-                  detail: retiredNotice(id, verdict),
+                  detail: retiredNotice(id, retired.get(source)?.author ?? "volute", verdict),
                 });
                 if (eventId !== undefined) {
                   notices[source] = eventId;

@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, type Options } from "tsup";
+import { BUILTIN_EXTENSION_IDS } from "../packages/daemon/src/lib/builtin-extensions.js";
 import tsupConfig from "../tsup.config.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -54,6 +55,8 @@ test("built-in extensions load from the tsup bundle", async () => {
     }
 
     assert.deepEqual([...ids].sort(), ["feedback", "intentions", "pages"]);
+    // What skill retirement reads as this Volute's built-ins is what it actually loads.
+    assert.deepEqual([...ids].sort(), [...BUILTIN_EXTENSION_IDS].sort());
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }

@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq, sql } from "drizzle-orm";
+import { builtinExtensionSkillsDir } from "../packages/daemon/src/lib/builtin-extensions.js";
 import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/config/setup.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { pruneOrphanedExtensionSkills } from "../packages/daemon/src/lib/extensions.js";
@@ -338,6 +347,59 @@ describe("retiring a mind's copy of a skill Volute no longer ships (#971)", () =
     assert.equal(await retireSharedSkill("old-tool", "volute"), true, "and retires it later");
   });
 
+  it("names the extension that stopped shipping it, not Volute", async () => {
+    writeFileSync(join(skillDir("old-tool"), "notes.md"), "mine\n");
+    const db = await getDb();
+    await db.delete(sharedSkills).where(eq(sharedSkills.id, "old-tool"));
+    writeFileSync(
+      ledgerPath(),
+      JSON.stringify({
+        shipped: {},
+        retired: { "old-tool": { author: "ext:weather", hashes: [] } },
+      }),
+    );
+    await retireUnshippedMindSkills();
+    const notices = await retiredNotices();
+    assert.equal(notices.length, 1);
+    assert.match(
+      notices[0].body ?? "",
+      /^old-tool is no longer shipped by the weather extension\./,
+    );
+  });
+
+  it("keeps a retired name from being published by anyone else", async () => {
+    await retireSharedSkill("old-tool", "volute");
+    await assert.rejects(
+      () => importSkillFromDir(wiredSkillSource("old-tool"), "some-mind", { untrusted: true }),
+      /Volute retired/,
+    );
+    assert.equal(await getSharedSkill("old-tool"), undefined);
+  });
+
+  it("goes on to the next mind when one mind's record can't be written", async () => {
+    const broken = "aaa-retire-broken";
+    const db = await getDb();
+    await db.delete(minds).where(eq(minds.name, mindName));
+    await addMind(broken, 4322);
+    await addMind(mindName, 4321);
+    // A stale record to rewrite, in a state dir that refuses the write.
+    mkdirSync(stateDir(broken), { recursive: true });
+    writeFileSync(
+      join(stateDir(broken), "retired-skills.json"),
+      JSON.stringify({ handled: ["long-gone"], notices: {} }),
+    );
+    chmodSync(stateDir(broken), 0o555);
+    try {
+      await retireSharedSkill("old-tool", "volute");
+      await retireUnshippedMindSkills();
+      assert.ok(!existsSync(skillDir("old-tool")), "the next mind was still dealt with");
+    } finally {
+      chmodSync(stateDir(broken), 0o755);
+      await db.delete(minds).where(eq(minds.name, broken));
+      rmSync(stateDir(broken), { recursive: true, force: true });
+    }
+  });
+
   it("leaves a copy alone whose pool entry was merely deleted, not retired", async () => {
     const db = await getDb();
     await db.delete(sharedSkills).where(eq(sharedSkills.id, "old-tool"));
@@ -484,28 +546,33 @@ describe("syncExtensionSkills retires skills an extension stops shipping (#971)"
     assert.deepEqual(readLedger().retired, {});
   });
 
-  it("leaves a skill another of Volute's sources holds alone, then is handed it", async () => {
+  it("leaves a skill another extension holds alone, without taking its record", async () => {
     const holder = join(voluteHome(), "tmp-retire-source", "holder");
-    const holderCopy = wiredSkillSource("moved", holder);
-    wiredSkillSource("moved", extSkills());
+    wiredSkillSource("both", holder);
+    wiredSkillSource("both", extSkills());
     await syncExtensionSkills("holder", "1.0.0", holder, ext);
-
     for (let start = 0; start < 2; start++) {
       await syncExtensionSkills("fake", "1.0.0", extSkills(), ext);
-      assert.equal((await getSharedSkill("moved"))?.author, "ext:holder");
-      assert.equal(readLedger().shipped.moved.author, "ext:holder", "the record is not flipped");
+      assert.equal((await getSharedSkill("both"))?.author, "ext:holder");
+      assert.equal(readLedger().shipped.both.author, "ext:holder", "the record is not flipped");
     }
+  });
 
-    // The holder stops shipping it: handed over, not retired from minds.
-    rmSync(holderCopy, { recursive: true });
-    await syncExtensionSkills("holder", "1.1.0", holder, ext);
-    assert.equal(await getSharedSkill("moved"), undefined);
-    assert.deepEqual(readLedger().retired, {});
-
+  it("leaves a spirit's 'volute' skill alone under a name an extension ships", async () => {
+    await importSkillFromDir(wiredSkillSource("spirit-own"), "volute");
+    wiredSkillSource("spirit-own", extSkills());
     await syncExtensionSkills("fake", "1.0.0", extSkills(), ext);
-    const row = await getSharedSkill("moved");
-    assert.equal(row?.author, "ext:fake");
-    assert.equal(row?.version, 2);
+    assert.equal((await getSharedSkill("spirit-own"))?.author, "volute");
+  });
+
+  it("keeps the ledger whole when it can't be read: syncs, but records and retires nothing", async () => {
+    wiredSkillSource("kept", extSkills());
+    await importSkillFromDir(wiredSkillSource("dropped"), "ext:fake");
+    writeFileSync(ledgerPath(), "{ half a ledger");
+    await syncExtensionSkills("fake", "9.0.0", extSkills(), ext);
+    assert.ok(await getSharedSkill("kept"), "the sync itself still ran");
+    assert.ok(await getSharedSkill("dropped"));
+    assert.equal(readFileSync(ledgerPath(), "utf-8"), "{ half a ledger");
   });
 
   it("retires nothing when its skills dir can't be read", async () => {
@@ -612,6 +679,21 @@ describe("removing a skill by hand, as a host does for one retired before the le
     assert.equal(await exec("git", ["status", "--porcelain"], { cwd: mindDir() }), "");
   });
 
+  it("uninstalls a copy that is staged but was never committed", async () => {
+    await importSkillFromDir(wiredSkillSource("staged-only"), "volute");
+    await installSkill(mindName, mindDir(), "staged-only");
+    await exec("git", ["rm", "-r", "-q", "--cached", "home"], { cwd: mindDir() });
+    await exec("git", ["commit", "-q", "-m", "untrack"], { cwd: mindDir() });
+    await exec("git", ["add", "home"], { cwd: mindDir() });
+    const head = await exec("git", ["rev-parse", "HEAD"], { cwd: mindDir() });
+
+    await uninstallSkill(mindName, mindDir(), "staged-only");
+    assert.ok(!existsSync(skillDir("staged-only")));
+    assert.equal(await exec("git", ["rev-parse", "HEAD"], { cwd: mindDir() }), head);
+    const status = await exec("git", ["status", "--porcelain"], { cwd: mindDir() });
+    assert.ok(!status.includes("staged-only"), status);
+  });
+
   it("uninstalls a copy the mind's repo never tracked", async () => {
     await importSkillFromDir(wiredSkillSource("untracked"), "volute");
     await installSkill(mindName, mindDir(), "untracked");
@@ -622,5 +704,43 @@ describe("removing a skill by hand, as a host does for one retired before the le
     await uninstallSkill(mindName, mindDir(), "untracked");
     assert.ok(!existsSync(skillDir("untracked")));
     assert.equal(await exec("git", ["rev-parse", "HEAD"], { cwd: mindDir() }), head);
+  });
+});
+
+describe("a skill moving between Volute's own sources (#971)", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  const pagesSkills = () => builtinExtensionSkillsDir("pages")!;
+
+  it("from the built-ins into a built-in extension: kept, then taken over, minds untouched", async () => {
+    // "pages" as if an earlier Volute had shipped it as a built-in.
+    await importSkillFromDir(join(pagesSkills(), "pages"), "volute");
+    recordShipped("pages", "volute", ["0.0.1"]);
+
+    // The extension didn't sync (disabled, or its import failed): still never retired.
+    await syncBuiltinSkills();
+    assert.equal((await getSharedSkill("pages"))?.author, "volute");
+    assert.deepEqual(readLedger().retired, {});
+
+    await syncExtensionSkills("pages", "9.9.9", pagesSkills(), { builtin: true });
+    const row = await getSharedSkill("pages");
+    assert.equal(row?.author, "ext:pages");
+    assert.equal(row?.version, 2, "minds' copies update to it");
+    assert.equal(readLedger().shipped.pages.author, "ext:pages");
+    assert.deepEqual(readLedger().retired, {});
+  });
+
+  it("from a built-in extension into the built-ins, in the order a start runs them", async () => {
+    await importSkillFromDir(join(findSkillsRoot(), "memory"), "ext:pages");
+    recordShipped("memory", "ext:pages", ["0.0.1", "0.0.1"], { builtin: true });
+
+    await syncExtensionSkills("pages", "9.9.9", pagesSkills(), { builtin: true });
+    assert.equal((await getSharedSkill("memory"))?.author, "ext:pages", "not retired");
+    await syncBuiltinSkills();
+    const row = await getSharedSkill("memory");
+    assert.equal(row?.author, "volute");
+    assert.equal(row?.version, 2);
+    assert.deepEqual(readLedger().retired, {});
   });
 });
