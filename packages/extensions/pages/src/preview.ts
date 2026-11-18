@@ -116,9 +116,17 @@ export function resolveBrowser(opts?: {
     return null;
   }
 
-  // Linux/other: walk PATH dirs looking for an executable, `command -v` style.
-  const dirs = (opts?.pathEnv ?? process.env.PATH ?? "").split(delimiter).filter(Boolean);
-  for (const name of opts?.pathCandidates ?? PATH_CANDIDATES) {
+  return findOnPath(opts?.pathCandidates ?? PATH_CANDIDATES, opts?.pathEnv, exists);
+}
+
+/** The first of `names` executable somewhere on PATH, `command -v` style, in `names` order. */
+function findOnPath(
+  names: string[],
+  pathEnv: string | undefined,
+  exists: (p: string) => boolean,
+): string | null {
+  const dirs = (pathEnv ?? process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const name of names) {
     for (const dir of dirs) {
       const full = join(dir, name);
       if (exists(full)) return full;
@@ -126,6 +134,115 @@ export function resolveBrowser(opts?: {
   }
   return null;
 }
+
+/**
+ * The install command per distribution, by `/etc/os-release` `ID`, for the ones
+ * whose stock repositories carry a chromium preview can drive under that name.
+ * Left out on purpose, because the command would not work as handed over: Ubuntu
+ * (its chromium is a snap, with its own private /tmp), and RHEL, CentOS and Amazon
+ * Linux (chromium needs EPEL first). They get prose instead.
+ */
+const DISTRO_INSTALLS: Record<string, string> = {
+  debian: "apt-get update && apt-get install -y chromium",
+  raspbian: "apt-get update && apt-get install -y chromium",
+  fedora: "dnf install -y chromium",
+  arch: "pacman -S --noconfirm chromium",
+  alpine: "apk add chromium",
+  "opensuse-leap": "zypper install -y chromium",
+  "opensuse-tumbleweed": "zypper install -y chromium",
+};
+
+export type BrowserInstall = { command: string; as: string };
+
+function readOsRelease(): string | null {
+  try {
+    return readFileSync("/etc/os-release", "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a host would run to give preview a browser, and as whom, or null when we
+ * can't name a command that would work as given. Injectable like
+ * {@link resolveBrowser}.
+ */
+export function browserInstallCommand(opts?: {
+  platform?: NodeJS.Platform;
+  osRelease?: string | null;
+}): BrowserInstall | null {
+  const platform = opts?.platform ?? process.platform;
+  if (platform === "darwin") {
+    return {
+      command: "brew install --cask google-chrome",
+      as: "as your own user, not with sudo (Homebrew refuses to run as root)",
+    };
+  }
+  if (platform !== "linux") return null;
+  const release = opts?.osRelease === undefined ? readOsRelease() : opts.osRelease;
+  const id = release?.match(/^ID="?([^"\n]*)"?$/m)?.[1];
+  const command = id ? DISTRO_INSTALLS[id] : undefined;
+  return command ? { command, as: "as root" } : null;
+}
+
+/** The alert kind for a host with no browser; the daemon namespaces it with the extension id. */
+export const NO_BROWSER_ALERT_KIND = "preview_no_browser";
+
+/**
+ * What the mind is told when there is no browser. The old text told it to install
+ * Chrome or set VOLUTE_CHROMIUM — neither of which it can do: it has no root, and
+ * VOLUTE_CHROMIUM is the daemon's environment, not its own. So the failure reached
+ * the one party who couldn't act on it and never reached the one who could, and
+ * minds built canvas pages blind for a day before anyone with root heard (bardo,
+ * Nov 2026). This says what is true from the mind's seat instead — including
+ * whether the host was actually alerted, which only a caller that passed
+ * `alertHost` can claim.
+ */
+export function noBrowserMindError(hostAlerted: boolean): string {
+  return (
+    "Preview can't run here: there is no browser on this host to render with, and " +
+    "installing one needs the host. " +
+    (hostAlerted
+      ? "An alert about it has gone to your host.\n"
+      : "Tell your host: preview needs Chrome or Chromium installed on the host.\n") +
+    "Until then nothing here can show you your page — and tests passing over its logic " +
+    "don't mean it draws. If how it looks matters, ask someone who can see it (your host, " +
+    "or another mind) to open the published page and tell you what's there."
+  );
+}
+
+/** What the host is told, through the spirit and the dashboard. */
+export function noBrowserAlertText(mindName: string, install: BrowserInstall | null): string {
+  const fix = install
+    ? `On the host, ${install.as}:\n\n    ${install.command}`
+    : "Install Google Chrome or Chromium on the host. (On Ubuntu the chromium package is a " +
+      "snap, which preview can't use — install Google Chrome's .deb instead.)";
+  return (
+    "Pages preview can't run: the daemon found no Chrome-family browser on this host, so " +
+    `minds can't see the pages they draw. ${mindName} just tried, and was told the host ` +
+    `has been alerted.\n\n${fix}\n\nNo restart is needed — the next preview finds it. A ` +
+    "browser the daemon's PATH doesn't reach can be named with VOLUTE_CHROMIUM in the " +
+    "daemon's environment.\n\nThis is sent once per daemon run."
+  );
+}
+
+/**
+ * Whether the host has already heard, this daemon run, that there is no browser.
+ * The condition is the host's, not one mind's, so the first mind to hit it is the
+ * one that raises it; every preview after that would be the same news.
+ */
+let hostToldNoBrowser = false;
+
+/** Tests only: forget that the host was told, so each test can watch the first alert. */
+export function _resetNoBrowserAlertForTest(): void {
+  hostToldNoBrowser = false;
+}
+
+/**
+ * Wall-clock limits for the two render attempts, together the 30s one render had
+ * before. Mutable only so tests need not wait them out.
+ */
+export const RENDER_TIMEOUTS = { timers: 20_000, atLoad: 10_000 };
 
 /**
  * Per-invocation counter for temp-path uniqueness. process.pid is the daemon's
@@ -151,8 +268,10 @@ export async function renderPreview(opts: {
   ownership: MindOwnership;
   file: string;
   exec?: ChownExec;
+  /** Tell the host something only it can fix — the extension context's `alertHost`. */
+  alertHost?: (kind: string, text: string) => Promise<void>;
 }): Promise<
-  | { pngPath: string; rel: string; ownershipWarning: string | null }
+  | { pngPath: string; rel: string; ownershipWarning: string | null; note: string | null }
   | { error: string; ownershipWarning?: string | null }
 > {
   const pagesRoot = resolve(opts.mindDir, "home", "pages");
@@ -204,10 +323,22 @@ export async function renderPreview(opts: {
 
   const browser = resolveBrowser();
   if (!browser) {
-    return {
-      error:
-        "No Chrome-family browser found. Install Chrome or Chromium, or set VOLUTE_CHROMIUM to a browser binary.",
-    };
+    if (opts.alertHost && !hostToldNoBrowser) {
+      hostToldNoBrowser = true;
+      // Not awaited: the alert starts a spirit turn, and the mind's command should
+      // not wait on one. alertHost never throws; the catch is a backstop.
+      opts
+        .alertHost(
+          NO_BROWSER_ALERT_KIND,
+          noBrowserAlertText(opts.mindName, browserInstallCommand()),
+        )
+        .catch((err) =>
+          console.warn(`[pages] could not alert the host: ${(err as Error).message}`),
+        );
+    }
+    // Claimed only when this call could raise it: the caller passed alertHost,
+    // which then either sent it now or already did, earlier this run.
+    return { error: noBrowserMindError(!!opts.alertHost) };
   }
 
   // Unique per invocation so concurrent previews never share a chromium
@@ -242,6 +373,7 @@ export async function renderPreview(opts: {
   let pngPath: string | null = null;
   let wrotePng = false;
   let failure: string | null = null;
+  let note: string | null = null;
   try {
     // The URL chromium screenshots — a loopback origin rather than the file the
     // page lives in, so the server is the boundary for every load the page makes.
@@ -283,33 +415,63 @@ export async function renderPreview(opts: {
     rmSync(pngPath, { force: true });
     mkdirSync(stageDir, { mode: 0o700 });
 
+    const args = (userDataDir: string, extra: string[]) => [
+      "--headless=new",
+      "--no-sandbox",
+      // The render fetches over loopback now, so a proxy configured on the
+      // host becomes something between the browser and the page. Chrome
+      // bypasses localhost by default, but a host that has overridden that
+      // would get blank previews and no clue why.
+      "--no-proxy-server",
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--hide-scrollbars",
+      "--force-color-profile=srgb",
+      `--user-data-dir=${userDataDir}`,
+      ...extra,
+      // Fixed viewport: the chromium CLI has no reliable full-page --screenshot
+      // flag, so we capture a generous window rather than risk a fragile
+      // scripted full-height capture. Tall pages are cut off below 1600px.
+      "--window-size=1280,1600",
+      `--screenshot=${stagedPng}`,
+      url,
+    ];
+    const renderFailed = (err: unknown) =>
+      `Could not render the page: ${(err as Error).message}. (The browser runs on the host's side; if this keeps happening, tell your host.)`;
+    // Without virtual time the shot is taken at the load event, a few dozen ms in,
+    // and a page that draws after a timer — a splash, an awaited delay, a game that
+    // starts on setTimeout — previews as an empty canvas. Virtual time runs the
+    // page's first seconds of timers before the shot, at no wall-clock cost while
+    // the page is idle. requestAnimationFrame is not driven by it: a loop that
+    // waits on many frames or on elapsed frame time still shoots early.
+    const started = Date.now();
+    let firstError: unknown = null;
     try {
-      await run(
-        browser,
-        [
-          "--headless=new",
-          "--no-sandbox",
-          // The render fetches over loopback now, so a proxy configured on the
-          // host becomes something between the browser and the page. Chrome
-          // bypasses localhost by default, but a host that has overridden that
-          // would get blank previews and no clue why.
-          "--no-proxy-server",
-          "--disable-gpu",
-          "--disable-dev-shm-usage",
-          "--hide-scrollbars",
-          "--force-color-profile=srgb",
-          `--user-data-dir=${userDataDir}`,
-          // Fixed viewport: the chromium CLI has no reliable full-page --screenshot
-          // flag, so we capture a generous window rather than risk a fragile
-          // scripted full-height capture. Tall pages are cut off below 1600px.
-          "--window-size=1280,1600",
-          `--screenshot=${stagedPng}`,
-          url,
-        ],
-        30_000,
-      );
+      await run(browser, args(userDataDir, ["--virtual-time-budget=5000"]), RENDER_TIMEOUTS.timers);
     } catch (err) {
-      failure = `Could not render the page: ${(err as Error).message}. (Is a browser installed? Set VOLUTE_CHROMIUM.)`;
+      firstError = err;
+    }
+    // Virtual time stands still while a request is open, so a page holding one open
+    // — a dead https host, a slow API — never spends its budget, and the browser is
+    // stopped at the timeout with no shot. Chrome exits 0 on that SIGTERM, so "no
+    // image, and the whole timeout used" is the sign as much as `killed` is. Before
+    // virtual time such a page shot fine at load, so it gets that shot rather than
+    // nothing, and is told why. A fresh profile: the stopped browser's lock may
+    // still be in the old one.
+    const stalled =
+      (firstError as { killed?: boolean } | null)?.killed === true ||
+      (!existsSync(stagedPng) && Date.now() - started >= RENDER_TIMEOUTS.timers);
+    if (stalled) {
+      try {
+        await run(browser, args(`${userDataDir}-load`, []), RENDER_TIMEOUTS.atLoad);
+        note =
+          "Your page kept a network request open, so this was taken as the page " +
+          "finished loading — before any timers ran.";
+      } catch (err) {
+        failure = renderFailed(err);
+      }
+    } else if (firstError) {
+      failure = renderFailed(firstError);
     }
 
     if (!failure) {
@@ -339,6 +501,7 @@ export async function renderPreview(opts: {
     if (tempHtml) rmSync(tempHtml, { force: true });
     rmSync(stageDir, { recursive: true, force: true });
     rmSync(userDataDir, { recursive: true, force: true });
+    rmSync(`${userDataDir}-load`, { recursive: true, force: true });
   }
 
   // Before the error return, not after it. A render that failed is the run that
@@ -359,5 +522,5 @@ export async function renderPreview(opts: {
   // that the directory may not be its own.
   if (failure) return { error: failure, ownershipWarning };
   if (!pngPath) return { error: "The browser ran but produced no image.", ownershipWarning };
-  return { pngPath, rel: `home/.preview/${basename(pngPath)}`, ownershipWarning };
+  return { pngPath, rel: `home/.preview/${basename(pngPath)}`, ownershipWarning, note };
 }

@@ -21,6 +21,7 @@ import {
 import { getUser, getUserByUsername } from "./auth.js";
 import { announceToCommons } from "./chat/commons-channel.js";
 import {
+  alertHost,
   deliverEvent,
   MIND_LEVEL_THREAD,
   recordNotice as recordMindNotice,
@@ -431,6 +432,11 @@ export async function buildExtensionContext(
         return { delivered: false };
       }
     },
+    // To the spirit, not the calling mind: what an extension raises here is the
+    // host's to fix, and the mind already has its own error (the same choice
+    // name-collisions.ts makes for a system-wide failure).
+    alertHost: (kind: string, text: string) =>
+      alertHost(getSpiritName(), `${manifest.id}_${kind}`, text),
     isIsolationEnabled,
     getMindUser: mindUserName,
     containMindPath: async (mindName: string, path: string) => {

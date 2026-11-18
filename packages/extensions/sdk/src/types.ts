@@ -133,6 +133,15 @@ export type ExtensionContext = {
     mindName: string,
     event: { body: string; whileSleeping?: "skip" | "queue" | "trigger-wake" },
   ) => Promise<{ delivered: boolean }>;
+  /**
+   * Tell the host about something on this system that only the host can fix — a
+   * missing dependency, say — when the minds who hit it can't. Reaches the spirit (as
+   * an immediate event, so it starts a turn) and the dashboard (as an error row whose
+   * summary is the first line of `text`). `kind` is a short snake_case discriminator,
+   * namespaced with the extension id. Rate-limit it yourself: every call is a spirit
+   * turn. Never throws.
+   */
+  alertHost: (kind: string, text: string) => Promise<void>;
   /** Whether per-mind user isolation is enabled (user isolation mode). */
   isIsolationEnabled: () => boolean;
   /** Get the OS username for a mind under user isolation (e.g. "mind-lyra"). */

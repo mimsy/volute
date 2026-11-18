@@ -173,10 +173,20 @@ install_browser() {
     return
   fi
 
-  # No browser found — 'volute pages preview' needs one. Decide whether to install.
+  # No browser found — 'volute pages preview' needs one, and without it minds can't
+  # see the pages they draw. Decide whether to install. The documented install is
+  # `curl ... | sudo bash`, where stdin is the script itself, so ask on the terminal
+  # rather than stdin — otherwise this question never reaches anyone.
+  local tty=""
   if [ -t 0 ]; then
-    printf "No browser found. 'volute pages preview' needs one. Install chromium now? [Y/n] "
-    read -r reply
+    tty=/dev/stdin
+  elif (: </dev/tty) 2>/dev/null; then
+    tty=/dev/tty
+  fi
+  if [ -n "$tty" ]; then
+    printf "No browser found. 'volute pages preview' needs one so minds can see the pages they make. Install chromium now? [Y/n] "
+    # EOF (Ctrl-D) under `set -e` would end the whole install; read it as "no".
+    read -r reply <"$tty" || reply=n
     case "$reply" in
       [Nn]*)
         echo "Skipping browser install — 'volute pages preview' will be unavailable until you install one."

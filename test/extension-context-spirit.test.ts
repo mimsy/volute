@@ -22,7 +22,7 @@ import {
   mindDir,
   removeMind,
 } from "../packages/daemon/src/lib/mind/registry.js";
-import { systemEvents } from "../packages/daemon/src/lib/schema.js";
+import { activity, systemEvents } from "../packages/daemon/src/lib/schema.js";
 import { initDb } from "../packages/extensions/intentions/src/db.js";
 import { provisionSpiritSchedule } from "../packages/extensions/intentions/src/spirit-schedule.js";
 
@@ -69,6 +69,32 @@ describe("extension context: spirit resolution", () => {
       mindDir(spiritName),
       "spirit dir must differ from the path convention for this test to bite",
     );
+  });
+
+  it("alertHost reaches the spirit and the dashboard, with the kind namespaced", async () => {
+    // What an extension raises through this is the host's to fix — no one mind owns
+    // it — so it goes to the spirit, never to whichever mind happened to hit it.
+    const ctx = await buildExtensionContext(manifest, dataDir, noopMw);
+    const db = await getDb();
+    try {
+      await ctx.alertHost("thing_missing", "The thing is missing.\n\nInstall it.");
+
+      const events = await db.select().from(systemEvents).where(eq(systemEvents.mind, spiritName));
+      const mine = events.filter((r) => r.body.includes("The thing is missing."));
+      assert.equal(mine.length, 1, "the spirit is told once");
+      assert.equal(JSON.parse(mine[0].meta ?? "{}").subtype, "test-ctx_thing_missing");
+
+      const rows = await db.select().from(activity).where(eq(activity.mind, spiritName));
+      const row = rows.find(
+        (r) => JSON.parse(r.metadata ?? "{}").kind === "test-ctx_thing_missing",
+      );
+      assert.ok(row, "the dashboard gets a row");
+      assert.equal(row.type, "mind_error");
+      assert.equal(row.summary, "The thing is missing.");
+    } finally {
+      await db.delete(systemEvents).where(eq(systemEvents.mind, spiritName));
+      await db.delete(activity).where(eq(activity.mind, spiritName));
+    }
   });
 
   it("returns null for a mind with no directory on disk", async () => {

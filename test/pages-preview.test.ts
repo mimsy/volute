@@ -15,8 +15,19 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
+import type { ExtensionCommand } from "@volute/extensions";
+import { createCommands } from "../packages/extensions/pages/src/commands.js";
 import type { ChownExec, MindOwnership } from "../packages/extensions/pages/src/ownership.js";
-import { renderPreview, resolveBrowser } from "../packages/extensions/pages/src/preview.js";
+import {
+  _resetNoBrowserAlertForTest,
+  browserInstallCommand,
+  NO_BROWSER_ALERT_KIND,
+  noBrowserAlertText,
+  noBrowserMindError,
+  RENDER_TIMEOUTS,
+  renderPreview,
+  resolveBrowser,
+} from "../packages/extensions/pages/src/preview.js";
 
 /**
  * Unit coverage for renderPreview's pure/mockable logic — path containment,
@@ -165,7 +176,10 @@ describe("renderPreview graceful degradation without a browser", () => {
     });
     assert.ok("error" in result);
     assert.match(result.error, /Could not render the page/);
-    assert.match(result.error, /VOLUTE_CHROMIUM/);
+    // Addressed to the mind, who can neither install a browser nor set the
+    // daemon's environment.
+    assert.match(result.error, /tell your host/);
+    assert.doesNotMatch(result.error, /Set VOLUTE_CHROMIUM/);
   });
 
   it("renders the .md branch, then degrades and cleans up the temp html", async () => {
@@ -196,31 +210,116 @@ describe("renderPreview graceful degradation without a browser", () => {
     assert.ok(!existsSync(resolve(mindDir, "home", ".preview", "index.png")));
   });
 
-  it("reports 'no browser found' when nothing resolves (linux, empty PATH)", async () => {
+  /** Run `fn` with nothing resolvable as a browser, whatever the test host has. */
+  async function withNoBrowser(fn: () => Promise<void>): Promise<void> {
     writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
-    // Force the resolver to find nothing regardless of the test host: unset the
-    // override, pretend to be linux, and give it an empty PATH.
+    // Unset the override, pretend to be linux, and give the resolver an empty PATH.
     delete process.env.VOLUTE_CHROMIUM;
     const prevPath = process.env.PATH;
     const platformDesc = Object.getOwnPropertyDescriptor(process, "platform");
     process.env.PATH = "";
     Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    _resetNoBrowserAlertForTest();
     try {
-      const result = await renderPreview({
-        mindDir,
-        mindName: "testmind",
-        ownership: NO_ISOLATION,
-        file: "index.html",
-      });
-      assert.deepEqual(result, {
-        error:
-          "No Chrome-family browser found. Install Chrome or Chromium, or set VOLUTE_CHROMIUM to a browser binary.",
-      });
+      await fn();
     } finally {
       if (platformDesc) Object.defineProperty(process, "platform", platformDesc);
       if (prevPath === undefined) delete process.env.PATH;
       else process.env.PATH = prevPath;
     }
+  }
+
+  it("with no browser, tells the host once and the mind that it was told", async () => {
+    await withNoBrowser(async () => {
+      const alerts: { kind: string; text: string }[] = [];
+      const alertHost = async (kind: string, text: string) => {
+        alerts.push({ kind, text });
+      };
+
+      // The first through the command, which is what hands renderPreview the
+      // context's alertHost — the wiring the daemon's path depends on.
+      const ctx = {
+        ...NO_ISOLATION,
+        mindName: "pip",
+        getMindDir: async () => mindDir,
+        alertHost,
+      } as unknown as Parameters<ExtensionCommand["handler"]>[1];
+      const first = await createCommands().preview.handler({ args: {}, flags: {}, rest: [] }, ctx);
+      assert.deepEqual(first, { error: noBrowserMindError(true) });
+      // The old text told the mind to install Chrome or set VOLUTE_CHROMIUM — the
+      // two things it cannot do.
+      assert.match(noBrowserMindError(true), /alert about it has gone to your host/);
+      assert.doesNotMatch(noBrowserMindError(true), /VOLUTE_CHROMIUM|Install Chrome/);
+
+      assert.equal(alerts.length, 1, "the host is told on the first failure");
+      assert.equal(alerts[0].kind, NO_BROWSER_ALERT_KIND);
+      assert.match(alerts[0].text, /pip just tried/);
+
+      // The condition is the host's, not one mind's: a second mind hitting it is
+      // the same news, and every alert is a spirit turn. It was still told, though.
+      const second = await renderPreview({
+        mindDir,
+        mindName: "mimsy",
+        ownership: NO_ISOLATION,
+        file: "index.html",
+        alertHost,
+      });
+      assert.deepEqual(second, { error: noBrowserMindError(true) });
+      assert.equal(alerts.length, 1, "once per daemon run, not once per call");
+    });
+  });
+
+  it("does not claim the host was told when nothing could tell it", async () => {
+    await withNoBrowser(async () => {
+      const result = await renderPreview({
+        mindDir,
+        mindName: "pip",
+        ownership: NO_ISOLATION,
+        file: "index.html",
+      });
+      assert.deepEqual(result, { error: noBrowserMindError(false) });
+      assert.doesNotMatch(noBrowserMindError(false), /has gone to your host/);
+      assert.match(noBrowserMindError(false), /Tell your host/);
+    });
+  });
+});
+
+describe("browserInstallCommand", () => {
+  const linux = (osRelease: string | null) =>
+    browserInstallCommand({ platform: "linux", osRelease });
+
+  it("names the command for a distribution whose chromium works as handed over", () => {
+    assert.deepEqual(linux('PRETTY_NAME="Debian GNU/Linux 12"\nID=debian\n'), {
+      command: "apt-get update && apt-get install -y chromium",
+      as: "as root",
+    });
+    assert.equal(
+      linux('ID="raspbian"\n')?.command,
+      "apt-get update && apt-get install -y chromium",
+    );
+    assert.equal(linux("ID=fedora\n")?.command, "dnf install -y chromium");
+  });
+
+  it("names none where the obvious command would not work", () => {
+    // Ubuntu's chromium is a snap; RHEL-family chromium needs EPEL first.
+    assert.equal(linux("ID=ubuntu\nID_LIKE=debian\n"), null);
+    assert.equal(linux('ID="rhel"\n'), null);
+    assert.equal(linux('ID="amzn"\n'), null);
+    assert.equal(linux(null), null);
+  });
+
+  it("uses Homebrew on macOS, as the user — Homebrew refuses root", () => {
+    const got = browserInstallCommand({ platform: "darwin" });
+    assert.equal(got?.command, "brew install --cask google-chrome");
+    assert.match(got?.as ?? "", /not with sudo/);
+  });
+
+  it("puts the command in the host's alert, and degrades to prose without one", () => {
+    assert.match(
+      noBrowserAlertText("pip", { command: "apk add chromium", as: "as root" }),
+      /On the host, as root:\n\n {4}apk add chromium\n/,
+    );
+    assert.match(noBrowserAlertText("pip", null), /Google Chrome's \.deb/);
   });
 });
 
@@ -553,5 +652,127 @@ describe("renderPreview scratch-file cleanup", () => {
       [],
       "temp markdown html must not survive a failure before the render",
     );
+  });
+});
+
+/**
+ * A stub that logs each launch's argv, one line per launch. With `hangOnTimers` it
+ * stands in for a page holding a request open: under virtual time it never
+ * finishes, so the renderer has to kill it.
+ */
+function writeArgvStub(dir: string, log: string, hangOnTimers: false | "dies" | "exits-0"): string {
+  const path = resolve(dir, `argv-stub-${stubSeq++}.sh`);
+  writeFileSync(
+    path,
+    [
+      "#!/bin/sh",
+      `printf '%s\\n' "$*" >> '${log}'`,
+      "out=",
+      'for a in "$@"; do',
+      '  case "$a" in',
+      `    --screenshot=*) out=$(printf %s "$a" | sed 's/^--screenshot=//') ;;`,
+      // Real Chrome exits 0 on the timeout's SIGTERM, so `killed` is not set;
+      // a process that dies of the signal is the other shape.
+      ...(hangOnTimers === "dies" ? ["    --virtual-time-budget=*) exec sleep 30 ;;"] : []),
+      ...(hangOnTimers === "exits-0"
+        ? ["    --virtual-time-budget=*) trap 'exit 0' TERM; sleep 30 & wait; exit 0 ;;"]
+        : []),
+      "  esac",
+      "done",
+      '[ -n "$out" ] && printf PNG > "$out"',
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(path, 0o755);
+  return path;
+}
+
+describe("renderPreview lets timers run before the shot", () => {
+  it("asks the browser for virtual time, once, when the page settles", async () => {
+    writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
+    const log = resolve(mindDir, "argv.log");
+    process.env.VOLUTE_CHROMIUM = writeArgvStub(mindDir, log, false);
+    const result = await renderPreview({
+      mindDir,
+      mindName: "testmind",
+      ownership: NO_ISOLATION,
+      file: "index.html",
+    });
+    assert.ok(!("error" in result), "error" in result ? result.error : "");
+    assert.equal(result.note, null);
+    const launches = readFileSync(log, "utf-8").trim().split("\n");
+    assert.equal(launches.length, 1);
+    assert.match(launches[0], /--virtual-time-budget=5000/);
+  });
+
+  for (const shape of ["exits-0", "dies"] as const) {
+    it(`falls back to a shot at load when virtual time never runs out (${shape}), and says so`, async () => {
+      writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
+      const log = resolve(mindDir, "argv.log");
+      process.env.VOLUTE_CHROMIUM = writeArgvStub(mindDir, log, shape);
+      const prev = { ...RENDER_TIMEOUTS };
+      RENDER_TIMEOUTS.timers = 500;
+      try {
+        const result = await renderPreview({
+          mindDir,
+          mindName: "testmind",
+          ownership: NO_ISOLATION,
+          file: "index.html",
+        });
+        // Before virtual time, a page holding a request open shot fine at load; it
+        // must not now get nothing at all.
+        assert.ok(!("error" in result), "error" in result ? result.error : "");
+        assert.match(result.note ?? "", /kept a network request open/);
+        const launches = readFileSync(log, "utf-8").trim().split("\n");
+        assert.equal(launches.length, 2);
+        assert.doesNotMatch(launches[1], /--virtual-time-budget/);
+        // A fresh profile for the second launch: the killed one may hold the lock.
+        const profile = (l: string) => l.match(/--user-data-dir=(\S+)/)?.[1];
+        assert.notEqual(profile(launches[0]), profile(launches[1]));
+      } finally {
+        Object.assign(RENDER_TIMEOUTS, prev);
+      }
+    });
+  }
+});
+
+/**
+ * Resolved at import, before the outer beforeEach points VOLUTE_CHROMIUM at a
+ * bogus binary. CI runners carry Chrome, so this runs there; a host without one
+ * skips it rather than failing.
+ */
+const REAL_BROWSER = resolveBrowser();
+
+describe("renderPreview with a real browser", { skip: !REAL_BROWSER && "no browser" }, () => {
+  it("captures a canvas that first draws after a timer, not the blank before it", async () => {
+    // The shape of a game whose first frame comes after a load delay. Taken at the
+    // load event, as the shot was, this was a black rectangle — a mind's logic
+    // tests could pass over a screen that never drew.
+    writeFileSync(
+      resolve(pagesRoot, "game.html"),
+      `<!doctype html><body style="margin:0;background:#000">
+<canvas id="c" width="400" height="300"></canvas>
+<script type="module">
+const ctx = document.getElementById("c").getContext("2d");
+await new Promise((r) => setTimeout(r, 500));
+requestAnimationFrame(() => { ctx.fillStyle = "#f00"; ctx.fillRect(0, 0, 400, 300); });
+</script></body>`,
+    );
+    process.env.VOLUTE_CHROMIUM = REAL_BROWSER as string;
+    const result = await renderPreview({
+      mindDir,
+      mindName: "testmind",
+      ownership: NO_ISOLATION,
+      file: "game.html",
+    });
+    assert.ok(!("error" in result), "error" in result ? result.error : "");
+    const { default: sharp } = await import("sharp");
+    const { data, info } = await sharp(result.pngPath)
+      .extract({ left: 100, top: 100, width: 1, height: 1 })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    assert.equal(info.channels >= 3, true);
+    assert.deepEqual([data[0], data[1], data[2]], [255, 0, 0], "the canvas drew before the shot");
   });
 });
