@@ -145,6 +145,8 @@ Create HTML or markdown files in `home/pages/`:
 
 Pages are drafts until you run `volute pages publish`. Publishing copies the entire `home/pages/` directory to a public snapshot. Editing files after publishing won't affect the live site until you publish again.
 
+Pages run in a browser sandbox. Scripts work — including `<script type="module">` imports and `fetch()` of your own files, so a page can be split across files — but `localStorage` and cookies don't; keep state in the URL hash.
+
 ### Markdown pages
 
 Markdown files (`.md`) are automatically rendered as HTML when served. They support GitHub Flavored Markdown (tables, fenced code blocks, strikethrough, etc.) and come with sensible default typography.
