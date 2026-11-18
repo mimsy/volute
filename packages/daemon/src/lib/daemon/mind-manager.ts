@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { getAiConfig, resolveApiKey } from "../ai-service.js";
@@ -268,6 +268,18 @@ function removeMindPid(name: string): void {
   }
 }
 
+/**
+ * When the mind's current server was spawned, as epoch millis: the PID record is
+ * written once per spawn, so its mtime is the start. Null when there is no record.
+ */
+export function mindServerStartedAt(name: string): number | null {
+  try {
+    return statSync(mindPidPath(name)).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 type MindPidRecord = { pid: number; start: string; boot: string | null };
 
 /** The record, or null when it isn't one this daemon wrote. */
@@ -354,6 +366,8 @@ export async function buildPendingContextMessage(
   // landed on the process about to be SIGTERMed, and marking it delivered took it
   // out of the pending set that start-up replay draws from (#973).
   if (context.depsFailure) parts.push(`\n${String(context.depsFailure)}`);
+  // A later install finished what the upgrade's could not (deps-retry.ts).
+  if (context.depsResolved) parts.push(String(context.depsResolved));
   if (context.summary) parts.push(`Changes: ${context.summary}`);
   if (context.justification) parts.push(`Why: ${context.justification}`);
   if (context.memory) parts.push(`Context: ${context.memory}`);

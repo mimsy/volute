@@ -274,7 +274,7 @@ describe("installDepsAndRestart commits what the install changed", () => {
         writeFileSync(join(dir, "package-lock.json"), '{"lockfileVersion":3,"from":"npm"}\n');
       };
       const h = harness({
-        install: (d, mind) => npmInstallAsMind(d, mind, [], run),
+        install: (d, mind) => npmInstallAsMind(d, mind, [], run, async () => true),
         commitDeps: commitDepsChanges,
       });
 
