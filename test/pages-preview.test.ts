@@ -22,6 +22,7 @@ import type { ChownExec, MindOwnership } from "../packages/extensions/pages/src/
 import {
   _resetNoBrowserAlertForTest,
   browserInstallCommand,
+  type LaunchTiming,
   NO_BROWSER_ALERT_KIND,
   noBrowserAlertText,
   noBrowserMindError,
@@ -774,7 +775,7 @@ describe("renderPreview lets timers run before the shot", () => {
         // whose timers never ran out. This stub never fetches.
         const stalls = warnings.filter((w) => w.includes("stalled after"));
         assert.equal(stalls.length, 2);
-        for (const w of stalls) assert.match(w, /the page server saw 0 request\(s\)/);
+        for (const w of stalls) assert.match(w, /the page server got no request from it/);
         // Before virtual time, a page holding a request open shot fine at load; it
         // must not now get nothing at all.
         assert.ok(!("error" in result), "error" in result ? result.error : "");
@@ -856,6 +857,7 @@ requestAnimationFrame(() => { ctx.fillStyle = "#f00"; ctx.fillRect(0, 0, 400, 30
     const warn = console.warn;
     console.warn = (...a: unknown[]) => warnings.push(a.map(String).join(" "));
     const started = Date.now();
+    const launches: LaunchTiming[] = [];
     let result: Awaited<ReturnType<typeof renderPreview>>;
     try {
       result = await renderPreview({
@@ -863,6 +865,7 @@ requestAnimationFrame(() => { ctx.fillStyle = "#f00"; ctx.fillRect(0, 0, 400, 30
         mindName: "testmind",
         ownership: NO_ISOLATION,
         file: "game.html",
+        onLaunch: (l) => launches.push(l),
       });
     } finally {
       console.warn = warn;
@@ -873,15 +876,21 @@ requestAnimationFrame(() => { ctx.fillStyle = "#f00"; ctx.fillRect(0, 0, 400, 30
     const diagnosis = [
       `browser: ${REAL_BROWSER} (${version})`,
       `render took ${Date.now() - started}ms`,
+      // Per launch: spawn → the page server's first request is browser startup;
+      // first request → exit is load, virtual time and the shot.
+      ...launches.map(
+        (l, i) =>
+          `launch ${i + 1} (${l.kind}): spawn→first request ${l.toFirstRequestMs ?? "never"}ms, ` +
+          `first request→exit ${l.afterFirstRequestMs ?? "-"}ms, total ${l.totalMs}ms, ` +
+          `${l.requests} request(s)`,
+      ),
       `result: ${JSON.stringify(result)}`,
       ...warnings,
     ].join("\n");
-    // On a pass too, not only in a failure message: a stall the retry recovered
-    // is the evidence of why the browser hangs, and a pass would otherwise drop it.
-    if (warnings.length > 0) {
-      for (const line of diagnosis.split("\n")) t.diagnostic(line);
-      console.log(`[pages-preview real-browser diagnostics]\n${diagnosis}`);
-    }
+    // Every run, pass or fail, stall or not: the slow tail is only readable as a
+    // distribution, and a pass would otherwise drop its half of it.
+    for (const line of diagnosis.split("\n")) t.diagnostic(line);
+    console.log(`[pages-preview real-browser diagnostics]\n${diagnosis}`);
     assert.ok(!("error" in result), diagnosis);
     const { default: sharp } = await import("sharp");
     const { data, info } = await sharp(result.pngPath)

@@ -286,6 +286,15 @@ function run(cmd: string, args: string[], timeoutMs: number): Promise<string> {
   });
 }
 
+/** Where one browser launch spent its time. `null` phases: the browser never asked for the page. */
+export type LaunchTiming = {
+  kind: "timers" | "at-load";
+  totalMs: number;
+  toFirstRequestMs: number | null;
+  afterFirstRequestMs: number | null;
+  requests: number;
+};
+
 export async function renderPreview(opts: {
   mindDir: string;
   mindName: string;
@@ -294,6 +303,8 @@ export async function renderPreview(opts: {
   exec?: ChownExec;
   /** Tell the host something only it can fix — the extension context's `alertHost`. */
   alertHost?: (kind: string, text: string) => Promise<void>;
+  /** Called after each browser launch with where its time went. Diagnostics only. */
+  onLaunch?: (timing: LaunchTiming) => void;
 }): Promise<
   | { pngPath: string; rel: string; ownershipWarning: string | null; note: string | null }
   | { error: string; ownershipWarning?: string | null }
@@ -485,38 +496,69 @@ export async function renderPreview(opts: {
     // still while a request is open, so a page holding one stalls every time. So:
     // one retry, then a shot at load — which is what such a page got before virtual
     // time existed — with a note that says what happened, not why.
+    const pageServer = server;
+    // One browser launch, timed in two phases: spawn to the page server's first
+    // request (browser startup), and first request to exit (load, virtual time,
+    // shot). Which phase a slow render spends its time in is what tells a slow
+    // host from a page whose virtual time drags.
+    const launch = async (
+      kind: LaunchTiming["kind"],
+      dir: string,
+      extra: string[],
+      limit: number,
+    ) => {
+      rmSync(stagedPng, { force: true });
+      const started = Date.now();
+      let error: unknown = null;
+      let stderr = "";
+      try {
+        stderr = await run(browser, args(dir, extra), limit);
+      } catch (err) {
+        error = err;
+        stderr = (err as { stderr?: string }).stderr ?? "";
+      }
+      const ended = Date.now();
+      const seen = pageServer.requestsSince(started);
+      const timing: LaunchTiming = {
+        kind,
+        totalMs: ended - started,
+        toFirstRequestMs: seen.firstAt === null ? null : seen.firstAt - started,
+        afterFirstRequestMs: seen.firstAt === null ? null : ended - seen.firstAt,
+        requests: seen.count,
+      };
+      opts.onLaunch?.(timing);
+      return { error, stderr, timing };
+    };
+
     let stalls = 0;
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      // A fresh profile and no leftover image per attempt: the stopped browser's
-      // lock may still be in its profile, and a shot it half-wrote must not pass
-      // for this one.
-      rmSync(stagedPng, { force: true });
-      const started = Date.now();
-      const requestsBefore = server.requests();
-      let stderr = "";
-      try {
-        stderr = await run(
-          browser,
-          args(`${userDataDir}-${attempt}`, ["--virtual-time-budget=5000"]),
-          RENDER_TIMEOUTS.timers,
-        );
-      } catch (err) {
-        lastError = err;
-        stderr = (err as { stderr?: string }).stderr ?? "";
-      }
+      // A fresh profile and no leftover image per attempt (launch removes it): the
+      // stopped browser's lock may still be in its profile, and a shot it
+      // half-wrote must not pass for this one.
+      const { error, stderr, timing } = await launch(
+        "timers",
+        `${userDataDir}-${attempt}`,
+        ["--virtual-time-budget=5000"],
+        RENDER_TIMEOUTS.timers,
+      );
+      lastError = error;
       const stalled =
-        (lastError as { killed?: boolean } | null)?.killed === true ||
-        Date.now() - started >= RENDER_TIMEOUTS.timers;
+        (error as { killed?: boolean } | null)?.killed === true ||
+        timing.totalMs >= RENDER_TIMEOUTS.timers;
       if (!stalled) break;
       lastError = null;
       stalls++;
       // For the host: without this, all a host sees is slow previews. The browser's
       // own last words are the only account of why.
+      const asked =
+        timing.toFirstRequestMs === null
+          ? "the page server got no request from it"
+          : `its first request reached the page server after ${timing.toFirstRequestMs}ms ` +
+            `(${timing.requests} request(s) in all)`;
       console.warn(
-        `[pages] virtual-time render of ${opts.file} stalled after ${Date.now() - started}ms ` +
-          `(${browser}, attempt ${attempt + 1}); the page server saw ` +
-          `${server.requests() - requestsBefore} request(s) from it; ` +
+        `[pages] virtual-time render of ${opts.file} stalled after ${timing.totalMs}ms ` +
+          `(${browser}, attempt ${attempt + 1}); ${asked}; ` +
           `${attempt === 0 ? "retrying" : "falling back to a shot at load"}. ` +
           `Browser stderr (tail):\n${stderr.slice(-2000)}`,
       );
@@ -524,17 +566,14 @@ export async function renderPreview(opts: {
     if (lastError) {
       failure = renderFailed(lastError);
     } else if (stalls === 2) {
-      rmSync(stagedPng, { force: true });
-      try {
-        await run(browser, args(`${userDataDir}-load`, []), RENDER_TIMEOUTS.atLoad);
+      const { error } = await launch("at-load", `${userDataDir}-load`, [], RENDER_TIMEOUTS.atLoad);
+      if (error) failure = renderFailed(error);
+      else
         note =
           "Running your page's timers didn't finish, so this was taken as the page " +
           "finished loading, before any of them ran — anything drawn after a delay " +
           "isn't in it. A request the page leaves open can cause that; so can the " +
           "browser on this host.";
-      } catch (err) {
-        failure = renderFailed(err);
-      }
     }
 
     if (!failure) {
