@@ -1006,8 +1006,9 @@ describe("pi recollection at seams", () => {
     const layout = makeMindDir();
     const archive = join(layout.sessionsDir, "archive");
     recollection = { entries: RECALL, delayMs: 300 };
-    // Big enough that a quarter of it (the recollection cap) holds the entry.
-    const mind = await newMind(layout, { maxContextTokens: 1000 });
+    // Big enough that a quarter of it (the recollection cap) holds the entry, and under
+    // the ~780-token prompt each turn reports, so both turns cross it.
+    const mind = await newMind(layout, { maxContextTokens: 500 });
 
     let seen = "";
     let archivedText = "";

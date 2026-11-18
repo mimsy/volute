@@ -411,7 +411,9 @@ export async function createMind(options: {
             session: session.name,
             // The delivery this prompt answers, so the notices it drains are its turn's.
             messageId: session.currentMessageId ?? session.messageIds[0],
-            prompt: event.prompt,
+            // Every run here starts from a prompt (nothing calls pi.sendMessage with
+            // triggerTurn), but since pi 1.2 the event type also covers custom-message runs.
+            prompt: event.messageType === "user" ? event.prompt : undefined,
           });
           if (result.additionalContext) {
             emit(session, {
