@@ -116,17 +116,9 @@ export function resolveBrowser(opts?: {
     return null;
   }
 
-  return findOnPath(opts?.pathCandidates ?? PATH_CANDIDATES, opts?.pathEnv, exists);
-}
-
-/** The first of `names` executable somewhere on PATH, `command -v` style, in `names` order. */
-function findOnPath(
-  names: string[],
-  pathEnv: string | undefined,
-  exists: (p: string) => boolean,
-): string | null {
-  const dirs = (pathEnv ?? process.env.PATH ?? "").split(delimiter).filter(Boolean);
-  for (const name of names) {
+  // Linux/other: walk PATH dirs looking for an executable, `command -v` style.
+  const dirs = (opts?.pathEnv ?? process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const name of opts?.pathCandidates ?? PATH_CANDIDATES) {
     for (const dir of dirs) {
       const full = join(dir, name);
       if (exists(full)) return full;
@@ -239,15 +231,6 @@ export function _resetNoBrowserAlertForTest(): void {
 }
 
 /**
- * Wall-clock limits per browser launch: up to two with virtual time, then one at
- * load — together the 30 s one render had before. A virtual-time render measured
- * 0.8–2.9 s on ordinary hosts and CI, and 6.8 s at worst with one CPU and four busy
- * loops beside it; 10 s clears that with room for a slower board, and a stall
- * costs 10 s instead of 20. Mutable only so tests need not wait them out.
- */
-export const RENDER_TIMEOUTS = { timers: 10_000, atLoad: 10_000 };
-
-/**
  * Per-invocation counter for temp-path uniqueness. process.pid is the daemon's
  * pid — constant across every preview — so two concurrent renders (two minds, or
  * one mind twice) would collide on the chromium user-data-dir singleton lock and
@@ -256,18 +239,12 @@ export const RENDER_TIMEOUTS = { timers: 10_000, atLoad: 10_000 };
  */
 let previewSeq = 0;
 
-/** Run the browser; resolves with its stderr, and a rejection carries it as `stderr`. */
-function run(cmd: string, args: string[], timeoutMs: number): Promise<string> {
+function run(cmd: string, args: string[], timeoutMs: number): Promise<void> {
   return new Promise((resolvePromise, reject) => {
-    execFile(
-      cmd,
-      args,
-      { timeout: timeoutMs, env: { ...process.env, HOME: "/tmp" } },
-      (err, _stdout, stderr) => {
-        if (err) reject(Object.assign(err, { stderr: String(stderr) }));
-        else resolvePromise(String(stderr));
-      },
-    );
+    execFile(cmd, args, { timeout: timeoutMs, env: { ...process.env, HOME: "/tmp" } }, (err) => {
+      if (err) reject(err);
+      else resolvePromise();
+    });
   });
 }
 
@@ -280,7 +257,7 @@ export async function renderPreview(opts: {
   /** Tell the host something only it can fix — the extension context's `alertHost`. */
   alertHost?: (kind: string, text: string) => Promise<void>;
 }): Promise<
-  | { pngPath: string; rel: string; ownershipWarning: string | null; note: string | null }
+  | { pngPath: string; rel: string; ownershipWarning: string | null }
   | { error: string; ownershipWarning?: string | null }
 > {
   const pagesRoot = resolve(opts.mindDir, "home", "pages");
@@ -382,7 +359,6 @@ export async function renderPreview(opts: {
   let pngPath: string | null = null;
   let wrotePng = false;
   let failure: string | null = null;
-  let note: string | null = null;
   try {
     // The URL chromium screenshots — a loopback origin rather than the file the
     // page lives in, so the server is the boundary for every load the page makes.
@@ -424,92 +400,33 @@ export async function renderPreview(opts: {
     rmSync(pngPath, { force: true });
     mkdirSync(stageDir, { mode: 0o700 });
 
-    const args = (userDataDir: string, extra: string[]) => [
-      "--headless=new",
-      "--no-sandbox",
-      // The render fetches over loopback now, so a proxy configured on the
-      // host becomes something between the browser and the page. Chrome
-      // bypasses localhost by default, but a host that has overridden that
-      // would get blank previews and no clue why.
-      "--no-proxy-server",
-      "--disable-gpu",
-      "--disable-dev-shm-usage",
-      "--hide-scrollbars",
-      "--force-color-profile=srgb",
-      `--user-data-dir=${userDataDir}`,
-      ...extra,
-      // Fixed viewport: the chromium CLI has no reliable full-page --screenshot
-      // flag, so we capture a generous window rather than risk a fragile
-      // scripted full-height capture. Tall pages are cut off below 1600px.
-      "--window-size=1280,1600",
-      `--screenshot=${stagedPng}`,
-      url,
-    ];
-    const renderFailed = (err: unknown) =>
-      `Could not render the page: ${(err as Error).message}. (The browser runs on the host's side; if this keeps happening, tell your host.)`;
-    // Without virtual time the shot is taken at the load event, a few dozen ms in,
-    // and a page that draws after a timer — a splash, an awaited delay, a game that
-    // starts on setTimeout — previews as an empty canvas. Virtual time runs the
-    // page's first seconds of timers before the shot, at no wall-clock cost while
-    // the page is idle. requestAnimationFrame is not driven by it: a loop that
-    // waits on many frames or on elapsed frame time still shoots early.
-    //
-    // A virtual-time render can stall: the browser is stopped at the limit with no
-    // shot. Chrome exits 0 on that SIGTERM, so "the whole limit used" is the sign as
-    // much as `killed` is — and whatever image it left is not trusted. Two causes are known and they want
-    // different answers. Some stalls are the browser's own and intermittent (CI's
-    // Chrome 157: 2.9 s on one run, a 20 s stall on the next, same commit), and a
-    // second try usually clears them. Others are the page's: virtual time stands
-    // still while a request is open, so a page holding one stalls every time. So:
-    // one retry, then a shot at load — which is what such a page got before virtual
-    // time existed — with a note that says what happened, not why.
-    let stalls = 0;
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      // A fresh profile and no leftover image per attempt: the stopped browser's
-      // lock may still be in its profile, and a shot it half-wrote must not pass
-      // for this one.
-      rmSync(stagedPng, { force: true });
-      const started = Date.now();
-      let stderr = "";
-      try {
-        stderr = await run(
-          browser,
-          args(`${userDataDir}-${attempt}`, ["--virtual-time-budget=5000"]),
-          RENDER_TIMEOUTS.timers,
-        );
-      } catch (err) {
-        lastError = err;
-        stderr = (err as { stderr?: string }).stderr ?? "";
-      }
-      const stalled =
-        (lastError as { killed?: boolean } | null)?.killed === true ||
-        Date.now() - started >= RENDER_TIMEOUTS.timers;
-      if (!stalled) break;
-      lastError = null;
-      stalls++;
-      // For the host: without this, all a host sees is slow previews. The browser's
-      // own last words are the only account of why.
-      console.warn(
-        `[pages] virtual-time render of ${opts.file} stalled after ${Date.now() - started}ms ` +
-          `(${browser}, attempt ${attempt + 1}); ${attempt === 0 ? "retrying" : "falling back to a shot at load"}. ` +
-          `Browser stderr (tail):\n${stderr.slice(-2000)}`,
+    try {
+      await run(
+        browser,
+        [
+          "--headless=new",
+          "--no-sandbox",
+          // The render fetches over loopback now, so a proxy configured on the
+          // host becomes something between the browser and the page. Chrome
+          // bypasses localhost by default, but a host that has overridden that
+          // would get blank previews and no clue why.
+          "--no-proxy-server",
+          "--disable-gpu",
+          "--disable-dev-shm-usage",
+          "--hide-scrollbars",
+          "--force-color-profile=srgb",
+          `--user-data-dir=${userDataDir}`,
+          // Fixed viewport: the chromium CLI has no reliable full-page --screenshot
+          // flag, so we capture a generous window rather than risk a fragile
+          // scripted full-height capture. Tall pages are cut off below 1600px.
+          "--window-size=1280,1600",
+          `--screenshot=${stagedPng}`,
+          url,
+        ],
+        30_000,
       );
-    }
-    if (lastError) {
-      failure = renderFailed(lastError);
-    } else if (stalls === 2) {
-      rmSync(stagedPng, { force: true });
-      try {
-        await run(browser, args(`${userDataDir}-load`, []), RENDER_TIMEOUTS.atLoad);
-        note =
-          "Running your page's timers didn't finish, so this was taken as the page " +
-          "finished loading, before any of them ran — anything drawn after a delay " +
-          "isn't in it. A request the page leaves open can cause that; so can the " +
-          "browser on this host.";
-      } catch (err) {
-        failure = renderFailed(err);
-      }
+    } catch (err) {
+      failure = `Could not render the page: ${(err as Error).message}. (The browser runs on the host's side; if this keeps happening, tell your host.)`;
     }
 
     if (!failure) {
@@ -538,9 +455,7 @@ export async function renderPreview(opts: {
     await server?.close();
     if (tempHtml) rmSync(tempHtml, { force: true });
     rmSync(stageDir, { recursive: true, force: true });
-    for (const suffix of ["0", "1", "load"]) {
-      rmSync(`${userDataDir}-${suffix}`, { recursive: true, force: true });
-    }
+    rmSync(userDataDir, { recursive: true, force: true });
   }
 
   // Before the error return, not after it. A render that failed is the run that
@@ -561,5 +476,5 @@ export async function renderPreview(opts: {
   // that the directory may not be its own.
   if (failure) return { error: failure, ownershipWarning };
   if (!pngPath) return { error: "The browser ran but produced no image.", ownershipWarning };
-  return { pngPath, rel: `home/.preview/${basename(pngPath)}`, ownershipWarning, note };
+  return { pngPath, rel: `home/.preview/${basename(pngPath)}`, ownershipWarning };
 }

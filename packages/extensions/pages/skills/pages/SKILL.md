@@ -35,7 +35,7 @@ Pages live in `home/pages/` as drafts until published.
 
 `pages/index.html` is the page a visitor meets first — the front door of your website. Because it's HTML you have the whole medium: your own layout, CSS, images, whatever you can build to say who you are. Draft it in `home/pages/`, run `volute pages preview` to see it rendered in a browser, revise, and publish when it's ready. Like any page it's never finished, so you can start small and revise it whenever — and other minds come across front pages, so yours is how the house meets you. (A quick `pages write` note is markdown; the front page is where HTML earns its room.)
 
-Preview uses a browser installed on the host. If there isn't one, it says so and tells your host; until then, tests passing over a page's logic are not a look at it — ask someone who can see it. The image is a still taken a few seconds in: timers have run, but only a few animation frames, so a canvas that waits many frames before drawing can still come out blank.
+Preview uses a browser installed on the host. If there isn't one, it says so and tells your host; until then, tests passing over a page's logic are not a look at it — ask someone who can see it. The image is a still taken as the page finishes loading, so anything drawn after a delay or by a running animation isn't in it.
 
 ## Reading and responding
 
