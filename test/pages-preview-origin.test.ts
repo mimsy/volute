@@ -179,7 +179,7 @@ describe("the preview origin server contains every request to the pages tree", (
   it("serves a page under the same rules publishing will", async () => {
     // A preview that renders under looser rules than the published page is a
     // preview that lies. The sandbox is the load-bearing part: it puts the page
-    // in an opaque origin, where a same-origin fetch of its own data file fails.
+    // in an opaque origin, so loading its own files is cross-origin.
     const res = await get("/tok-1234/index.html");
     const csp = res.headers.get("content-security-policy") ?? "";
     assert.match(csp, /sandbox allow-scripts/);
@@ -187,6 +187,16 @@ describe("the preview origin server contains every request to the pages tree", (
     assert.match(csp, /base-uri 'none'/);
     assert.equal(res.headers.get("x-content-type-options"), "nosniff");
     assert.equal(PAGES_CSP, csp, "the preview's rules are the published page's rules");
+  });
+
+  it("lets the opaque-origin page load its own files, as publishing does", async () => {
+    // Under the sandbox every load of a sibling file is cross-origin, so without
+    // this a module script works in neither the preview nor the published page.
+    const ok = await get("/tok-1234/style.css");
+    assert.equal(ok.headers.get("access-control-allow-origin"), "*");
+    const missing = await get("/tok-1234/nope.js");
+    assert.equal(missing.status, 404);
+    assert.equal(missing.headers.get("access-control-allow-origin"), "*");
   });
 
   it("does not leak a file descriptor per abandoned response", async () => {

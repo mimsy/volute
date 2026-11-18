@@ -7,9 +7,10 @@
  * the published page will look like, and it cannot do that if the same file
  * arrives with a different type or under different rules in each. A page that
  * previews green and publishes broken is the specific failure this prevents: the
- * sandbox below puts a page in an opaque origin, where a same-origin `fetch` of
- * its own data file fails. Without these headers on the preview, a mind would
- * only find that out after publishing.
+ * sandbox below puts a page in an opaque origin, so every request it makes for
+ * its own files — a module script, a `fetch` of its data — is cross-origin, and
+ * works only because of `PAGES_CORS_ORIGIN`. Without the same headers on the
+ * preview, a mind would only find out after publishing.
  */
 export const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -39,3 +40,19 @@ export const PAGES_CSP =
   "script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; " +
   "img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self' https:; " +
   "base-uri 'none'";
+
+/**
+ * `Access-Control-Allow-Origin` for everything a page can request. Under the
+ * sandbox a page's origin is `null`, so `<script type="module" src="core.js">`
+ * and `fetch("data.json")` are CORS requests for the page's own sibling files,
+ * and without this header Chromium refuses them and the page renders blank.
+ *
+ * `*` and not a reflected origin: it exposes nothing, because everything on the
+ * public route is already readable by anyone who can reach it — no auth, no
+ * cookies read, nothing that varies by viewer — and `*` refuses credentialed
+ * requests, so a page still cannot ride a viewer's session. It is the CORS layer
+ * only; the sandbox and its opaque origin are untouched. On the preview origin it
+ * lets another web origin read a draft too, but only one that already holds the
+ * per-render URL — and that URL was never a secret (see `preview-server.ts`).
+ */
+export const PAGES_CORS_ORIGIN = "*";

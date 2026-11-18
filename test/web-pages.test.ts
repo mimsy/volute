@@ -534,6 +534,36 @@ describe("XSS prevention", () => {
   });
 });
 
+describe("a sandboxed page can load its own files", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  // The sandbox gives a page the origin `null`, so its module scripts and its
+  // `fetch` of its own data are CORS requests. Without this header Chromium
+  // refuses them and the page renders blank (minds on bardo, Nov 2026).
+  it("sends Access-Control-Allow-Origin: * on pages, assets, redirects and 404s", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    for (const [path, status] of [
+      ["/public/test-mind/index.html", 200],
+      ["/public/test-mind/app.js", 200],
+      ["/public/test-mind/hello.md", 200],
+      // A module import follows the redirect under CORS, so the 301 needs it too.
+      ["/public/_system/lib.js", 301],
+      ["/public/test-mind/missing.js", 404],
+    ] as const) {
+      const res = await publicApp.request(path);
+      assert.equal(res.status, status, path);
+      assert.equal(res.headers.get("access-control-allow-origin"), "*", path);
+      // `*` and never credentials: a page must not ride a viewer's session.
+      assert.equal(res.headers.get("access-control-allow-credentials"), null, path);
+    }
+  });
+});
+
 describe("nav shim injection", () => {
   beforeEach(cleanup);
   afterEach(cleanup);

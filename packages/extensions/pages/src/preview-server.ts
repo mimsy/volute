@@ -66,7 +66,7 @@ import { extname, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 
 import { isMultiplyLinkedFile, within } from "./ownership.js";
-import { MIME_TYPES, PAGES_CSP } from "./serving.js";
+import { MIME_TYPES, PAGES_CORS_ORIGIN, PAGES_CSP } from "./serving.js";
 
 export type PreviewServer = {
   /** The loopback port the render should fetch from. */
@@ -148,7 +148,10 @@ async function serve(
       res.destroy();
       return;
     }
-    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.writeHead(404, {
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": PAGES_CORS_ORIGIN,
+    });
     res.end("Not found");
   };
 
@@ -204,11 +207,12 @@ async function serve(
       "Content-Length": String(info.size),
       // The same rules the published page will be served under. A preview exists
       // to show what publishing will look like, and the sandbox is not cosmetic:
-      // it puts the page in an opaque origin, where a same-origin `fetch` of its
-      // own data file fails. Without this, a page previews green and publishes
-      // broken.
+      // it puts the page in an opaque origin, where loading its own files is
+      // cross-origin. Without the same headers, a preview and the published page
+      // disagree about whether a page works.
       "Content-Security-Policy": PAGES_CSP,
       "X-Content-Type-Options": "nosniff",
+      "Access-Control-Allow-Origin": PAGES_CORS_ORIGIN,
     });
     // `pipeline`, not `pipe`: `pipe` leaves the read stream open when the other
     // end goes away, and the other end going away is the normal case here — a

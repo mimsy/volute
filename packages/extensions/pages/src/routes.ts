@@ -9,7 +9,7 @@ import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markd
 import { resolveMentions } from "./mentions.js";
 import { isMultiplyLinkedFile, within } from "./ownership.js";
 import { defaultPromotionTitle, writeQuickPage } from "./publish.js";
-import { MIME_TYPES, PAGES_CSP } from "./serving.js";
+import { MIME_TYPES, PAGES_CORS_ORIGIN, PAGES_CSP } from "./serving.js";
 import {
   addComment,
   deleteComment,
@@ -349,6 +349,10 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
       await next();
       c.res.headers.set("Content-Security-Policy", PAGES_CSP);
       c.res.headers.set("X-Content-Type-Options", "nosniff");
+      // On every response, redirects and 404s included: a module import follows
+      // the `_system` → `_commons` 301 under CORS, and a missing file should fail
+      // as "not found", not as a CORS error that hides the real cause.
+      c.res.headers.set("Access-Control-Allow-Origin", PAGES_CORS_ORIGIN);
     })
     .get("/:name/*", async (c) => {
       const name = c.req.param("name");
