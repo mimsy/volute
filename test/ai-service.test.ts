@@ -199,7 +199,7 @@ describe("missingCredentialWarning", () => {
 });
 
 describe("custom models", () => {
-  it("buildCustomModel clones a sibling: correct api, nonzero caps, zeroed cost", () => {
+  it("buildCustomModel clones a sibling: correct api, nonzero caps, nonzero rates", () => {
     const model = buildCustomModel("anthropic", "claude-future-1");
     assert.ok(model);
     assert.equal(model.id, "claude-future-1");
@@ -208,17 +208,19 @@ describe("custom models", () => {
     assert.equal(model.api, "anthropic-messages");
     assert.ok(model.maxTokens > 0);
     assert.ok(model.contextWindow > 0);
-    assert.equal(model.cost.input, 0);
-    assert.equal(model.cost.output, 0);
+    // Priced, so a turn on it counts against the spend cap.
+    assert.ok(model.cost.input > 0);
+    assert.ok(model.cost.output > 0);
   });
 
-  it("buildCustomModel prefers the family (longest-prefix) sibling", () => {
+  it("buildCustomModel prefers the family (longest-prefix) sibling, rates included", () => {
     const opus = getBuiltinModels("anthropic").find((m) => m.id.includes("opus"));
     assert.ok(opus, "expected an anthropic opus model in the catalog");
     // Sharing opus's full id as a prefix guarantees it's the longest-prefix sibling.
     const model = buildCustomModel("anthropic", `${opus.id}-next`);
     assert.ok(model);
     assert.equal(model.contextWindow, opus.contextWindow);
+    assert.deepEqual(model.cost, opus.cost);
   });
 
   it("buildCustomModel falls back to the largest-context sibling when no family overlaps", () => {

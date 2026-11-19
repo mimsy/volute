@@ -2,7 +2,7 @@ import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:chil
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
-import { getAiConfig, resolveApiKey } from "../ai-service.js";
+import { getAiConfig, getCustomModels, resolveApiKey } from "../ai-service.js";
 import { deliverEvent, MIND_LEVEL_THREAD, recordNotice } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
 import { getSystemName, readGlobalConfig } from "../config/setup.js";
@@ -30,6 +30,7 @@ import { prepareMindTmp } from "../mind/tmp-reaper.js";
 import { sandboxedToolchainBin } from "../mind/toolchain.js";
 import { syncMindZshenv, wantsDaemonZshenv } from "../mind/zshenv.js";
 import { getPrompt } from "../prompts.js";
+import { refuseUnresolvedPiModel } from "../unresolved-models.js";
 import { exec } from "../util/exec.js";
 import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
@@ -141,6 +142,24 @@ export async function wrapMindServer(
 }
 
 /**
+ * A pi mind's configured model, or undefined when its config has none or can't be read —
+ * the template then runs its own default, which resolves. Read as root through the
+ * containment helper: no link or FIFO the mind planted there is followed.
+ */
+async function readPiModel(
+  dir: string,
+  owner: Parameters<typeof readMindFile>[2]["owner"],
+): Promise<string | undefined> {
+  try {
+    const file = await readMindFile(dir, "home/.config/config.json", { owner });
+    const model: unknown = file ? JSON.parse(file.text).model : undefined;
+    return typeof model === "string" && model ? model : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The full environment a mind process is spawned with.
  *
  * Extracted from `_startMind` so the *wiring* is testable, not just the pieces.
@@ -188,6 +207,10 @@ export function composeMindEnv(opts: {
     // (#368). Always set, "none" included: after loadMergedEnv, so a value the
     // mind planted in its own env.json can't describe a cage it isn't in.
     VOLUTE_ISOLATION_MODE: isolationMode,
+    // The custom models the host registered, as `provider:id`: a pi mind runs one of these
+    // (priced at its cloned sibling's rates) and refuses any other id the catalog lacks.
+    // After loadMergedEnv, so a mind can't widen it from its own env.json.
+    VOLUTE_CUSTOM_MODELS: JSON.stringify(getCustomModels().map((c) => `${c.provider}:${c.id}`)),
     ...mindTmpEnv(dir),
     PATH: `${mindLocalBin}:${currentPath}`,
     // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
@@ -468,6 +491,14 @@ export class MindManager {
     // Stop an orphan server a previous daemon left running.
     await this.killStaleMind(name, port);
     const owner = await mindFileOwner(baseName);
+
+    // A pi mind whose model resolves to nothing would run unpriced, outside its spend cap,
+    // so its template refuses it — by dying at startup, which crash recovery would read as
+    // a crash loop. Refuse here instead, where the refusal can be said to the mind and host.
+    if (target.template === "pi") {
+      const model = await readPiModel(dir, owner);
+      if (model) await refuseUnresolvedPiModel(name, model);
+    }
 
     try {
       const res = await fetch(`http://127.0.0.1:${port}/health`, {

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  addCustomModel,
+  buildCustomModel,
+  removeCustomModel,
+} from "../packages/daemon/src/lib/ai-service.js";
+import {
   costOf,
   lookupRates,
   parseModelRef,
@@ -76,6 +81,27 @@ describe("lookupRates", () => {
       lookupRates({ provider: "anthropic", id: "claude-opus-4-6[1m]" }),
       lookupRates({ provider: "anthropic", id: "claude-opus-4-6" }),
     );
+  });
+
+  it("prices a registered custom model at the rates of the sibling it is cloned from", () => {
+    // Unpriced, its turns would never reach the spend cap.
+    const ref = { provider: "anthropic", id: "claude-future-7" };
+    assert.equal(lookupRates(ref), null, "unregistered, it has no price");
+    addCustomModel("anthropic", "claude-future-7");
+    try {
+      const rates = lookupRates(ref);
+      assert.ok(rates && rates.input > 0 && rates.output > 0);
+      const cost = buildCustomModel("anthropic", "claude-future-7")?.cost;
+      assert.ok(cost);
+      assert.deepEqual(rates, {
+        input: cost.input,
+        output: cost.output,
+        cacheRead: cost.cacheRead,
+        cacheWrite: cost.cacheWrite,
+      });
+    } finally {
+      removeCustomModel("anthropic", "claude-future-7");
+    }
   });
 
   it("does not match across a version separator", () => {

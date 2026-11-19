@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModel, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-import { getAiConfig, getCustomModels } from "../ai-service.js";
+import { buildCustomModel, getAiConfig, getCustomModels } from "../ai-service.js";
 import { findMind, mindDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 
@@ -109,18 +109,24 @@ export function sameModel(id: string, base: string): boolean {
 /**
  * The catalog rates for a model, or null when the model is unknown or unpriced.
  *
+ * A model the host registered as custom is priced at the rates of the catalog model it is
+ * cloned from (`buildCustomModel`): approximate, but metered — a null here leaves every turn
+ * on it outside the spend cap.
+ *
  * Providers hand back dated ids (`claude-sonnet-4-5-20250929`) that the catalog may not
  * carry verbatim, so an exact miss falls back to the longest catalog id the given id
  * extends at a `-` boundary — `claude-opus-4-6-20260115` resolves to `claude-opus-4-6`,
  * while `gpt-5.9` does *not* silently resolve to `gpt-5`.
  *
- * "Unpriced" is `input === 0 && output === 0` together — what `buildCustomModel` produces
- * for a host-added model. A single zero field is not enough: `openai/gpt-4` legitimately
- * has `cacheRead: 0`.
+ * "Unpriced" is `input === 0 && output === 0` together — a catalog entry with no rates. A
+ * single zero field is not enough: `openai/gpt-4` legitimately has `cacheRead: 0`.
  */
 export function lookupRates(ref: ModelRef): CostRates | null {
   if (!ref.provider) return null;
   let model = getBuiltinModel(ref.provider as never, ref.id as never) as Model<Api> | undefined;
+  if (!model && getCustomModels().some((c) => c.provider === ref.provider && c.id === ref.id)) {
+    model = buildCustomModel(ref.provider, ref.id);
+  }
   if (!model) {
     let best: Model<Api> | undefined;
     for (const candidate of getBuiltinModels(ref.provider as never) as Model<Api>[]) {

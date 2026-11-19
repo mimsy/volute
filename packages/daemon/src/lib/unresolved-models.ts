@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
-import { findModel, getEnabledModels } from "./ai-service.js";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
+import { findModel, getCustomModels, getEnabledModels } from "./ai-service.js";
 import { alertHost } from "./chat/system-events.js";
 import { getSpiritName } from "./config/setup.js";
 import { voluteSystemDir } from "./mind/registry.js";
@@ -29,6 +30,20 @@ export function findUnresolvedEnabledModels(): string[] {
   return getEnabledModels().filter((id) => !findModel(id));
 }
 
+/** pi-ai 1.0.3 renamed this provider to `azure`; ids and credentials under it no longer resolve. */
+const RENAMED_AZURE_PROVIDER = "azure-openai-responses";
+
+/** What a host with ids under the provider pi-ai renamed has to do. Empty when none apply. */
+function azureRenameNote(ids: string[]): string {
+  if (!ids.some((id) => id.startsWith(`${RENAMED_AZURE_PROVIDER}:`))) return "";
+  return (
+    `\n\nThe ${RENAMED_AZURE_PROVIDER} provider was renamed \`azure\` (the model library ` +
+    `Volute uses changed its name, so ids and credentials under the old name no longer ` +
+    `resolve). Nothing was carried over: re-add the Azure credentials under \`azure\` in ` +
+    `Settings → AI, then enable the models again from there, as \`azure:<model>\`.`
+  );
+}
+
 export function unresolvedModelsMessage(ids: string[]): string {
   const list = ids.map((id) => `- ${id}`).join("\n");
   return (
@@ -37,9 +52,71 @@ export function unresolvedModelsMessage(ids: string[]): string {
     `picked, and they no longer appear in the dashboard's model list.\n\n${list}\n\n` +
     `Nothing has been changed. The next time the enabled models are saved from ` +
     `Settings → AI, these entries drop out of the list. If a provider still serves one of ` +
-    `them, it can be added back in Settings as a custom model by its exact id — but a ` +
-    `custom model has no catalog rates, so its turns are recorded without a cost.`
+    `them, it can be added back in Settings as a custom model by its exact id; it is then ` +
+    `priced at the rates of the catalog model closest to it, an approximation.` +
+    azureRenameNote(ids)
   );
+}
+
+/**
+ * Whether a pi mind's `provider:id` model names something it can run on: a catalog model,
+ * or one the host registered as custom. Mirrors the pi template's `resolveModel`, which
+ * refuses anything else — a model with no known price would run outside the spend cap.
+ */
+export function piModelResolves(model: string): boolean {
+  const colon = model.indexOf(":");
+  if (colon <= 0) return false;
+  const provider = model.slice(0, colon);
+  const id = model.slice(colon + 1);
+  if (getBuiltinModel(provider as never, id as never)) return true;
+  return getCustomModels().some((c) => c.provider === provider && c.id === id);
+}
+
+/** The alert kind for a pi mind refused a start because its model resolves to nothing. */
+export const MIND_MODEL_UNRESOLVED_ALERT_KIND = "mind_model_unresolved";
+
+/** What a refused pi mind is told — addressed to the mind, who lives with the choice. */
+export function mindModelUnresolvedMessage(model: string): string {
+  return (
+    `You were not started, because your model, \`${model}\`, is neither in Volute's model ` +
+    `catalog nor registered on this system as a custom model. Running it would leave your ` +
+    `turns without a price, so they would never count against your spend cap.\n\n` +
+    `To start again, your \`model\` in home/.config/config.json needs to name one that ` +
+    `resolves: the host can pick one in the dashboard (your Settings → Model), and ` +
+    `\`volute config models\` lists the models enabled here. Or, if the provider still ` +
+    `serves \`${model}\`, the host can register it as a custom model in Settings → AI; it is ` +
+    `then priced at the rates of the catalog model closest to it.` +
+    azureRenameNote([model])
+  );
+}
+
+/** Minds already alerted this daemon run, keyed `mind\0model`, so a retry doesn't repeat it. */
+const refusedThisRun = new Set<string>();
+
+/** Thrown by {@link refuseUnresolvedPiModel}; its message is for whoever asked for the start. */
+export class UnresolvedMindModelError extends Error {}
+
+/**
+ * Refuse to start a pi mind whose configured model resolves to nothing, before it is spawned.
+ *
+ * The template refuses too, but only by dying at startup, which crash recovery reads as a
+ * crash loop and nobody hears why. Checking here lets the refusal be said: once per mind and
+ * model per daemon run, through `alertHost` — to the mind (queued until it runs again), the
+ * spirit (who can relay it to the host) and the dashboard.
+ */
+export async function refuseUnresolvedPiModel(mind: string, model: string): Promise<void> {
+  if (piModelResolves(model)) return;
+  const refusal =
+    `Not starting ${mind}: its model "${model}" is neither in the model catalog nor a ` +
+    `registered custom model, so its turns would go unpriced. Set its model in the mind's ` +
+    `Settings → Model, or register the id as a custom model in Settings → AI.`;
+  ulog.warn(refusal, { mind, model });
+  const key = `${mind}\0${model}`;
+  if (!refusedThisRun.has(key)) {
+    refusedThisRun.add(key);
+    await alertHost(mind, MIND_MODEL_UNRESOLVED_ALERT_KIND, mindModelUnresolvedMessage(model));
+  }
+  throw new UnresolvedMindModelError(refusal);
 }
 
 /**

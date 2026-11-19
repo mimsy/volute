@@ -500,8 +500,10 @@ function pickSibling(provider: string, id: string): Model<Api> | undefined {
 
 /**
  * Build a usable Model for a custom id by cloning a sibling built-in model of
- * the same provider (inherits api/baseUrl/compat/caps) and overriding id/name.
- * Cost is zeroed since we don't know the real pricing. Returns undefined when
+ * the same provider (inherits api/baseUrl/compat/caps and its rates) and
+ * overriding id/name. The rates are the sibling's, not the custom model's own,
+ * which the catalog doesn't know: an approximate price keeps the turn metered,
+ * where a zero would leave it outside every spend cap. Returns undefined when
  * the provider has no built-in template.
  */
 export function buildCustomModel(
@@ -511,12 +513,7 @@ export function buildCustomModel(
 ): Model<Api> | undefined {
   const sibling = pickSibling(provider, id);
   if (!sibling) return undefined;
-  return {
-    ...sibling,
-    id,
-    name: name ?? id,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  };
+  return { ...sibling, id, name: name ?? id };
 }
 
 /**
@@ -749,8 +746,9 @@ export type CompletionOptions = {
   /** Abort the request after this long; the completion then counts as failed. */
   timeoutMs?: number;
   /**
-   * Called with a successful completion's cost in USD, from the catalog's rates — null when the
-   * model is unpriced (a host-added custom model), where a guessed number would be worse than none.
+   * Called with a successful completion's cost in USD, from the catalog's rates (a host-added
+   * custom model's are those of the catalog model it was cloned from) — null when the model is
+   * unpriced in the catalog itself.
    */
   onCost?: (costUsd: number | null) => void;
 };
