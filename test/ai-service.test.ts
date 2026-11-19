@@ -199,7 +199,7 @@ describe("missingCredentialWarning", () => {
 });
 
 describe("custom models", () => {
-  it("buildCustomModel clones a sibling: correct api, nonzero caps, zeroed cost", () => {
+  it("buildCustomModel clones a sibling: correct api, nonzero caps, nonzero rates", () => {
     const model = buildCustomModel("anthropic", "claude-future-1");
     assert.ok(model);
     assert.equal(model.id, "claude-future-1");
@@ -208,17 +208,19 @@ describe("custom models", () => {
     assert.equal(model.api, "anthropic-messages");
     assert.ok(model.maxTokens > 0);
     assert.ok(model.contextWindow > 0);
-    assert.equal(model.cost.input, 0);
-    assert.equal(model.cost.output, 0);
+    // Priced, so a turn on it counts against the spend cap.
+    assert.ok(model.cost.input > 0);
+    assert.ok(model.cost.output > 0);
   });
 
-  it("buildCustomModel prefers the family (longest-prefix) sibling", () => {
+  it("buildCustomModel prefers the family (longest-prefix) sibling, rates included", () => {
     const opus = getBuiltinModels("anthropic").find((m) => m.id.includes("opus"));
     assert.ok(opus, "expected an anthropic opus model in the catalog");
     // Sharing opus's full id as a prefix guarantees it's the longest-prefix sibling.
     const model = buildCustomModel("anthropic", `${opus.id}-next`);
     assert.ok(model);
     assert.equal(model.contextWindow, opus.contextWindow);
+    assert.deepEqual(model.cost, opus.cost);
   });
 
   it("buildCustomModel falls back to the largest-context sibling when no family overlaps", () => {
@@ -318,19 +320,19 @@ describe("custom models", () => {
 describe("findModel provider-qualified resolution", () => {
   it("resolves a provider:model id within that provider only", () => {
     removeAiConfig();
-    // gpt-5.5 is served by several providers; the prefix disambiguates.
-    const codex = findModel("openai-codex:gpt-5.5");
-    assert.ok(codex, "expected openai-codex:gpt-5.5 to resolve");
+    // gpt-6-luna is served by several providers; the prefix disambiguates.
+    const codex = findModel("openai-codex:gpt-6-luna");
+    assert.ok(codex, "expected openai-codex:gpt-6-luna to resolve");
     assert.equal(codex.provider, "openai-codex");
 
-    const copilot = findModel("github-copilot:gpt-5.5");
-    assert.ok(copilot, "expected github-copilot:gpt-5.5 to resolve");
+    const copilot = findModel("github-copilot:gpt-6-luna");
+    assert.ok(copilot, "expected github-copilot:gpt-6-luna to resolve");
     assert.equal(copilot.provider, "github-copilot");
   });
 
   it("returns undefined when the provider does not serve the model", () => {
     removeAiConfig();
-    assert.equal(findModel("anthropic:gpt-5.5"), undefined);
+    assert.equal(findModel("anthropic:gpt-6-luna"), undefined);
   });
 
   it("resolves a provider:model custom id within that provider", () => {
@@ -464,9 +466,9 @@ describe("openai-codex completions reach the endpoint its credential works on (#
     saveProviderConfig("openai-codex", {
       oauth: { access, refresh: "r", expires: Date.now() + 3_600_000 },
     });
-    setEnabledModels(["openai-codex:gpt-5.5"]);
+    setEnabledModels(["openai-codex:gpt-6-luna"]);
     try {
-      const { outcome, requests } = await complete("openai-codex:gpt-5.5");
+      const { outcome, requests } = await complete("openai-codex:gpt-6-luna");
       assert.deepEqual(outcome, { status: "ok", text: "in my voice" });
       const req = requests.at(-1)!;
       assert.match(req.url, /^https:\/\/chatgpt\.com\/backend-api\//);
@@ -499,7 +501,7 @@ describe("openai-codex completions reach the endpoint its credential works on (#
     }) as typeof fetch;
     (globalThis as { WebSocket?: unknown }).WebSocket = undefined;
     try {
-      assert.equal(await aiComplete("system", "user", "openai-codex:gpt-5.5"), "in my voice");
+      assert.equal(await aiComplete("system", "user", "openai-codex:gpt-6-luna"), "in my voice");
       assert.equal(tokenRequests.length, 1, `token requests: ${tokenRequests.join(", ")}`);
       assert.deepEqual(codexAuth, [`Bearer ${access}`]);
       assert.equal(getAiConfig()?.providers["openai-codex"]?.oauth?.refresh, "r");
@@ -515,9 +517,9 @@ describe("openai-codex completions reach the endpoint its credential works on (#
     // request, so the completion would fail on every summary.
     removeAiConfig();
     saveProviderConfig("openai-codex", { apiKey: "sk-codex-test" });
-    setEnabledModels(["openai-codex:gpt-5.5"]);
+    setEnabledModels(["openai-codex:gpt-6-luna"]);
     try {
-      const { outcome, requests } = await complete("openai-codex:gpt-5.5");
+      const { outcome, requests } = await complete("openai-codex:gpt-6-luna");
       assert.deepEqual(outcome, { status: "ok", text: "in my voice" });
       const req = requests.at(-1)!;
       assert.match(req.url, /^https:\/\/api\.openai\.com\/v1\/responses/);

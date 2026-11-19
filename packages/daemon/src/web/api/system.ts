@@ -431,8 +431,8 @@ const app = new Hono<AuthEnv>()
           provider: m.provider,
           contextWindow: m.contextWindow,
           maxTokens: m.maxTokens,
-          // Token rates per model. Custom models carry zeroed cost
-          // (buildCustomModel has no catalog rates), so 0 here means "unknown", not "free".
+          // Token rates per model. A custom model carries the rates of the catalog model it
+          // was cloned from (buildCustomModel); 0 here means "unpriced", not "free".
           inputCost: m.cost?.input ?? 0,
           outputCost: m.cost?.output ?? 0,
           enabled: enabled.has(qualifiedId),

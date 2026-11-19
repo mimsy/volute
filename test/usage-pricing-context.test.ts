@@ -103,14 +103,14 @@ describe("mindPricingContext: a variant inherits its parent's template", () => {
 
 describe("resolveModelAlias", () => {
   it("resolves an SDK alias to the newest catalog model in that family", () => {
-    assert.equal(resolveModelAlias("haiku"), "anthropic:claude-haiku-4-5");
-    assert.equal(resolveModelAlias("anthropic:sonnet"), "anthropic:claude-sonnet-5");
+    assert.equal(resolveModelAlias("haiku"), "anthropic:claude-haiku-5-5");
+    assert.equal(resolveModelAlias("anthropic:sonnet"), "anthropic:claude-sonnet-5-5");
   });
 
   it("orders by version, not catalog order or string order", () => {
     // The catalog carries claude-opus-4-5 … 4-8, claude-opus-5 and claude-opus-5-5: major, then minor.
     assert.equal(resolveModelAlias("opus"), "anthropic:claude-opus-5-5");
-    assert.equal(resolveModelAlias("fable"), "anthropic:claude-fable-5-1");
+    assert.equal(resolveModelAlias("fable"), "anthropic:claude-fable-5-2");
   });
 
   it("counts the host's custom models, so a model newer than the catalog wins", () => {
@@ -131,7 +131,7 @@ describe("resolveModelAlias", () => {
   it("mindModelId resolves a mind configured with an alias", async () => {
     await addMind("pc-alias", 4805, undefined, "claude");
     writeConfig(mindDir("pc-alias"), "haiku");
-    assert.equal(await mindModelId("pc-alias"), "anthropic:claude-haiku-4-5");
+    assert.equal(await mindModelId("pc-alias"), "anthropic:claude-haiku-5-5");
   });
 });
 

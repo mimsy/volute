@@ -516,3 +516,43 @@ describe("MindManager stale PID record (#1366)", () => {
     assert.equal(isOurMindServer(PORT, rec, ident(serverArgv(), "4242", null)), true);
   });
 });
+
+describe("MindManager refuses a pi mind whose model resolves to nothing", () => {
+  const freshName = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
+
+  async function piMind(model: string) {
+    const name = freshName("pimodel");
+    await addMind(name, 4995, undefined, "pi");
+    // No src/server.ts: a start that gets past the check exits at once.
+    mkdirSync(resolve(mindDir(name), "home/.config"), { recursive: true });
+    writeFileSync(resolve(mindDir(name), "home/.config/config.json"), JSON.stringify({ model }));
+    const mgr = new MindManager() as AnyMgr;
+    const swept: string[] = [];
+    mgr.sweepMindUser = async (n: string) => swept.push(n);
+    mgr.processIdentity = async () => null;
+    return { name, mgr, swept };
+  }
+
+  it("before anything is spawned, saying what to change", async () => {
+    // pi-ai 1.x dropped gpt-5.5 from openai-codex, and it isn't a registered custom model.
+    const { name, mgr, swept } = await piMind("openai-codex:gpt-5.5");
+    try {
+      await assert.rejects(mgr.startMind(name), (err: Error) =>
+        err.message.startsWith(`Not starting ${name}: its model "openai-codex:gpt-5.5"`),
+      );
+      assert.equal(mgr.minds.has(name), false);
+      assert.deepEqual(swept, [], "refused before the spawn path began");
+    } finally {
+      await removeMind(name);
+    }
+  });
+
+  it("lets a model that resolves through to the spawn", async () => {
+    const { name, mgr } = await piMind("anthropic:claude-opus-5");
+    try {
+      await assert.rejects(mgr.startMind(name, { healthTimeoutMs: 2000 }), /exited with code/);
+    } finally {
+      await removeMind(name);
+    }
+  });
+});

@@ -42,7 +42,7 @@ import {
 } from "./lib/pi-session-seed.js";
 import { postToolUseInput } from "./lib/post-tool-use-input.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
-import { resolveModel } from "./lib/resolve-model.js";
+import { registeredCustomModels, resolveModel } from "./lib/resolve-model.js";
 import { buildSeededNote, formatGap, type SeedCause } from "./lib/seed-note.js";
 import { createSessionBashTool } from "./lib/session-bash.js";
 import {
@@ -241,7 +241,9 @@ export async function createMind(options: {
   }
 
   // Shared setup (created once)
-  const modelStr = options.model || process.env.PI_MODEL || "anthropic:claude-sonnet-4-20250514";
+  // The fallback is the model the template ships in home/.config/config.json, which the
+  // daemon also assumes when it prices a pi mind whose config it can't read.
+  const modelStr = options.model || process.env.PI_MODEL || "openrouter:moonshotai/kimi-k2.5";
   // ModelRuntime is the canonical model/auth object since pi-coding-agent 0.84;
   // it owns the credential store that AuthStorage used to be. ModelRegistry is now
   // a thin synchronous facade over it, kept here for the find() lookup below.
@@ -255,7 +257,9 @@ export async function createMind(options: {
   // Request for Copilot). Fall back to resolveModel() for ids the registry doesn't
   // carry (e.g. an admin-registered custom id not yet in the built-in catalog).
   const [modelProvider, ...modelRest] = modelStr.split(":");
-  const model = modelRegistry.find(modelProvider, modelRest.join(":")) ?? resolveModel(modelStr);
+  const model =
+    modelRegistry.find(modelProvider, modelRest.join(":")) ??
+    resolveModel(modelStr, registeredCustomModels());
 
   // The daemon centrally refreshes the system OAuth token and rewrites auth.json,
   // and a running mind adopts it without a restart. Up to pi-coding-agent 0.80
@@ -411,7 +415,16 @@ export async function createMind(options: {
             session: session.name,
             // The delivery this prompt answers, so the notices it drains are its turn's.
             messageId: session.currentMessageId ?? session.messageIds[0],
-            prompt: event.prompt,
+            // Since pi 1.2 a run can also start from a custom message (pi.sendMessage with
+            // triggerTurn); its text is that run's prompt.
+            prompt:
+              event.messageType === "user"
+                ? event.prompt
+                : typeof event.message.content === "string"
+                  ? event.message.content
+                  : event.message.content
+                      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                      .join("\n"),
           });
           if (result.additionalContext) {
             emit(session, {

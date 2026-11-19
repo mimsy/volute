@@ -12,7 +12,7 @@ import { lookupRates } from "../packages/daemon/src/lib/daemon/usage-pricing.js"
 // lockfile kept CI on a working version. Global installs ignore our lockfile,
 // so the declared range is the only thing protecting users here.
 //
-// We are past that break now: the pin is 0.87.1 and Volute uses the auth API that
+// We are past that break now: Volute uses the auth API that
 // replaced the registry — per-provider `provider.auth.oauth` (login/refresh/toAuth)
 // reached via `builtinProviders()`. Nothing imports `/oauth` at runtime any more,
 // which is why the assertions below check the new surface.
@@ -60,6 +60,27 @@ describe("pi-ai dependency pin", () => {
       tpl.dependencies["@earendil-works/pi-coding-agent"],
       root.devDependencies["@earendil-works/pi-coding-agent"],
     );
+  });
+
+  it("pins typebox to the exact version pi-coding-agent itself pins", () => {
+    // pi-ai 1.5 stopped re-exporting TypeBox, so the pi template imports it directly for
+    // its subagent tool schema (and the root declares it because tests import template
+    // source). A version apart from pi-coding-agent's own is a second TypeBox copy: the
+    // schema built by one, the tool machinery running the other.
+    const root = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    const tpl = JSON.parse(
+      readFileSync(new URL("../templates/pi/package.json", import.meta.url), "utf8"),
+    );
+    const agent = JSON.parse(
+      readFileSync(
+        new URL("../node_modules/@earendil-works/pi-coding-agent/package.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    const pinned = agent.dependencies.typebox;
+    assert.ok(pinned, "pi-coding-agent no longer depends on typebox; revisit this pin");
+    assert.equal(tpl.dependencies.typebox, pinned, "the pi template's typebox");
+    assert.equal(root.devDependencies.typebox, pinned, "the root's typebox");
   });
 
   it("resolves the installed pi-ai to a build carrying the OAuth auth surface", () => {

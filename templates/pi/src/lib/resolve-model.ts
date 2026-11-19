@@ -9,10 +9,11 @@ function sharedPrefixLength(a: string, b: string): number {
 
 /**
  * Build a usable model for a custom id not in the built-in catalog by cloning a
- * sibling built-in model of the same provider (inherits api/baseUrl/compat/caps)
- * and overriding id/name. Picks the sibling sharing the longest id prefix (same
- * family), breaking ties toward the largest context window. Returns undefined
- * when the provider has no built-in models at all.
+ * sibling built-in model of the same provider (inherits api/baseUrl/compat/caps and
+ * its rates, so the custom model is priced approximately rather than not at all) and
+ * overriding id/name. Picks the sibling sharing the longest id prefix (same family),
+ * breaking ties toward the largest context window. Returns undefined when the
+ * provider has no built-in models at all.
  *
  * NOTE: mirrors pickSibling/buildCustomModel in the daemon's
  * packages/daemon/src/lib/ai-service.ts (kept as a copy since the template can't
@@ -30,10 +31,30 @@ function buildCustomModel(provider: string, id: string) {
       best = s;
     }
   }
-  return { ...best, id, name: id, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  return { ...best, id, name: id };
 }
 
-export function resolveModel(modelStr: string) {
+/**
+ * The custom models the host registered, as `provider:id`, from the daemon-set
+ * `VOLUTE_CUSTOM_MODELS`. Empty when unset or unreadable: nothing beyond the catalog runs.
+ */
+export function registeredCustomModels(raw = process.env.VOLUTE_CUSTOM_MODELS): string[] {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((m): m is string => typeof m === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Resolve a `provider:id` model string: the catalog entry when there is one, a clone of
+ * a sibling for a custom model the host registered, and otherwise a refusal. A model
+ * with no known price would run unmetered, outside the spend cap, so an id that is
+ * neither is not run on a guess. The daemon refuses the same ids before spawning (and
+ * says so to the mind and host); this is the backstop for a start it didn't check.
+ */
+export function resolveModel(modelStr: string, customModels: readonly string[] = []) {
   const [provider, ...rest] = modelStr.split(":");
   const modelId = rest.join(":");
 
@@ -41,19 +62,22 @@ export function resolveModel(modelStr: string) {
   const exact = getBuiltinModel(provider as any, modelId as any);
   if (exact) return exact;
 
-  // Not in the catalog: treat the id as authoritative and clone a sibling of the
-  // same provider. The daemon only ever writes exact ids here (built-in or an
-  // admin-registered custom id), so we deliberately do NOT prefix-match — doing so
-  // could silently resolve a selected custom id (e.g. "gpt-5") to a different
-  // catalog model that starts with it (e.g. "gpt-5-codex"). Mirrors the daemon's
-  // exact→custom ordering in ai-service.ts findModel().
-  const custom = buildCustomModel(provider, modelId);
-  if (custom) {
-    console.warn(
-      `[resolve-model] "${modelStr}" is not in the built-in catalog; cloning provider defaults from a sibling model. If this id is a typo it will fail at request time.`,
-    );
-    return custom;
+  // A registered custom id is authoritative: clone a sibling of the same provider. The
+  // daemon only ever writes exact ids here, so we deliberately do NOT prefix-match — doing
+  // so could silently resolve a selected custom id (e.g. "gpt-5") to a different catalog
+  // model that starts with it (e.g. "gpt-5-codex"). Mirrors the daemon's exact→custom
+  // ordering in ai-service.ts findModel().
+  if (customModels.includes(`${provider}:${modelId}`)) {
+    const custom = buildCustomModel(provider, modelId);
+    if (custom) return custom;
+    throw new Error(`Model not found: ${modelStr}\nUnknown provider: ${provider}`);
   }
 
-  throw new Error(`Model not found: ${modelStr}\nUnknown provider: ${provider}`);
+  throw new Error(
+    `Your model, "${modelStr}", is neither in Volute's model catalog nor registered on this ` +
+      `system as a custom model, so it can't be run: its turns would have no price and never ` +
+      `count against your spend cap. Set "model" in home/.config/config.json to one that ` +
+      `resolves (\`volute config models\` lists the models enabled here), or ask the host to ` +
+      `register it as a custom model in Settings → AI.`,
+  );
 }

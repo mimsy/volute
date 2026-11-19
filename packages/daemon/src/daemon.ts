@@ -47,6 +47,7 @@ import {
   syncBuiltinSkills,
 } from "./lib/skills.js";
 import { reportStaleApiPaths } from "./lib/template/stale-api-paths.js";
+import { reportUnresolvedEnabledModels } from "./lib/unresolved-models.js";
 import { cleanExpiredLogs } from "./lib/util/history-cleanup.js";
 import log from "./lib/util/logger.js";
 import { RotatingLog } from "./lib/util/rotating-log.js";
@@ -625,6 +626,12 @@ export async function startDaemon(opts: {
   // — and this stays non-blocking: a warning must not be able to delay a start.
   reportExternalNameCollisions().catch((err) => {
     log.warn("failed to check for external-sender name collisions", log.errorData(err));
+  });
+
+  // Enabled model ids the catalog no longer carries (a pi-ai upgrade drops some) are
+  // skipped silently and vanish from Settings; say so once. Same cadence, same reason.
+  reportUnresolvedEnabledModels().catch((err) => {
+    log.warn("failed to check enabled models against the catalog", log.errorData(err));
   });
 
   // ...and re-run that cleanup hourly so retention is actually enforced on a
