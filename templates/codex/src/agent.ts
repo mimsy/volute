@@ -946,12 +946,12 @@ export function createMind(options: {
     }
 
     // Refresh system prompt before each turn — this is how an identity edit takes effect.
-    // The SDK spawns a fresh `codex exec` per run (codex-sdk 0.145 `exec.run`), passing
+    // The SDK spawns a fresh `codex exec` per run (codex-sdk 0.170 `exec.run`), passing
     // model_instructions_file as a --config override each time, so the next turn is handed
-    // the edit; a restart would only repeat that same resume. (Unverified here: that Codex
-    // prefers the override to the base_instructions a resumed rollout's session_meta
-    // carries.) Deferring to a session boundary as the claude template does isn't possible:
-    // the file is shared by every thread.
+    // the edit; a restart would only repeat that same resume. Codex prefers that override to
+    // the base_instructions a resumed rollout carries (codex-rs core/src/session/mod.rs,
+    // 0.158–0.170: `config.base_instructions.or_else(history)`). Deferring to a session
+    // boundary as the claude template does isn't possible: the file is shared by every thread.
     refreshSystemPrompt();
 
     // The message as it arrived, before any context is prepended — what pre-prompt hooks
