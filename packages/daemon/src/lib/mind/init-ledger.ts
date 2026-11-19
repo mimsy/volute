@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
+import { writeJsonAtomic } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { stateDir } from "./registry.js";
 
@@ -106,14 +107,10 @@ export function writeInitLedger(mindName: string, given: Iterable<string>): void
  * hook and bin shims a skill install gives a mind.
  */
 export function writeLedgerFile(path: string, given: Iterable<string>, label: string): void {
-  const tmp = `${path}.tmp`;
   try {
-    mkdirSync(resolve(path, ".."), { recursive: true });
     const sorted = [...new Set([...given].map(normalize))].sort();
-    writeFileSync(tmp, `${JSON.stringify({ given: sorted }, null, 2)}\n`);
-    renameSync(tmp, path);
+    writeJsonAtomic(path, { given: sorted });
   } catch (err) {
-    rmSync(tmp, { force: true });
     llog.warn(`failed to write the ledger at ${path} for ${label}`, log.errorData(err));
   }
 }

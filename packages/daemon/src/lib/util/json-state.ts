@@ -1,4 +1,14 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname } from "node:path";
 
 /** Load a Map<string, number> from a JSON file. Returns empty map on error. */
 export function loadJsonMap(path: string): Map<string, number> {
@@ -39,5 +49,33 @@ export function clearJsonMap(path: string, map: Map<string, number>): void {
     if (existsSync(path)) unlinkSync(path);
   } catch (err) {
     console.warn(`[state] failed to clear ${path}:`, err);
+  }
+}
+
+/** Read a JSON file, or undefined when it is absent. Anything else (corrupt, unreadable) throws. */
+export function readJsonFile(path: string): unknown {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+  return JSON.parse(text);
+}
+
+/**
+ * Written to a temp file of its own and renamed over, so a crash leaves the old file or the
+ * new, and two writers never share a temp file. Throws; the temp file is removed first.
+ */
+export function writeJsonAtomic(path: string, data: unknown): void {
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`);
+    renameSync(tmp, path);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
   }
 }
