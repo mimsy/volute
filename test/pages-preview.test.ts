@@ -15,8 +15,18 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
+import type { ExtensionCommand } from "@volute/extensions";
+import { createCommands } from "../packages/extensions/pages/src/commands.js";
 import type { ChownExec, MindOwnership } from "../packages/extensions/pages/src/ownership.js";
-import { renderPreview, resolveBrowser } from "../packages/extensions/pages/src/preview.js";
+import {
+  _resetNoBrowserAlertForTest,
+  browserInstallCommand,
+  NO_BROWSER_ALERT_KIND,
+  noBrowserAlertText,
+  noBrowserMindError,
+  renderPreview,
+  resolveBrowser,
+} from "../packages/extensions/pages/src/preview.js";
 
 /**
  * Unit coverage for renderPreview's pure/mockable logic — path containment,
@@ -165,7 +175,10 @@ describe("renderPreview graceful degradation without a browser", () => {
     });
     assert.ok("error" in result);
     assert.match(result.error, /Could not render the page/);
-    assert.match(result.error, /VOLUTE_CHROMIUM/);
+    // Addressed to the mind, who can neither install a browser nor set the
+    // daemon's environment.
+    assert.match(result.error, /tell your host/);
+    assert.doesNotMatch(result.error, /Set VOLUTE_CHROMIUM/);
   });
 
   it("renders the .md branch, then degrades and cleans up the temp html", async () => {
@@ -196,31 +209,116 @@ describe("renderPreview graceful degradation without a browser", () => {
     assert.ok(!existsSync(resolve(mindDir, "home", ".preview", "index.png")));
   });
 
-  it("reports 'no browser found' when nothing resolves (linux, empty PATH)", async () => {
+  /** Run `fn` with nothing resolvable as a browser, whatever the test host has. */
+  async function withNoBrowser(fn: () => Promise<void>): Promise<void> {
     writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
-    // Force the resolver to find nothing regardless of the test host: unset the
-    // override, pretend to be linux, and give it an empty PATH.
+    // Unset the override, pretend to be linux, and give the resolver an empty PATH.
     delete process.env.VOLUTE_CHROMIUM;
     const prevPath = process.env.PATH;
     const platformDesc = Object.getOwnPropertyDescriptor(process, "platform");
     process.env.PATH = "";
     Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    _resetNoBrowserAlertForTest();
     try {
-      const result = await renderPreview({
-        mindDir,
-        mindName: "testmind",
-        ownership: NO_ISOLATION,
-        file: "index.html",
-      });
-      assert.deepEqual(result, {
-        error:
-          "No Chrome-family browser found. Install Chrome or Chromium, or set VOLUTE_CHROMIUM to a browser binary.",
-      });
+      await fn();
     } finally {
       if (platformDesc) Object.defineProperty(process, "platform", platformDesc);
       if (prevPath === undefined) delete process.env.PATH;
       else process.env.PATH = prevPath;
     }
+  }
+
+  it("with no browser, tells the host once and the mind that it was told", async () => {
+    await withNoBrowser(async () => {
+      const alerts: { kind: string; text: string }[] = [];
+      const alertHost = async (kind: string, text: string) => {
+        alerts.push({ kind, text });
+      };
+
+      // The first through the command, which is what hands renderPreview the
+      // context's alertHost — the wiring the daemon's path depends on.
+      const ctx = {
+        ...NO_ISOLATION,
+        mindName: "pip",
+        getMindDir: async () => mindDir,
+        alertHost,
+      } as unknown as Parameters<ExtensionCommand["handler"]>[1];
+      const first = await createCommands().preview.handler({ args: {}, flags: {}, rest: [] }, ctx);
+      assert.deepEqual(first, { error: noBrowserMindError(true) });
+      // The old text told the mind to install Chrome or set VOLUTE_CHROMIUM — the
+      // two things it cannot do.
+      assert.match(noBrowserMindError(true), /alert about it has gone to your host/);
+      assert.doesNotMatch(noBrowserMindError(true), /VOLUTE_CHROMIUM|Install Chrome/);
+
+      assert.equal(alerts.length, 1, "the host is told on the first failure");
+      assert.equal(alerts[0].kind, NO_BROWSER_ALERT_KIND);
+      assert.match(alerts[0].text, /pip just tried/);
+
+      // The condition is the host's, not one mind's: a second mind hitting it is
+      // the same news, and every alert is a spirit turn. It was still told, though.
+      const second = await renderPreview({
+        mindDir,
+        mindName: "mimsy",
+        ownership: NO_ISOLATION,
+        file: "index.html",
+        alertHost,
+      });
+      assert.deepEqual(second, { error: noBrowserMindError(true) });
+      assert.equal(alerts.length, 1, "once per daemon run, not once per call");
+    });
+  });
+
+  it("does not claim the host was told when nothing could tell it", async () => {
+    await withNoBrowser(async () => {
+      const result = await renderPreview({
+        mindDir,
+        mindName: "pip",
+        ownership: NO_ISOLATION,
+        file: "index.html",
+      });
+      assert.deepEqual(result, { error: noBrowserMindError(false) });
+      assert.doesNotMatch(noBrowserMindError(false), /has gone to your host/);
+      assert.match(noBrowserMindError(false), /Tell your host/);
+    });
+  });
+});
+
+describe("browserInstallCommand", () => {
+  const linux = (osRelease: string | null) =>
+    browserInstallCommand({ platform: "linux", osRelease });
+
+  it("names the command for a distribution whose chromium works as handed over", () => {
+    assert.deepEqual(linux('PRETTY_NAME="Debian GNU/Linux 12"\nID=debian\n'), {
+      command: "apt-get update && apt-get install -y chromium",
+      as: "as root",
+    });
+    assert.equal(
+      linux('ID="raspbian"\n')?.command,
+      "apt-get update && apt-get install -y chromium",
+    );
+    assert.equal(linux("ID=fedora\n")?.command, "dnf install -y chromium");
+  });
+
+  it("names none where the obvious command would not work", () => {
+    // Ubuntu's chromium is a snap; RHEL-family chromium needs EPEL first.
+    assert.equal(linux("ID=ubuntu\nID_LIKE=debian\n"), null);
+    assert.equal(linux('ID="rhel"\n'), null);
+    assert.equal(linux('ID="amzn"\n'), null);
+    assert.equal(linux(null), null);
+  });
+
+  it("uses Homebrew on macOS, as the user — Homebrew refuses root", () => {
+    const got = browserInstallCommand({ platform: "darwin" });
+    assert.equal(got?.command, "brew install --cask google-chrome");
+    assert.match(got?.as ?? "", /not with sudo/);
+  });
+
+  it("puts the command in the host's alert, and degrades to prose without one", () => {
+    assert.match(
+      noBrowserAlertText("pip", { command: "apk add chromium", as: "as root" }),
+      /On the host, as root:\n\n {4}apk add chromium\n/,
+    );
+    assert.match(noBrowserAlertText("pip", null), /Google Chrome's \.deb/);
   });
 });
 

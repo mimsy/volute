@@ -302,7 +302,13 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
         const file = (args.file ?? "index.html").trim();
-        const result = await renderPreview({ mindDir, mindName, ownership: ctx, file });
+        const result = await renderPreview({
+          mindDir,
+          mindName,
+          ownership: ctx,
+          file,
+          alertHost: ctx.alertHost,
+        });
         // Said the same way whether the render worked or not: the run that fails is
         // the one that creates home/.preview and leaves it empty, so it is exactly
         // when a mind needs to hear the directory may not be its own to clear.

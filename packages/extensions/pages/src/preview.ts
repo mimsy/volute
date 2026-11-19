@@ -128,6 +128,109 @@ export function resolveBrowser(opts?: {
 }
 
 /**
+ * The install command per distribution, by `/etc/os-release` `ID`, for the ones
+ * whose stock repositories carry a chromium preview can drive under that name.
+ * Left out on purpose, because the command would not work as handed over: Ubuntu
+ * (its chromium is a snap, with its own private /tmp), and RHEL, CentOS and Amazon
+ * Linux (chromium needs EPEL first). They get prose instead.
+ */
+const DISTRO_INSTALLS: Record<string, string> = {
+  debian: "apt-get update && apt-get install -y chromium",
+  raspbian: "apt-get update && apt-get install -y chromium",
+  fedora: "dnf install -y chromium",
+  arch: "pacman -S --noconfirm chromium",
+  alpine: "apk add chromium",
+  "opensuse-leap": "zypper install -y chromium",
+  "opensuse-tumbleweed": "zypper install -y chromium",
+};
+
+export type BrowserInstall = { command: string; as: string };
+
+function readOsRelease(): string | null {
+  try {
+    return readFileSync("/etc/os-release", "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a host would run to give preview a browser, and as whom, or null when we
+ * can't name a command that would work as given. Injectable like
+ * {@link resolveBrowser}.
+ */
+export function browserInstallCommand(opts?: {
+  platform?: NodeJS.Platform;
+  osRelease?: string | null;
+}): BrowserInstall | null {
+  const platform = opts?.platform ?? process.platform;
+  if (platform === "darwin") {
+    return {
+      command: "brew install --cask google-chrome",
+      as: "as your own user, not with sudo (Homebrew refuses to run as root)",
+    };
+  }
+  if (platform !== "linux") return null;
+  const release = opts?.osRelease === undefined ? readOsRelease() : opts.osRelease;
+  const id = release?.match(/^ID="?([^"\n]*)"?$/m)?.[1];
+  const command = id ? DISTRO_INSTALLS[id] : undefined;
+  return command ? { command, as: "as root" } : null;
+}
+
+/** The alert kind for a host with no browser; the daemon namespaces it with the extension id. */
+export const NO_BROWSER_ALERT_KIND = "preview_no_browser";
+
+/**
+ * What the mind is told when there is no browser. The old text told it to install
+ * Chrome or set VOLUTE_CHROMIUM — neither of which it can do: it has no root, and
+ * VOLUTE_CHROMIUM is the daemon's environment, not its own. So the failure reached
+ * the one party who couldn't act on it and never reached the one who could, and
+ * minds built canvas pages blind for a day before anyone with root heard (bardo,
+ * Nov 2026). This says what is true from the mind's seat instead — including
+ * whether the host was actually alerted, which only a caller that passed
+ * `alertHost` can claim.
+ */
+export function noBrowserMindError(hostAlerted: boolean): string {
+  return (
+    "Preview can't run here: there is no browser on this host to render with, and " +
+    "installing one needs the host. " +
+    (hostAlerted
+      ? "An alert about it has gone to your host.\n"
+      : "Tell your host: preview needs Chrome or Chromium installed on the host.\n") +
+    "Until then nothing here can show you your page — and tests passing over its logic " +
+    "don't mean it draws. If how it looks matters, ask someone who can see it (your host, " +
+    "or another mind) to open the published page and tell you what's there."
+  );
+}
+
+/** What the host is told, through the spirit and the dashboard. */
+export function noBrowserAlertText(mindName: string, install: BrowserInstall | null): string {
+  const fix = install
+    ? `On the host, ${install.as}:\n\n    ${install.command}`
+    : "Install Google Chrome or Chromium on the host. (On Ubuntu the chromium package is a " +
+      "snap, which preview can't use — install Google Chrome's .deb instead.)";
+  return (
+    "Pages preview can't run: the daemon found no Chrome-family browser on this host, so " +
+    `minds can't see the pages they draw. ${mindName} just tried, and was told the host ` +
+    `has been alerted.\n\n${fix}\n\nNo restart is needed — the next preview finds it. A ` +
+    "browser the daemon's PATH doesn't reach can be named with VOLUTE_CHROMIUM in the " +
+    "daemon's environment.\n\nThis is sent once per daemon run."
+  );
+}
+
+/**
+ * Whether the host has already heard, this daemon run, that there is no browser.
+ * The condition is the host's, not one mind's, so the first mind to hit it is the
+ * one that raises it; every preview after that would be the same news.
+ */
+let hostToldNoBrowser = false;
+
+/** Tests only: forget that the host was told, so each test can watch the first alert. */
+export function _resetNoBrowserAlertForTest(): void {
+  hostToldNoBrowser = false;
+}
+
+/**
  * Per-invocation counter for temp-path uniqueness. process.pid is the daemon's
  * pid — constant across every preview — so two concurrent renders (two minds, or
  * one mind twice) would collide on the chromium user-data-dir singleton lock and
@@ -151,6 +254,8 @@ export async function renderPreview(opts: {
   ownership: MindOwnership;
   file: string;
   exec?: ChownExec;
+  /** Tell the host something only it can fix — the extension context's `alertHost`. */
+  alertHost?: (kind: string, text: string) => Promise<void>;
 }): Promise<
   | { pngPath: string; rel: string; ownershipWarning: string | null }
   | { error: string; ownershipWarning?: string | null }
@@ -204,10 +309,22 @@ export async function renderPreview(opts: {
 
   const browser = resolveBrowser();
   if (!browser) {
-    return {
-      error:
-        "No Chrome-family browser found. Install Chrome or Chromium, or set VOLUTE_CHROMIUM to a browser binary.",
-    };
+    if (opts.alertHost && !hostToldNoBrowser) {
+      hostToldNoBrowser = true;
+      // Not awaited: the alert starts a spirit turn, and the mind's command should
+      // not wait on one. alertHost never throws; the catch is a backstop.
+      opts
+        .alertHost(
+          NO_BROWSER_ALERT_KIND,
+          noBrowserAlertText(opts.mindName, browserInstallCommand()),
+        )
+        .catch((err) =>
+          console.warn(`[pages] could not alert the host: ${(err as Error).message}`),
+        );
+    }
+    // Claimed only when this call could raise it: the caller passed alertHost,
+    // which then either sent it now or already did, earlier this run.
+    return { error: noBrowserMindError(!!opts.alertHost) };
   }
 
   // Unique per invocation so concurrent previews never share a chromium
@@ -309,7 +426,7 @@ export async function renderPreview(opts: {
         30_000,
       );
     } catch (err) {
-      failure = `Could not render the page: ${(err as Error).message}. (Is a browser installed? Set VOLUTE_CHROMIUM.)`;
+      failure = `Could not render the page: ${(err as Error).message}. (The browser runs on the host's side; if this keeps happening, tell your host.)`;
     }
 
     if (!failure) {
