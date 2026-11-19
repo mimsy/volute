@@ -1006,9 +1006,12 @@ describe("pi recollection at seams", () => {
     const layout = makeMindDir();
     const archive = join(layout.sessionsDir, "archive");
     recollection = { entries: RECALL, delayMs: 300 };
-    // Big enough that a quarter of it (the recollection cap) holds the entry, and under
-    // the ~780-token prompt each turn reports, so both turns cross it.
-    const mind = await newMind(layout, { maxContextTokens: 500 });
+    // Big enough that a quarter of it (the recollection cap) holds the entry.
+    const mind = await newMind(layout, { maxContextTokens: 1000 });
+    // Twice the threshold on its own (~2000 tokens at the faux provider's 4 chars a token),
+    // so the first turn crosses it whatever else the prompt carries or however the cache
+    // splits it — not on the size of the injected context.
+    const one = `one ${"y".repeat(8000)}`;
 
     let seen = "";
     let archivedText = "";
@@ -1022,7 +1025,7 @@ describe("pi recollection at seams", () => {
         return fauxAssistantMessage("second");
       },
     ]);
-    send(mind, "main", "one");
+    send(mind, "main", one);
     await waitFor(() => captured.some((e) => e.path === "recollection"), "rotation fetch");
     // Mid-fetch: the session must stay quiet — this message may not reach the transcript
     // being rotated away, nor start a run on it.
@@ -1034,7 +1037,7 @@ describe("pi recollection at seams", () => {
       seen.indexOf("pond poem") < seen.indexOf("two during the fetch"),
       "the message sent mid-fetch runs on the rotated session, after the seed",
     );
-    assert.ok(archivedText.includes('"one"'), "the rotated-away transcript was archived");
+    assert.ok(archivedText.includes(`"${one}"`), "the rotated-away transcript was archived");
     assert.ok(!archivedText.includes("two during"), "and never took the mid-fetch message");
     await waitFor(() => doneFor(two), "second done");
     const note = events("context", "main").find(
