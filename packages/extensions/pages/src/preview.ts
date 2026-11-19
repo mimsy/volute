@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   accessSync,
@@ -116,9 +116,17 @@ export function resolveBrowser(opts?: {
     return null;
   }
 
-  // Linux/other: walk PATH dirs looking for an executable, `command -v` style.
-  const dirs = (opts?.pathEnv ?? process.env.PATH ?? "").split(delimiter).filter(Boolean);
-  for (const name of opts?.pathCandidates ?? PATH_CANDIDATES) {
+  return findOnPath(opts?.pathCandidates ?? PATH_CANDIDATES, opts?.pathEnv, exists);
+}
+
+/** The first of `names` executable somewhere on PATH, `command -v` style, in `names` order. */
+function findOnPath(
+  names: string[],
+  pathEnv: string | undefined,
+  exists: (p: string) => boolean,
+): string | null {
+  const dirs = (pathEnv ?? process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const name of names) {
     for (const dir of dirs) {
       const full = join(dir, name);
       if (exists(full)) return full;
@@ -231,6 +239,42 @@ export function _resetNoBrowserAlertForTest(): void {
 }
 
 /**
+ * Limits on one browser launch, by phase — the page server's first request is the
+ * line between them (see `launchBrowser`).
+ *
+ * - `startup`, spawn to first request: the browser starting. Measured 0.75 s on a
+ *   laptop, 1.9 s typical and 9.0 s slow on a CI runner under a parallel suite —
+ *   nearly 5x for the same commit — and a Pi with an SD card and several minds
+ *   will do worse. A slow start is a slow host, not a broken page, and waiting
+ *   costs only a mind's patience, so this is generous.
+ * - `postLoad`, first request to exit: load, the page's virtual-time budget (run
+ *   fast-forward), and the shot. 0.65–1.2 s everywhere it was measured, fast and
+ *   slow starts alike. Running over is the one real stall: virtual time stands
+ *   still while the page holds a request open.
+ *
+ * A start slower than `slowStart` is mentioned to the mind, so it knows the
+ * delay was the host's and not its page's.
+ *
+ * Mutable only so tests need not wait them out.
+ */
+export const RENDER_TIMEOUTS = { startup: 30_000, postLoad: 8_000, slowStart: 10_000 };
+
+/**
+ * Switches that stop the browser's own background traffic and first-run work. In
+ * Chrome's words: disable "several subsystems which run network requests in the
+ * background"; component updates; syncing to a Google Account; default apps; the
+ * first-run flow; and metrics reporting (recorded, never sent).
+ */
+export const PRIVATE_BROWSER_FLAGS = [
+  "--disable-background-networking",
+  "--disable-component-update",
+  "--disable-sync",
+  "--disable-default-apps",
+  "--no-first-run",
+  "--metrics-recording-only",
+];
+
+/**
  * Per-invocation counter for temp-path uniqueness. process.pid is the daemon's
  * pid — constant across every preview — so two concurrent renders (two minds, or
  * one mind twice) would collide on the chromium user-data-dir singleton lock and
@@ -239,14 +283,90 @@ export function _resetNoBrowserAlertForTest(): void {
  */
 let previewSeq = 0;
 
-function run(cmd: string, args: string[], timeoutMs: number): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
-    execFile(cmd, args, { timeout: timeoutMs, env: { ...process.env, HOME: "/tmp" } }, (err) => {
-      if (err) reject(err);
-      else resolvePromise();
+type LaunchOutcome = {
+  /** Which limit stopped it, if one did. A launch stopped at a limit is never trusted for its image. */
+  limit: "startup" | "postLoad" | null;
+  /** Why it failed on its own: a spawn error or a non-zero exit. */
+  error: string | null;
+  stderr: string;
+  timing: LaunchTiming;
+};
+
+/**
+ * Run the browser once under the two phase limits, watching the page server for
+ * the line between them. One timeout cannot do this: a slow start and a stalled
+ * page want opposite patience.
+ */
+function launchBrowser(
+  cmd: string,
+  args: string[],
+  kind: LaunchTiming["kind"],
+  server: Pick<PreviewServer, "requestsSince">,
+): Promise<LaunchOutcome> {
+  return new Promise((done) => {
+    const started = Date.now();
+    let stderr = "";
+    let limit: LaunchOutcome["limit"] = null;
+    let error: string | null = null;
+    const child = spawn(cmd, args, {
+      env: { ...process.env, HOME: "/tmp" },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-4000);
+    });
+    let killTimer: NodeJS.Timeout | null = null;
+    const stop = (which: "startup" | "postLoad") => {
+      limit = which;
+      child.kill("SIGTERM");
+      // A browser that ignores SIGTERM is not left running as root.
+      killTimer = setTimeout(() => child.kill("SIGKILL"), 3_000);
+    };
+    const watch = setInterval(() => {
+      if (limit) return;
+      const now = Date.now();
+      const { firstAt } = server.requestsSince(started);
+      if (firstAt === null) {
+        if (now - started >= RENDER_TIMEOUTS.startup) stop("startup");
+      } else if (now - firstAt >= RENDER_TIMEOUTS.postLoad) {
+        stop("postLoad");
+      }
+    }, 50);
+    child.on("error", (err) => {
+      error = err.message;
+    });
+    child.on("close", (code, signal) => {
+      clearInterval(watch);
+      if (killTimer) clearTimeout(killTimer);
+      if (!limit && !error && code !== 0) {
+        error = `the browser exited with ${code === null ? `signal ${signal}` : `code ${code}`}`;
+      }
+      const ended = Date.now();
+      const seen = server.requestsSince(started);
+      done({
+        limit,
+        error,
+        stderr,
+        timing: {
+          kind,
+          totalMs: ended - started,
+          toFirstRequestMs: seen.firstAt === null ? null : seen.firstAt - started,
+          afterFirstRequestMs: seen.firstAt === null ? null : ended - seen.firstAt,
+          requests: seen.count,
+        },
+      });
     });
   });
 }
+
+/** Where one browser launch spent its time. `null` phases: the browser never asked for the page. */
+export type LaunchTiming = {
+  kind: "timers" | "at-load";
+  totalMs: number;
+  toFirstRequestMs: number | null;
+  afterFirstRequestMs: number | null;
+  requests: number;
+};
 
 export async function renderPreview(opts: {
   mindDir: string;
@@ -256,8 +376,10 @@ export async function renderPreview(opts: {
   exec?: ChownExec;
   /** Tell the host something only it can fix — the extension context's `alertHost`. */
   alertHost?: (kind: string, text: string) => Promise<void>;
+  /** Called after each browser launch with where its time went. Diagnostics only. */
+  onLaunch?: (timing: LaunchTiming) => void;
 }): Promise<
-  | { pngPath: string; rel: string; ownershipWarning: string | null }
+  | { pngPath: string; rel: string; ownershipWarning: string | null; note: string | null }
   | { error: string; ownershipWarning?: string | null }
 > {
   const pagesRoot = resolve(opts.mindDir, "home", "pages");
@@ -359,6 +481,7 @@ export async function renderPreview(opts: {
   let pngPath: string | null = null;
   let wrotePng = false;
   let failure: string | null = null;
+  let note: string | null = null;
   try {
     // The URL chromium screenshots — a loopback origin rather than the file the
     // page lives in, so the server is the boundary for every load the page makes.
@@ -400,34 +523,119 @@ export async function renderPreview(opts: {
     rmSync(pngPath, { force: true });
     mkdirSync(stageDir, { mode: 0o700 });
 
-    try {
-      await run(
+    const args = (userDataDir: string, extra: string[]) => [
+      "--headless=new",
+      "--no-sandbox",
+      // The render fetches over loopback now, so a proxy configured on the
+      // host becomes something between the browser and the page. Chrome
+      // bypasses localhost by default, but a host that has overridden that
+      // would get blank previews and no clue why.
+      "--no-proxy-server",
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--hide-scrollbars",
+      "--force-color-profile=srgb",
+      // A preview is a picture of one page, and on a system install the browser
+      // taking it is root's. Without these, every render also fetched a variations
+      // seed and component/extension updates from Google (seen in a net-log). Each
+      // is a documented Chrome switch, standard for headless automation. A few
+      // requests remain (a time check, a signed-in-accounts probe); no switch here
+      // claims to stop those.
+      ...PRIVATE_BROWSER_FLAGS,
+      `--user-data-dir=${userDataDir}`,
+      ...extra,
+      // Fixed viewport: the chromium CLI has no reliable full-page --screenshot
+      // flag, so we capture a generous window rather than risk a fragile
+      // scripted full-height capture. Tall pages are cut off below 1600px.
+      "--window-size=1280,1600",
+      `--screenshot=${stagedPng}`,
+      url,
+    ];
+    const renderFailed = (reason: string) =>
+      `Could not render the page: ${reason}. (The browser runs on the host's side; if this keeps happening, tell your host.)`;
+    // Without virtual time the shot is taken at the load event, a few dozen ms in,
+    // and a page that draws after a timer — a splash, an awaited delay, a game that
+    // starts on setTimeout — previews as an empty canvas. Virtual time runs the
+    // page's first seconds of timers before the shot, at no wall-clock cost while
+    // the page is idle. requestAnimationFrame is not driven by it: a loop that
+    // waits on many frames or on elapsed frame time still shoots early.
+    //
+    // No retry. Of the two ways a launch overruns, neither is helped by one: a slow
+    // start pays the same start again with a fresh profile, and a page holding a
+    // request open stalls again. What CI showed as intermittent "hangs" was the
+    // start-up tail crossing a fixed limit (see RENDER_TIMEOUTS).
+    const pageServer = server;
+    const launch = async (kind: LaunchTiming["kind"], extra: string[]) => {
+      // No image from an earlier launch may pass for this one's.
+      rmSync(stagedPng, { force: true });
+      const outcome = await launchBrowser(
         browser,
-        [
-          "--headless=new",
-          "--no-sandbox",
-          // The render fetches over loopback now, so a proxy configured on the
-          // host becomes something between the browser and the page. Chrome
-          // bypasses localhost by default, but a host that has overridden that
-          // would get blank previews and no clue why.
-          "--no-proxy-server",
-          "--disable-gpu",
-          "--disable-dev-shm-usage",
-          "--hide-scrollbars",
-          "--force-color-profile=srgb",
-          `--user-data-dir=${userDataDir}`,
-          // Fixed viewport: the chromium CLI has no reliable full-page --screenshot
-          // flag, so we capture a generous window rather than risk a fragile
-          // scripted full-height capture. Tall pages are cut off below 1600px.
-          "--window-size=1280,1600",
-          `--screenshot=${stagedPng}`,
-          url,
-        ],
-        30_000,
+        args(`${userDataDir}-${kind}`, extra),
+        kind,
+        pageServer,
       );
-    } catch (err) {
-      failure = `Could not render the page: ${(err as Error).message}. (The browser runs on the host's side; if this keeps happening, tell your host.)`;
+      opts.onLaunch?.(outcome.timing);
+      const t = outcome.timing;
+      if (outcome.limit || (t.toFirstRequestMs ?? 0) >= RENDER_TIMEOUTS.slowStart) {
+        // For the host: a slow or stopped preview, with where its time went and the
+        // browser's own last words.
+        const asked =
+          t.toFirstRequestMs === null
+            ? "the page server got no request from it"
+            : `its first request reached the page server after ${t.toFirstRequestMs}ms, ` +
+              `then ${t.afterFirstRequestMs}ms to exit (${t.requests} request(s))`;
+        console.warn(
+          `[pages] ${kind} render of ${opts.file} ` +
+            `${outcome.limit ? `stopped at the ${outcome.limit} limit` : "started slowly"} ` +
+            `after ${t.totalMs}ms (${browser}); ${asked}. ` +
+            `Browser stderr (tail):\n${outcome.stderr.slice(-2000)}`,
+        );
+      }
+      // A launch stopped at a limit is never trusted for its image: it may be half
+      // written.
+      if (outcome.limit) rmSync(stagedPng, { force: true });
+      return outcome;
+    };
+
+    const slowStart = (t: LaunchTiming) =>
+      t.toFirstRequestMs !== null && t.toFirstRequestMs >= RENDER_TIMEOUTS.slowStart
+        ? `The browser on this host took ${Math.round(t.toFirstRequestMs / 1000)}s to start, so ` +
+          "this preview was slow — and the next may be too. That's the host, not your page."
+        : null;
+    const notStarted =
+      `the browser didn't start in time (it never asked for the page within ` +
+      `${RENDER_TIMEOUTS.startup / 1000}s). That is the host being slow or its browser ` +
+      "being broken, not your page";
+
+    const first = await launch("timers", ["--virtual-time-budget=5000"]);
+    const notes: string[] = [];
+    if (first.error) {
+      failure = renderFailed(first.error);
+    } else if (first.limit === "startup") {
+      failure = renderFailed(notStarted);
+    } else if (first.limit === "postLoad") {
+      // The page loaded and its timers never ran out — virtual time stands still
+      // while a request is open. Such a page got a shot at load before virtual time
+      // existed, so it gets that rather than nothing, and is told so.
+      const second = await launch("at-load", []);
+      if (second.error) failure = renderFailed(second.error);
+      else if (second.limit === "startup") failure = renderFailed(notStarted);
+      else if (second.limit === "postLoad")
+        failure = renderFailed("the page didn't finish loading in time");
+      else {
+        notes.push(
+          "Your page loaded, but its timers never finished running — a request the page " +
+            "leaves open is the known cause. So this was taken as the page finished " +
+            "loading, before any timers ran; anything drawn after a delay isn't in it.",
+        );
+        const slow = slowStart(second.timing) ?? slowStart(first.timing);
+        if (slow) notes.push(slow);
+      }
+    } else {
+      const slow = slowStart(first.timing);
+      if (slow) notes.push(slow);
     }
+    note = notes.length > 0 ? notes.join("\n") : null;
 
     if (!failure) {
       if (!existsSync(stagedPng)) {
@@ -455,7 +663,9 @@ export async function renderPreview(opts: {
     await server?.close();
     if (tempHtml) rmSync(tempHtml, { force: true });
     rmSync(stageDir, { recursive: true, force: true });
-    rmSync(userDataDir, { recursive: true, force: true });
+    for (const suffix of ["timers", "at-load"]) {
+      rmSync(`${userDataDir}-${suffix}`, { recursive: true, force: true });
+    }
   }
 
   // Before the error return, not after it. A render that failed is the run that
@@ -476,5 +686,5 @@ export async function renderPreview(opts: {
   // that the directory may not be its own.
   if (failure) return { error: failure, ownershipWarning };
   if (!pngPath) return { error: "The browser ran but produced no image.", ownershipWarning };
-  return { pngPath, rel: `home/.preview/${basename(pngPath)}`, ownershipWarning };
+  return { pngPath, rel: `home/.preview/${basename(pngPath)}`, ownershipWarning, note };
 }

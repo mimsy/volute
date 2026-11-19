@@ -33,7 +33,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 
 import { resolveStylesheet } from "../packages/extensions/pages/src/markdown.js";
 import type { MindOwnership } from "../packages/extensions/pages/src/ownership.js";
-import { renderPreview } from "../packages/extensions/pages/src/preview.js";
+import { type LaunchTiming, renderPreview } from "../packages/extensions/pages/src/preview.js";
 import {
   type PreviewServer,
   previewUrl,
@@ -372,6 +372,29 @@ describe("renderPreview drives the browser at the loopback origin", () => {
     for (const line of Object.values(seen)) assert.ok(!line.includes(SECRET));
 
     assert.ok(await isClosed(portOf(seen.url)), "the server is closed after a render");
+  });
+
+  it("times each launch in two phases: until the browser asks, and after", async () => {
+    // What separates a slow host from a page whose virtual time drags is which
+    // side of the first request a slow launch spends its time on.
+    writeFileSync(resolve(pagesRoot, "index.html"), "<h1>draft</h1>");
+    writeFileSync(resolve(pagesRoot, "style.css"), "h1{}");
+    process.env.VOLUTE_CHROMIUM = writeFetchingStub(stubDir, logPath, { subresource: "style.css" });
+    const launches: LaunchTiming[] = [];
+    const result = await renderPreview({
+      mindDir,
+      mindName: "mimsy",
+      ownership: NO_ISOLATION,
+      file: "index.html",
+      onLaunch: (l) => launches.push(l),
+    });
+    assert.ok("pngPath" in result, JSON.stringify(result));
+    assert.equal(launches.length, 1);
+    const [l] = launches;
+    assert.equal(l.kind, "timers");
+    assert.equal(l.requests, 2, "the page and its subresource");
+    assert.ok(l.toFirstRequestMs !== null && l.afterFirstRequestMs !== null);
+    assert.equal(l.toFirstRequestMs + l.afterFirstRequestMs, l.totalMs);
   });
 
   it("renders markdown over http too, with its stylesheet reachable", async () => {
