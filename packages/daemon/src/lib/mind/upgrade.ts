@@ -22,11 +22,20 @@ import { chownMindDir, mindFileOwner, mindGitOpts } from "./isolation.js";
 
 export { mindGitOpts };
 
+import { clearDepsPending, markDepsPending } from "./deps-retry.js";
 import { beginUpgrade } from "./join-lock.js";
 import { repairMechanicsDoc } from "./mechanics-doc.js";
 import { type MergeRestartTarget, restartOntoMerge } from "./merge-restart.js";
 import { writeMindFile } from "./mind-file-write.js";
-import { commitDepsChanges, npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
+import {
+  commitDepsChanges,
+  isNetworkFailure,
+  isStaleCacheFailure,
+  npmInstallAsMind,
+  npmInstallNeeded,
+  REGISTRY_HOST,
+  RegistryUnreachableError,
+} from "./npm-install.js";
 import { findMind, mindDir, setMindTemplate, setMindTemplateHash } from "./registry.js";
 import { sharesTemplateBase, TEMPLATE_BRANCH } from "./template-branch.js";
 import { cleanupVariant } from "./variant-cleanup.js";
@@ -685,12 +694,15 @@ const defaultInstallAndRestartDeps: InstallAndRestartDeps = {
  *
  * A failed install does **not** cancel the restart. The template hash in the DB is
  * advanced above, *before* this runs, so by the time an install can fail the mind is
- * already not stale: nothing — not the hourly auto-upgrade pass, not the staleness
- * badge — will ever come back and finish the job. Leaving the old process running
- * against new source on disk is therefore not "safe", it is permanent, and it is
- * what shipped mimsy fifteen days of 404s against an API path only its running code
- * still called (#973). Most upgrades don't need the new packages at all, so the
- * restart usually just works.
+ * already not stale: the staleness machinery will never come back for it. Leaving the
+ * old process running against new source on disk is therefore not "safe", it is
+ * indefinite, and it is what shipped mimsy fifteen days of 404s against an API path
+ * only its running code still called (#973). Most upgrades don't need the new packages
+ * at all, so the restart usually just works.
+ *
+ * What does come back for the install is the pending-deps record written here
+ * (deps-retry.ts): the auto-upgrade pass — at daemon start and hourly — finishes the
+ * install once the registry is reachable, or notices someone already has.
  *
  * When it doesn't, nothing else catches it: `setupCrashRecovery` is registered only
  * *after* the health probe passes, so a start that never becomes healthy is deleted
@@ -718,12 +730,13 @@ export async function installDepsAndRestart(
       installed = true;
     } catch (err) {
       log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
+      markDepsPending(mindName);
       const detail = installFailureDetail(err);
-      depsFailure = upgradeDepsFailureText(mindName, dir, detail);
+      depsFailure = upgradeDepsFailureText(mindName, dir, err);
       depsWarning =
-        `Upgrade merged but npm install failed (including a retry against the registry): ${firstLine(detail)} ` +
+        `Upgrade merged but npm install failed${installFailureCause(err)}: ${firstLine(detail)} ` +
         `The mind runs the new code either way, which may not work until \`npm install\` ` +
-        `succeeds in ${dir}. Nothing retries this automatically.`;
+        `succeeds in ${dir}. Volute tries it again once the registry is reachable.`;
       // The host learns now — a dashboard row, not a log line. The mind learns on
       // its next start, via the pending context below.
       await deps.publishHostError(
@@ -733,6 +746,7 @@ export async function installDepsAndRestart(
       );
     }
     if (installed) {
+      clearDepsPending(mindName);
       // The install can rewrite the merged lockfile, on either attempt (#1385); commit
       // it as the mind now, or its tree is left dirty with a change no commit explains,
       // which its next upgrade sweeps into an unrelated auto-commit.
@@ -823,21 +837,60 @@ function installFailureDetail(err: unknown): string {
 }
 
 /**
- * What the mind is told when its upgrade landed but its dependencies didn't.
+ * What can honestly be said about why an install failed, as a clause for the warning.
+ * A stale-cache-shaped failure that was not {@link RegistryUnreachableError} came from
+ * the registry retry — `npmInstallAsMind` retries exactly those — so only then is
+ * "twice" true. Anything else failed on its one attempt.
+ */
+function installFailureCause(err: unknown): string {
+  if (err instanceof RegistryUnreachableError) {
+    return ` because the npm registry (${REGISTRY_HOST}) could not be reached`;
+  }
+  if (isStaleCacheFailure(err)) return " (including a retry against the registry)";
+  return "";
+}
+
+/**
+ * What a mind is told when its dependencies didn't install — with the upgrade that
+ * needed them, or by a later retry.
  *
  * Written tense-neutrally on purpose: it is delivered with the "you were upgraded"
  * message, which arrives either right after the forced restart or at the mind's next
  * start (when no restart was requested). Either way the process reading it is
  * already running the new code, so "this start" is true in both.
+ *
+ * An unreachable registry is said first and plainly: npm reports a version its cache
+ * has never seen as `No matching version found` whether or not the registry has it, and
+ * on bardo minds read that as a broken registry and spent turns proving it (Nov 2026).
  */
-function upgradeDepsFailureText(mindName: string, dir: string, detail: string): string {
+export function upgradeDepsFailureText(mindName: string, dir: string, err: unknown): string {
+  const detail = installFailureDetail(err);
+  let what: string;
+  if (err instanceof RegistryUnreachableError) {
+    what =
+      `Your framework upgrade merged, but installing its dependencies failed because the npm ` +
+      `registry (${REGISTRY_HOST}) could not be reached — this machine's network or DNS was ` +
+      `down. Offline, npm answers from its local cache, and reports any version that cache ` +
+      `has never seen as "No matching version found", which is what you'll see below. The ` +
+      `packages are fine; the network wasn't.`;
+  } else if (isStaleCacheFailure(err)) {
+    what =
+      `Your framework upgrade merged, but installing its dependencies failed — twice, the ` +
+      `second time against the registry rather than your local npm cache.`;
+  } else if (isNetworkFailure(err)) {
+    what =
+      `Your framework upgrade merged, but installing its dependencies failed with what looks ` +
+      `like a network error, not a problem with the packages.`;
+  } else {
+    what = `Your framework upgrade merged, but installing its dependencies failed.`;
+  }
   return (
-    `Your framework upgrade merged, but installing its dependencies failed — twice, the second ` +
-    `time against the registry rather than your local npm cache.\n\n${detail}\n\n` +
+    `${what}\n\n${detail}\n\n` +
     `This start is running the newly upgraded code with the old packages, so anything the ` +
-    `upgrade added that needs a new one will not work until this is fixed. Nothing retries it ` +
-    `for you: as far as Volute is concerned you are already upgraded. Run \`npm install\` in ` +
-    `${dir} (or ask your host to), then \`volute mind restart ${mindName}\`.`
+    `upgrade added that needs a new one will not work until this is fixed. Volute tries ` +
+    `the install again on its own once the registry is reachable (it checks hourly), and ` +
+    `restarts you onto the packages if that works. You can also run \`npm install\` in ${dir} yourself (or ` +
+    `ask your host to), then \`volute mind restart ${mindName}\`.`
   );
 }
 

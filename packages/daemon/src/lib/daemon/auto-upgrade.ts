@@ -1,5 +1,7 @@
 import { alertHost } from "../chat/system-events.js";
+import { type DepsRetryOutcome, depsPending, retryPendingDeps } from "../mind/deps-retry.js";
 import { UpgradeBlockedByJoinError } from "../mind/join-lock.js";
+import { isNetworkFailure, RegistryUnreachableError } from "../mind/npm-install.js";
 import { type MindEntry, mindDir, readRegistry } from "../mind/registry.js";
 import { isTemplateStale } from "../mind/template-staleness.js";
 import {
@@ -7,6 +9,7 @@ import {
   runUpgrade,
   UpgradeInProgressError,
   type UpgradeOutcome,
+  withUpgradeLock,
 } from "../mind/upgrade.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import log from "../util/logger.js";
@@ -191,14 +194,103 @@ async function recordFailure(
 ): Promise<void> {
   blocked.set(name, { reason, at: new Date() });
   failedThisRun.set(name, reason);
+  await alertOnce(name, reason, UPGRADE_ALERT_KIND, upgradeFailureText(name, detail), deps);
+}
+
+/** Alert `name` unless it was already alerted for `reason` in this daemon run. */
+async function alertOnce(
+  name: string,
+  reason: string,
+  kind: string,
+  text: string,
+  deps: Pick<AutoUpgradeOneDeps, "alertHost">,
+): Promise<void> {
   if (alertedReason.get(name) === reason) return;
   alertedReason.set(name, reason);
   try {
-    await deps.alertHost(name, UPGRADE_ALERT_KIND, upgradeFailureText(name, detail));
+    await deps.alertHost(name, kind, text);
   } catch (err) {
     // alertHost swallows its own failures; this is a backstop so a broken alert
     // path can never turn a recorded failure into an unhandled rejection.
-    alog.error(`failed to alert ${name} about its upgrade failure`, log.errorData(err));
+    alog.error(`failed to alert ${name} about ${kind}`, log.errorData(err));
+  }
+}
+
+/**
+ * The {@link alertedReason} a failed dependency retry is recorded under. It doubles as
+ * the attempt gate, the way {@link failedThisRun} does for upgrades: a retry that failed
+ * in a way that doesn't look like the network (see `isNetworkFailure`) needs someone to
+ * act, and repeating a minutes-long install on slow storage every hour until then helps
+ * nobody. Network-shaped failures never set it, so an outage never stops the retries.
+ * The `npm ls` check still runs each pass, so a mind that fixes its own install is
+ * noticed regardless.
+ */
+const DEPS_RETRY_FAILED = "dependency install retry failed, not network-shaped";
+
+/** The text a mind gets when a retry of its pending dependency install fails. */
+export function depsRetryFailureText(mindName: string, dir: string, detail: string): string {
+  return (
+    `Volute retried installing the dependencies your framework upgrade needed, and it failed ` +
+    `again — with an error that doesn't look like the network being down, so it may need ` +
+    `someone to act.\n\n` +
+    `${detail.trim()}\n\n` +
+    `It won't try again on its own until the daemon restarts. Run \`npm install\` in ${dir} ` +
+    `(or ask your host to) — Volute notices once it has succeeded — then ` +
+    `\`volute mind restart ${mindName}\` to load the packages.`
+  );
+}
+
+/** Collaborators of {@link retryDepsFor}, injectable for tests. */
+export type RetryDepsForDeps = {
+  retry: (name: string, dir: string, opts: { install: boolean }) => Promise<DepsRetryOutcome>;
+  alertHost: AutoUpgradeOneDeps["alertHost"];
+};
+
+const defaultRetryDepsForDeps: RetryDepsForDeps = {
+  retry: (name, dir, opts) => withUpgradeLock(name, () => retryPendingDeps(name, dir, opts)),
+  alertHost,
+};
+
+/**
+ * One pass's attempt at a mind's pending dependency install (deps-retry.ts). Never
+ * throws. Only a failure with the registry reachable is reported — the failure the
+ * record exists for was reported when it happened, and an unreachable registry is that
+ * same failure, still under way.
+ */
+export async function retryDepsFor(
+  entry: MindEntry,
+  deps: RetryDepsForDeps = defaultRetryDepsForDeps,
+): Promise<void> {
+  const dir = entry.dir ?? mindDir(entry.name);
+  try {
+    const outcome = await deps.retry(entry.name, dir, {
+      install: alertedReason.get(entry.name) !== DEPS_RETRY_FAILED,
+    });
+    if (typeof outcome === "string") {
+      if (outcome === "unreachable") {
+        alog.info(`npm registry unreachable; ${entry.name}'s pending install waits a pass`);
+      }
+      return;
+    }
+    // The network still failing, whatever DNS said: the same outage, still under way —
+    // not reported again, and not a reason to stop trying.
+    if (outcome.failed instanceof RegistryUnreachableError || isNetworkFailure(outcome.failed)) {
+      alog.info(
+        `${entry.name}'s pending install hit the network again; it waits a pass`,
+        log.errorData(outcome.failed),
+      );
+      return;
+    }
+    alog.warn(`retry of ${entry.name}'s pending install failed`, log.errorData(outcome.failed));
+    await alertOnce(
+      entry.name,
+      DEPS_RETRY_FAILED,
+      "upgrade_deps_failed",
+      depsRetryFailureText(entry.name, dir, failureDetail(outcome.failed)),
+      deps,
+    );
+  } catch (err) {
+    alog.error(`unexpected error retrying ${entry.name}'s pending install`, log.errorData(err));
   }
 }
 
@@ -311,12 +403,23 @@ export async function runAutoUpgrades(): Promise<void> {
     readConfig: (name) => readVoluteConfig(mindDir(name)),
   });
 
+  // Minds whose merged dependencies never installed (deps-retry.ts) — any mind with a
+  // project, the spirit included. A mind mid-wake waits for the next pass, for the same
+  // reason it is not upgraded mid-wake: a restart onto the packages would kill the wake.
+  const depsPendingEntries = entries.filter((e) => !e.parent && depsPending(e.name));
+
   // A mind held back only because it is mid-wake has not left the eligible set in the
   // sense prune means (fixed by hand) — it is coming back on the next pass, so keep its
   // blocked/alerted record rather than re-alerting it for a reason already reported.
+  // Likewise a mind still waiting on its dependencies: its alert record is its retry gate.
   const keep = new Set(eligible.map((e) => e.name));
   for (const entry of entries) if (isWaking(entry.name)) keep.add(entry.name);
+  for (const entry of depsPendingEntries) keep.add(entry.name);
   pruneAutoUpgradeState(keep);
+
+  for (const entry of depsPendingEntries) {
+    if (!isWaking(entry.name)) await retryDepsFor(entry);
+  }
 
   if (eligible.length === 0) return;
 

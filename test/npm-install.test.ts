@@ -15,10 +15,14 @@ import { after, before, describe, it } from "node:test";
 import {
   commitDepsChanges,
   depsChangedSince,
+  isNetworkFailure,
   isStaleCacheFailure,
   lowPriorityArgv,
+  npmDepsSatisfied,
   npmInstallAsMind,
   npmInstallNeeded,
+  RegistryUnreachableError,
+  registryReachable,
 } from "../packages/daemon/src/lib/mind/npm-install.js";
 
 const tmpDir = join(tmpdir(), `.volute-npm-install-test-${process.pid}`);
@@ -167,6 +171,7 @@ describe("commitDepsChanges", () => {
 
 describe("npmInstallAsMind retry", () => {
   const cwd = join(tmpDir, "install-retry");
+  const online = async () => true;
 
   type Attempt = { cmd: string; args: string[]; supervised?: boolean };
 
@@ -194,7 +199,7 @@ describe("npmInstallAsMind retry", () => {
 
   it("retries without --prefer-offline when the cached resolve fails", async () => {
     const { attempts, run } = recorder([1], etarget);
-    await npmInstallAsMind(cwd, "test-mind", [], run);
+    await npmInstallAsMind(cwd, "test-mind", [], run, online);
     assert.equal(attempts.length, 2);
     assert.ok(attempts[0].args.includes("--prefer-offline"));
     assert.ok(
@@ -209,7 +214,7 @@ describe("npmInstallAsMind retry", () => {
 
   it("adds the given packages on both attempts", async () => {
     const { attempts, run } = recorder([1], etarget);
-    await npmInstallAsMind(cwd, "test-mind", ["libsql", "left-pad"], run);
+    await npmInstallAsMind(cwd, "test-mind", ["libsql", "left-pad"], run, online);
     assert.equal(attempts.length, 2);
     for (const { args } of attempts) {
       assert.deepEqual(args.slice(-2), ["libsql", "left-pad"]);
@@ -223,8 +228,26 @@ describe("npmInstallAsMind retry", () => {
       attempts.push({ cmd, args });
       throw attempts.length === 1 ? etarget : second;
     };
-    await assert.rejects(() => npmInstallAsMind(cwd, "test-mind", [], run), /second failure/);
+    await assert.rejects(
+      () => npmInstallAsMind(cwd, "test-mind", [], run, online),
+      /second failure/,
+    );
     assert.equal(attempts.length, 2);
+  });
+
+  // bardo, Nov 2026: NetworkManager was down, DNS failed, npm fell back to a stale cached
+  // packument and said ETARGET — on both attempts, 2.3 minutes each, and the minds read
+  // "No matching version found" as a broken registry.
+  it("does not retry against a registry that does not resolve, and says why", async () => {
+    const { attempts, run } = recorder([1, 2], etarget);
+    const err = await npmInstallAsMind(cwd, "test-mind", [], run, async () => false).then(
+      () => assert.fail("expected the install to fail"),
+      (e: unknown) => e,
+    );
+    assert.equal(attempts.length, 1, "no registry attempt when the registry can't be reached");
+    assert.ok(err instanceof RegistryUnreachableError);
+    assert.match(err.message, /registry\.npmjs\.org/);
+    assert.match(err.stderr, /ETARGET/, "npm's own words are kept");
   });
 
   it("does not retry a failure that has nothing to do with the cache", async () => {
@@ -290,6 +313,99 @@ describe("npmInstallAsMind retry", () => {
     // A failure raised before npm ran at all has no stderr and must not qualify.
     assert.equal(isStaleCacheFailure(new Error("runuser: user mind-x does not exist")), false);
     assert.equal(isStaleCacheFailure(undefined), false);
+  });
+});
+
+describe("isNetworkFailure", () => {
+  it("recognises npm's network codes, 5xx answers and non-JSON proxy answers", () => {
+    // As npm 11 prints them at --loglevel=error (checked against a local server).
+    for (const code of ["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN", "E503", "E500"]) {
+      assert.equal(isNetworkFailure({ stderr: `npm error code ${code}` }), true, code);
+    }
+    assert.equal(isNetworkFailure({ stderr: "npm error invalid json response body at x" }), true);
+    assert.equal(isNetworkFailure(new Error("getaddrinfo ENOTFOUND registry.npmjs.org")), true);
+  });
+
+  // Reviewer catch: npm's output carries digests and paths, and an unanchored,
+  // case-insensitive E50x read a needs-a-human failure as a network blip — never
+  // reported, retried every hour forever.
+  it("ignores code-like text inside digests, URLs and paths", () => {
+    const stderr = [
+      "npm error code EACCES",
+      "npm error path /home/m/.npm/_cacache/content-v2/sha512/e5/03/ab12e503cd",
+      "npm error integrity sha512-Qx+E503/k9E500zYe503w==",
+      "npm error url https://registry.npmjs.org/x/-/x-E500.tgz?econnreset=1",
+    ].join("\n");
+    assert.equal(isNetworkFailure({ stderr }), false);
+  });
+
+  it("does not count project failures", () => {
+    for (const code of ["EACCES", "ENOSPC", "ETARGET", "E404"]) {
+      assert.equal(isNetworkFailure({ stderr: `npm error code ${code}` }), false, code);
+    }
+  });
+});
+
+describe("registryReachable", () => {
+  it("is true when the registry's name resolves", async () => {
+    assert.equal(await registryReachable(async () => ({ address: "1.2.3.4" })), true);
+  });
+
+  it("is false when the lookup fails", async () => {
+    const eaiAgain = Object.assign(new Error("getaddrinfo EAI_AGAIN"), { code: "EAI_AGAIN" });
+    assert.equal(await registryReachable(async () => Promise.reject(eaiAgain)), false);
+  });
+
+  it("is false when the lookup hangs past its timeout", async () => {
+    assert.equal(await registryReachable(() => new Promise(() => {}), 20), false);
+  });
+});
+
+describe("npmDepsSatisfied", () => {
+  const dir = join(tmpDir, "satisfied");
+  /** A project whose one dependency is installed at `installed`; npm ls is real, and offline. */
+  function project(wanted: string, installed: string | null) {
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "m", version: "1.0.0", dependencies: { ms: wanted } }),
+    );
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+    if (installed) {
+      mkdirSync(join(dir, "node_modules/ms"), { recursive: true });
+      writeFileSync(
+        join(dir, "node_modules/ms/package.json"),
+        JSON.stringify({ name: "ms", version: installed }),
+      );
+    }
+  }
+
+  it("is true when the installed packages match package.json", async () => {
+    project("2.1.3", "2.1.3");
+    assert.equal(await npmDepsSatisfied(dir, "test-mind"), true);
+  });
+
+  it("is false when an installed version is not the one package.json pins", async () => {
+    // The bardo shape: the template bumped an exact pin and the install never ran.
+    project("2.1.3", "2.1.2");
+    assert.equal(await npmDepsSatisfied(dir, "test-mind"), false);
+  });
+
+  it("is false when a dependency is missing", async () => {
+    project("2.1.3", null);
+    assert.equal(await npmDepsSatisfied(dir, "test-mind"), false);
+  });
+
+  it("is false without node_modules, without running npm", async () => {
+    project("2.1.3", null);
+    rmSync(join(dir, "node_modules"), { recursive: true });
+    let ran = false;
+    const run = async () => {
+      ran = true;
+    };
+    assert.equal(await npmDepsSatisfied(dir, "test-mind", run), false);
+    assert.equal(ran, false);
   });
 });
 

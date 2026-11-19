@@ -1,3 +1,4 @@
+import { lookup } from "node:dns/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { exec, gitExec } from "../util/exec.js";
@@ -68,8 +69,8 @@ export type NpmRunner = (
   options: { cwd: string; env?: NodeJS.ProcessEnv; supervised?: boolean },
 ) => Promise<unknown>;
 
-/** One npm install attempt, wrapped for low priority and (under isolation) for the mind's uid. */
-async function runNpmInstall(
+/** One npm command, wrapped for low priority and (under isolation) for the mind's uid. */
+async function runNpmAsMind(
   cwd: string,
   mindName: string,
   args: string[],
@@ -111,19 +112,27 @@ async function runNpmInstall(
  * misconfigured, EACCES out of the isolation wrapper — retrying turns a fast local
  * failure into minutes of npm's own fetch-retry backoff, and this path is awaited by
  * the daemon's HTTP handler on `mind create` and `mind split`, not just by upgrades.
+ * For the same reason a stale-cache failure is not retried when the registry's name
+ * doesn't resolve: that is npm offline, and it throws {@link RegistryUnreachableError}.
  */
 export async function npmInstallAsMind(
   cwd: string,
   mindName: string,
   packages: string[] = [],
   run: NpmRunner = exec,
+  reachable: () => Promise<boolean> = registryReachable,
 ): Promise<void> {
   await reclaimNodeModules(cwd, mindName);
   try {
-    await runNpmInstall(cwd, mindName, [...NPM_INSTALL_ARGS, PREFER_OFFLINE, ...packages], run);
+    await runNpmAsMind(cwd, mindName, [...NPM_INSTALL_ARGS, PREFER_OFFLINE, ...packages], run);
     return;
   } catch (err) {
     if (!isStaleCacheFailure(err)) throw err;
+    // Offline, npm falls back to whatever packument its cache holds and reports a
+    // version that cache has never seen as ETARGET — the same words as #973, a
+    // different cause. A registry retry then can't reach the registry either: it
+    // only repeats minutes of fetch backoff and says the same wrong thing twice.
+    if (!(await reachable())) throw new RegistryUnreachableError(err);
     // Keep the first failure's evidence even when the retry succeeds — otherwise a
     // cache that is rotting silently looks like nothing ever happened.
     log.warn(
@@ -131,7 +140,76 @@ export async function npmInstallAsMind(
       log.errorData(err),
     );
   }
-  await runNpmInstall(cwd, mindName, [...NPM_INSTALL_ARGS, ...packages], run);
+  await runNpmAsMind(cwd, mindName, [...NPM_INSTALL_ARGS, ...packages], run);
+}
+
+/** The registry Volute's templates install from; its DNS answer is the reachability signal. */
+export const REGISTRY_HOST = "registry.npmjs.org";
+
+/** How long a registry lookup may take before the registry counts as unreachable. */
+const REGISTRY_LOOKUP_TIMEOUT_MS = 5000;
+
+/**
+ * Whether the npm registry's hostname resolves right now. Cheap, and the one signal
+ * npm's own `--loglevel=error` output never carries: bardo's offline install (Nov
+ * 2026) printed only `ETARGET No matching version found`, while the `EAI_AGAIN` that
+ * caused it was in the debug log. A name that resolves is not proof the registry
+ * answers, so this only ever turns "unreachable" into a claim — never "reachable".
+ */
+export async function registryReachable(
+  resolveHost: (host: string) => Promise<unknown> = lookup,
+  timeoutMs = REGISTRY_LOOKUP_TIMEOUT_MS,
+): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<false>((done) => {
+    timer = setTimeout(() => done(false), timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      resolveHost(REGISTRY_HOST).then(
+        () => true,
+        () => false,
+      ),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * An install that failed with npm's stale-cache signature while the registry could not
+ * be resolved: a network outage, not a missing version, whatever npm's output says.
+ * Carries the failed attempt's stderr so callers can still show npm's own words.
+ */
+export class RegistryUnreachableError extends Error {
+  readonly stderr: string;
+  constructor(cause: unknown) {
+    super(`npm could not reach the registry (${REGISTRY_HOST} did not resolve)`, { cause });
+    this.name = "RegistryUnreachableError";
+    this.stderr = String((cause as { stderr?: string } | null)?.stderr ?? "");
+  }
+}
+
+/**
+ * Whether the mind's installed packages satisfy its package.json, by `npm ls`: read-only,
+ * offline, and seconds rather than the minutes even a no-op install costs slow storage.
+ * Run as the mind, like the install, so npm's own files land in the mind's HOME as its
+ * own. Any failure — a missing or mismatched package, or npm not running at all — reads
+ * as not satisfied, which only costs an install.
+ */
+export async function npmDepsSatisfied(
+  cwd: string,
+  mindName: string,
+  run: NpmRunner = exec,
+): Promise<boolean> {
+  if (!existsSync(resolve(cwd, "node_modules"))) return false;
+  try {
+    await runNpmAsMind(cwd, mindName, ["ls", "--depth=0", "--loglevel=silent"], run);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -146,6 +224,32 @@ export function isStaleCacheFailure(err: unknown): boolean {
   const e = err as { stderr?: string; message?: string } | null;
   const text = `${e?.stderr ?? ""}\n${e?.message ?? ""}`;
   return /ETARGET|ENOTCACHED|No matching version/i.test(text);
+}
+
+/**
+ * Whether a failed install looks like the network rather than the project: a dropped or
+ * refused connection, a timeout, a name that didn't resolve, the registry answering 5xx,
+ * or a proxy or captive portal answering with something that isn't JSON. DNS resolving
+ * proves none of these away, so a failure of this shape is never reported as "the
+ * registry was reachable".
+ *
+ * Codes are matched as codes — whole, case-sensitive words — because npm's output also
+ * carries integrity digests, tarball URLs and cache paths, and a stray "e503" in base64
+ * would otherwise read a disk-full or permissions failure as a network blip, which is
+ * never reported and retried hourly forever. A 5xx only counts on npm's own code line
+ * (`npm error code E503`, checked against npm 11), since base64 can bound a bare `E503`
+ * with `+` or `/`. Node's errno names count wherever they appear (`connect ECONNREFUSED`,
+ * `getaddrinfo ENOTFOUND`, `reason: read ECONNRESET`).
+ */
+const NETWORK_ERRNO =
+  /\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|EPIPE)\b/;
+const NETWORK_HTTP_CODE = /\bcode E5\d\d\b/;
+const NETWORK_PHRASE = /socket hang up|invalid json response/i;
+
+export function isNetworkFailure(err: unknown): boolean {
+  const e = err as { stderr?: string; message?: string } | null;
+  const text = `${e?.stderr ?? ""}\n${e?.message ?? ""}`;
+  return NETWORK_ERRNO.test(text) || NETWORK_HTTP_CODE.test(text) || NETWORK_PHRASE.test(text);
 }
 
 const PACKAGE_FILES = ["package.json", "package-lock.json"];

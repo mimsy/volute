@@ -29,6 +29,7 @@ import {
 import { exec, gitExec } from "../util/exec.js";
 import { hostNpmEnv } from "../util/host-npm-env.js";
 import log from "../util/logger.js";
+import { clearDepsPending, depsPending, markDepsPending } from "./deps-retry.js";
 import { repairThreadBatchConfig } from "./event-routes.js";
 import { seedInitLedger } from "./init-ledger.js";
 import {
@@ -502,6 +503,35 @@ export async function notifySpiritSystemChange(): Promise<void> {
   });
 }
 
+/**
+ * Install the spirit's dependencies during the template sync. A failure doesn't stop the
+ * sync, or the spirit booting after it — a spirit that can't start can't answer anyone,
+ * and most template changes don't need the new packages. It leaves the pending-deps
+ * record for the auto-upgrade pass's retry, and is said once: when the record is new.
+ */
+export async function installSpiritDeps(
+  dir: string,
+  spiritName: string,
+  install: (dir: string, name: string) => Promise<void> = npmInstallAsMind,
+  alert?: (name: string, kind: string, text: string) => Promise<void>,
+): Promise<void> {
+  try {
+    await install(dir, spiritName);
+    clearDepsPending(spiritName);
+  } catch (err) {
+    slog.warn("spirit npm install failed", log.errorData(err));
+    if (depsPending(spiritName)) return;
+    markDepsPending(spiritName);
+    const { upgradeDepsFailureText } = await import("./upgrade.js");
+    const alertHost = alert ?? (await import("../chat/system-events.js")).alertHost;
+    await alertHost(
+      spiritName,
+      "upgrade_deps_failed",
+      upgradeDepsFailureText(spiritName, dir, err),
+    );
+  }
+}
+
 /** Largest file syncSpiritTemplate carries across the src/ copy (MEMORY.md, cursors). */
 const MAX_PRESERVED_BYTES = 16 * 1024 * 1024;
 
@@ -560,6 +590,8 @@ export async function syncSpiritTemplate(): Promise<void> {
   const currentModel = getSpiritModel();
   const expectedTemplate = await resolveTemplate(currentModel);
   const currentTemplate = entry.template ?? "claude";
+  /** The template switch below installs; one attempt per sync is enough. */
+  let switchInstalled = false;
   if (expectedTemplate !== currentTemplate) {
     slog.info(`spirit template change: ${currentTemplate} → ${expectedTemplate}`);
     // Re-compose from the new template, overwriting src/ and template files
@@ -575,7 +607,8 @@ export async function syncSpiritTemplate(): Promise<void> {
       await syncStep("package.json", () =>
         replaceMindFile(dir, "package.json", readFileSync(newPkg), { owner }),
       );
-      await npmInstallAsMind(dir, spiritName);
+      await installSpiritDeps(dir, spiritName);
+      switchInstalled = true;
     }
   }
 
@@ -675,25 +708,32 @@ export async function syncSpiritTemplate(): Promise<void> {
     await syncStep("config.json model", () => writeSpiritModel(dir, template, spiritModel, owner));
   }
 
-  // Re-install if package.json changed or node_modules is missing (self-healing)
+  // Re-install if package.json changed or node_modules is missing (self-healing).
+  // package.json is rewritten before the install, so after a failed install the next
+  // start sees nothing changed: the pending-deps record is what brings it back.
   const composedPkg = renderComposedPackageJson(composedDir, spiritName);
   const nodeModulesMissing = !existsSync(resolve(dir, "node_modules"));
+  let installNeeded = nodeModulesMissing;
   if (composedPkg) {
     const composedContent = readFileSync(composedPkg, "utf-8");
     // Anything unreadable there (a link the spirit planted) reads as different, so it is
     // replaced with the template's.
     const current = await readMindFile(dir, "package.json", { owner }).catch(() => null);
     const currentContent = current?.text ?? "";
-    if (composedContent !== currentContent || nodeModulesMissing) {
-      if (composedContent !== currentContent) {
-        await syncStep("package.json", () =>
-          replaceMindFile(dir, "package.json", composedContent, { owner }),
-        );
-      }
-      await npmInstallAsMind(dir, spiritName);
+    if (composedContent !== currentContent) {
+      installNeeded = true;
+      await syncStep("package.json", () =>
+        replaceMindFile(dir, "package.json", composedContent, { owner }),
+      );
     }
-  } else if (nodeModulesMissing) {
-    await npmInstallAsMind(dir, spiritName);
+  }
+  if (installNeeded) {
+    await installSpiritDeps(dir, spiritName);
+  } else if (!switchInstalled && depsPending(spiritName)) {
+    // Before the spirit boots, so a success needs no restart. The same retry, gate and
+    // say-it-once the hourly pass gives every mind, so that pass doesn't repeat it.
+    const { retryDepsFor } = await import("../daemon/auto-upgrade.js");
+    await retryDepsFor(entry);
   }
 
   // Restore preserved files
