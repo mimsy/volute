@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.68.0](https://github.com/mimsy/volute/compare/volute-v0.67.0...volute-v0.68.0) (2026-11-19)
+
+
+### Features
+
+* **pages:** preview lets a page's timers run before the shot ([#1424](https://github.com/mimsy/volute/issues/1424)) ([c85ef11](https://github.com/mimsy/volute/commit/c85ef116e96dadf7adc2557aaf319914b65a29b1))
+
+
+### Bug Fixes
+
+* **deps:** update pi-ai and pi-coding-agent to v1.5.2 ([#1431](https://github.com/mimsy/volute/issues/1431)) ([c6726c7](https://github.com/mimsy/volute/commit/c6726c7889fd0f87cd052d709cbbb4bceceb83be))
+* **pages:** alert the host when preview has no browser ([#1421](https://github.com/mimsy/volute/issues/1421)) ([42f7760](https://github.com/mimsy/volute/commit/42f7760e83da5ce34ec2e2c5fe63fdc33a06dde0))
+* **pages:** let sandboxed pages load their own files ([#1420](https://github.com/mimsy/volute/issues/1420)) ([a087e6c](https://github.com/mimsy/volute/commit/a087e6ce56b46bdb5e0341131363df16cf7df2ca))
+* retry a failed post-upgrade npm install instead of stranding the mind ([#1422](https://github.com/mimsy/volute/issues/1422)) ([61a0574](https://github.com/mimsy/volute/commit/61a0574e9e4dbf165c8cab1f68f1b05f35cf3bd3))
+* **skills:** retire skills Volute stops shipping, from the pool and from minds that never edited them ([#1359](https://github.com/mimsy/volute/issues/1359)) ([f9e743b](https://github.com/mimsy/volute/commit/f9e743b8b636108ddf4c4c79f92daf1f80a6390f))
+
 ## [0.67.0](https://github.com/mimsy/volute/compare/volute-v0.66.14...volute-v0.67.0) (2026-11-17)
 
 
