@@ -659,47 +659,55 @@ describe("renderPreview scratch-file cleanup", () => {
 });
 
 /**
- * A stub that logs each launch's argv, one line per launch. With `hang` it stands
- * in for a stalled virtual-time render: it leaves a half-written image where the
- * shot goes, then never finishes, so the renderer has to stop it. Real Chrome exits
- * 0 on the timeout's SIGTERM (`exits-0`), so `killed` is not set; a process that
- * dies of the signal is the other shape. With `once`, only the first
- * virtual-time launch stalls — an intermittent hang, as CI's Chrome showed.
+ * A browser that is not one, but has both phases a real one does: it waits
+ * `startDelayMs` (startup), asks the preview server for the page, then either
+ * writes its image or hangs. A hang first leaves a half-written image where the
+ * shot goes, as a stopped browser might. Real Chrome exits 0 on SIGTERM
+ * (`exits-0`); `dies` is the other shape. Every launch logs its argv.
  */
-function writeArgvStub(
+function writePhaseStub(
   dir: string,
   log: string,
-  hang: false | "dies" | "exits-0",
-  once = false,
-  noShotAfter = false,
+  opts: {
+    startDelayMs?: number;
+    /** Time between the page arriving and the image: load, timers, the shot. */
+    afterRequestMs?: number;
+    neverRequests?: boolean;
+    hang?: "with-timers" | "always";
+    onTerm?: "exits-0" | "dies";
+    /** The at-load launch exits cleanly without drawing anything. */
+    atLoadDrawsNothing?: boolean;
+  } = {},
 ): string {
-  const path = resolve(dir, `argv-stub-${stubSeq++}.sh`);
-  const marker = `${log}.stalled`;
+  const script = `
+    const fs = require("node:fs");
+    const args = process.argv.slice(1);
+    fs.appendFileSync(${JSON.stringify(log)}, args.join(" ") + "\\n");
+    const url = args[args.length - 1];
+    const out = (args.find((a) => a.startsWith("--screenshot=")) || "").slice(13);
+    const timers = args.some((a) => a.startsWith("--virtual-time-budget="));
+    const hangFor = ${JSON.stringify(opts.hang ?? null)};
+    ${opts.onTerm === "dies" ? "" : 'process.on("SIGTERM", () => process.exit(0));'}
+    const forever = () => setInterval(() => {}, 1000);
+    setTimeout(async () => {
+      if (${opts.neverRequests ? "true" : "false"}) return forever();
+      await fetch(url).then((r) => r.text()).catch(() => {});
+      if (hangFor === "always" || (hangFor === "with-timers" && timers)) {
+        fs.writeFileSync(out, "HALF");
+        return forever();
+      }
+      await new Promise((r) => setTimeout(r, ${opts.afterRequestMs ?? 0}));
+      if (!(${opts.atLoadDrawsNothing ? "true" : "false"} && !timers)) fs.writeFileSync(out, "PNG");
+      process.exit(0);
+    }, ${opts.startDelayMs ?? 0});
+  `;
+  const path = resolve(dir, `phase-stub-${stubSeq++}.sh`);
   writeFileSync(
     path,
+    // `--` before the args: without it node parses chromium's flags as its own.
     [
       "#!/bin/sh",
-      `printf '%s\\n' "$*" >> '${log}'`,
-      "out=; vt=",
-      'for a in "$@"; do',
-      '  case "$a" in',
-      `    --screenshot=*) out=$(printf %s "$a" | sed 's/^--screenshot=//') ;;`,
-      "    --virtual-time-budget=*) vt=1 ;;",
-      "  esac",
-      "done",
-      ...(hang
-        ? [
-            `if [ -n "$vt" ]${once ? ` && [ ! -e '${marker}' ]` : ""}; then`,
-            `  touch '${marker}'`,
-            '  printf HALF > "$out"',
-            hang === "dies" ? "  exec sleep 30" : "  trap 'exit 0' TERM; sleep 30 & wait; exit 0",
-            "fi",
-          ]
-        : []),
-      // A browser that exits cleanly without a shot, after the stalled one.
-      ...(noShotAfter ? ["exit 0"] : []),
-      '[ -n "$out" ] && printf PNG > "$out"',
-      "exit 0",
+      `exec ${JSON.stringify(process.execPath)} -e '${script.replace(/'/g, `'\\''`)}' -- "$@"`,
       "",
     ].join("\n"),
   );
@@ -707,124 +715,116 @@ function writeArgvStub(
   return path;
 }
 
-describe("renderPreview lets timers run before the shot", () => {
-  it("asks the browser for virtual time, once, when the page settles", async () => {
+describe("renderPreview's two phases: a slow start, and a page that never settles", () => {
+  let prev: typeof RENDER_TIMEOUTS;
+  let warnings: string[];
+  let warn: typeof console.warn;
+  beforeEach(() => {
+    prev = { ...RENDER_TIMEOUTS };
+    Object.assign(RENDER_TIMEOUTS, { startup: 1500, postLoad: 800, slowStart: 400 });
+    warnings = [];
+    warn = console.warn;
+    console.warn = (...a: unknown[]) => warnings.push(a.map(String).join(" "));
     writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
-    const log = resolve(mindDir, "argv.log");
-    process.env.VOLUTE_CHROMIUM = writeArgvStub(mindDir, log, false);
-    const result = await renderPreview({
-      mindDir,
-      mindName: "testmind",
-      ownership: NO_ISOLATION,
-      file: "index.html",
-    });
+  });
+  afterEach(() => {
+    console.warn = warn;
+    Object.assign(RENDER_TIMEOUTS, prev);
+  });
+  const log = () => resolve(mindDir, "argv.log");
+  const launches = () => readFileSync(log(), "utf-8").trim().split("\n");
+  const preview = () =>
+    renderPreview({ mindDir, mindName: "testmind", ownership: NO_ISOLATION, file: "index.html" });
+
+  it("asks for virtual time and the private flags, once, when all is well", async () => {
+    process.env.VOLUTE_CHROMIUM = writePhaseStub(mindDir, log());
+    const result = await preview();
     assert.ok(!("error" in result), "error" in result ? result.error : "");
     assert.equal(result.note, null);
-    const launches = readFileSync(log, "utf-8").trim().split("\n");
-    assert.equal(launches.length, 1);
-    assert.match(launches[0], /--virtual-time-budget=5000/);
+    assert.equal(launches().length, 1);
+    const argv = launches()[0].split(" ");
+    assert.ok(argv.includes("--virtual-time-budget=5000"));
     // Root's browser does not phone out on every preview.
-    for (const flag of PRIVATE_BROWSER_FLAGS) {
-      assert.ok(launches[0].split(" ").includes(flag), `missing ${flag}`);
-    }
+    for (const flag of PRIVATE_BROWSER_FLAGS) assert.ok(argv.includes(flag), `missing ${flag}`);
+    assert.deepEqual(warnings, []);
   });
 
-  it("never hands over the image a stalled launch half-wrote", async () => {
-    writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
-    const log = resolve(mindDir, "argv.log");
-    process.env.VOLUTE_CHROMIUM = writeArgvStub(mindDir, log, "exits-0", true, true);
-    const prev = { ...RENDER_TIMEOUTS };
-    RENDER_TIMEOUTS.timers = 500;
-    try {
-      const result = await renderPreview({
-        mindDir,
-        mindName: "testmind",
-        ownership: NO_ISOLATION,
-        file: "index.html",
-      });
-      assert.deepEqual(
-        "error" in result && result.error,
-        "The browser ran but produced no image.",
-        "a retry that drew nothing must not be passed off with the stalled launch's leftovers",
-      );
-    } finally {
-      Object.assign(RENDER_TIMEOUTS, prev);
-    }
-  });
-
-  for (const shape of ["exits-0", "dies"] as const) {
-    it(`falls back to a shot at load when virtual time never runs out (${shape}), and says so`, async () => {
-      writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
-      const log = resolve(mindDir, "argv.log");
-      process.env.VOLUTE_CHROMIUM = writeArgvStub(mindDir, log, shape);
-      const prev = { ...RENDER_TIMEOUTS };
-      RENDER_TIMEOUTS.timers = 500;
-      const warnings: string[] = [];
-      const warn = console.warn;
-      console.warn = (...a: unknown[]) => warnings.push(a.map(String).join(" "));
-      try {
-        const result = await renderPreview({
-          mindDir,
-          mindName: "testmind",
-          ownership: NO_ISOLATION,
-          file: "index.html",
-        });
-        console.warn = warn;
-        // Each stall is logged for the host, with whether the browser ever asked
-        // for the page — the line between a browser that hung starting and a page
-        // whose timers never ran out. This stub never fetches.
-        const stalls = warnings.filter((w) => w.includes("stalled after"));
-        assert.equal(stalls.length, 2);
-        for (const w of stalls) assert.match(w, /the page server got no request from it/);
-        // Before virtual time, a page holding a request open shot fine at load; it
-        // must not now get nothing at all.
-        assert.ok(!("error" in result), "error" in result ? result.error : "");
-        // Says what happened, not a cause it never established.
-        assert.match(result.note ?? "", /timers didn't finish/);
-        // Two tries with virtual time, then one at load.
-        const launches = readFileSync(log, "utf-8").trim().split("\n");
-        assert.equal(launches.length, 3);
-        assert.match(launches[0], /--virtual-time-budget/);
-        assert.match(launches[1], /--virtual-time-budget/);
-        assert.doesNotMatch(launches[2], /--virtual-time-budget/);
-        // A fresh profile for every launch: a stopped one may still hold its lock.
-        const profiles = new Set(launches.map((l) => l.match(/--user-data-dir=(\S+)/)?.[1]));
-        assert.equal(profiles.size, 3);
-        // The stalled launches' half-written image is not what the mind got.
-        assert.equal(readFileSync(result.pngPath, "utf-8"), "PNG");
-      } finally {
-        console.warn = warn;
-        Object.assign(RENDER_TIMEOUTS, prev);
-      }
+  it("waits out a slow start, keeps the timers, and tells the mind it was the host", async () => {
+    // CI's 9 s start, scaled: the start plus the page's own time exceeds the
+    // post-load limit, which must only count from the page's arrival.
+    process.env.VOLUTE_CHROMIUM = writePhaseStub(mindDir, log(), {
+      startDelayMs: 1000,
+      afterRequestMs: 300,
     });
+    const result = await preview();
+    assert.ok(!("error" in result), "error" in result ? result.error : "");
+    assert.equal(launches().length, 1, "no fallback for a slow start");
+    assert.match(launches()[0], /--virtual-time-budget/);
+    assert.match(result.note ?? "", /took \d+s to start/);
+    assert.match(result.note ?? "", /not your page/);
+    assert.doesNotMatch(result.note ?? "", /timers never finished/);
+    assert.equal(readFileSync(result.pngPath, "utf-8"), "PNG");
+    assert.ok(
+      warnings.some((w) => /started slowly/.test(w)),
+      "the host's log says so too",
+    );
+  });
 
-    it(`retries a stall once and keeps the timers when it clears (${shape})`, async () => {
-      writeFileSync(resolve(pagesRoot, "index.html"), "<!doctype html><h1>hi</h1>");
-      const log = resolve(mindDir, "argv.log");
-      process.env.VOLUTE_CHROMIUM = writeArgvStub(mindDir, log, shape, true);
-      const prev = { ...RENDER_TIMEOUTS };
-      RENDER_TIMEOUTS.timers = 500;
-      try {
-        const result = await renderPreview({
-          mindDir,
-          mindName: "testmind",
-          ownership: NO_ISOLATION,
-          file: "index.html",
-        });
-        // An intermittent hang costs one short wait, not the timers: no note, and
-        // no shot at load.
-        assert.ok(!("error" in result), "error" in result ? result.error : "");
-        assert.equal(result.note, null);
-        const launches = readFileSync(log, "utf-8").trim().split("\n");
-        assert.equal(launches.length, 2);
-        assert.match(launches[1], /--virtual-time-budget/);
-        // Not the first launch's half-written image.
-        assert.equal(readFileSync(result.pngPath, "utf-8"), "PNG");
-      } finally {
-        Object.assign(RENDER_TIMEOUTS, prev);
-      }
+  for (const onTerm of ["exits-0", "dies"] as const) {
+    it(`falls back to a shot at load when the page's timers never run out (${onTerm})`, async () => {
+      process.env.VOLUTE_CHROMIUM = writePhaseStub(mindDir, log(), {
+        hang: "with-timers",
+        onTerm,
+      });
+      const result = await preview();
+      assert.ok(!("error" in result), "error" in result ? result.error : "");
+      assert.match(result.note ?? "", /timers never finished/);
+      const [first, second] = launches();
+      assert.equal(launches().length, 2);
+      assert.match(first, /--virtual-time-budget/);
+      assert.doesNotMatch(second, /--virtual-time-budget/);
+      // A fresh profile for the second launch: a stopped one may still hold its lock.
+      const profile = (l: string) => l.match(/--user-data-dir=(\S+)/)?.[1];
+      assert.notEqual(profile(first), profile(second));
+      // The stopped launch's half-written image is not what the mind got.
+      assert.equal(readFileSync(result.pngPath, "utf-8"), "PNG");
+      const stopped = warnings.filter((w) => w.includes("stopped at the postLoad limit"));
+      assert.equal(stopped.length, 1);
+      assert.match(stopped[0], /first request reached the page server after \d+ms/);
     });
   }
+
+  it("fails plainly when the browser never asks for the page — no shot at load", async () => {
+    process.env.VOLUTE_CHROMIUM = writePhaseStub(mindDir, log(), { neverRequests: true });
+    const result = await preview();
+    assert.ok("error" in result);
+    assert.match(result.error, /didn't start in time/);
+    assert.match(result.error, /not your page/);
+    // A fallback would need the same start, so none is tried.
+    assert.equal(launches().length, 1);
+    assert.ok(warnings.some((w) => /stopped at the startup limit.*got no request/s.test(w)));
+  });
+
+  it("never hands over an image from a launch that was stopped", async () => {
+    // The first launch loads, hangs, and is stopped with a half-written image in
+    // place; the at-load launch then exits cleanly having drawn nothing. The
+    // leftover must not pass for a render.
+    process.env.VOLUTE_CHROMIUM = writePhaseStub(mindDir, log(), {
+      hang: "with-timers",
+      atLoadDrawsNothing: true,
+    });
+    const result = await preview();
+    assert.deepEqual("error" in result && result.error, "The browser ran but produced no image.");
+    assert.equal(launches().length, 2);
+  });
+
+  it("fails plainly when the page never settles even without timers", async () => {
+    process.env.VOLUTE_CHROMIUM = writePhaseStub(mindDir, log(), { hang: "always" });
+    const result = await preview();
+    assert.ok("error" in result);
+    assert.match(result.error, /didn't finish loading in time/);
+    assert.equal(launches().length, 2);
+  });
 });
 
 /**
